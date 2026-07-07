@@ -102,6 +102,7 @@ advisor:
 
 `WATCHDOG.yml` configures the default advisor with verifier guidance:
 ```yaml
+# omp-verifier: generated
 instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
@@ -139,7 +140,11 @@ Re-running the install migrates verifier-generated `WATCHDOG.yml` files without 
 /verifier install
 ```
 
-Install preserves customized `WATCHDOG.yml` files; merge the verifier advisor manually if you keep local rules in that file.
+Install preserves customized `WATCHDOG.yml` files. To intentionally overwrite one, rerun install with `replace`:
+
+```text
+/verifier install replace
+```
 
 ## Uninstall verifier from a project
 

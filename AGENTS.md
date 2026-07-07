@@ -7,7 +7,7 @@ This repo ships an OMP plugin whose only product feature is injecting verifier g
 - Keep runtime extension code in `omp-plugin/`.
 - Keep reusable verifier guidance in `WATCHDOG.md`.
 - Run `npm run release:check` before committing.
-- Reinstall from the remote plugin after pushing when testing reload behavior:
+- After releasing a new version, reinstall the pushed remote plugin before claiming the release is installed:
 
 ```bash
 npm run reinstall

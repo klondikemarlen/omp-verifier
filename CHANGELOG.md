@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 - 2026-07-07
+
+- Added explicit `replace` install option for overwriting customized verifier `WATCHDOG.yml` files.
+- Added a generated `WATCHDOG.yml` marker and migration for serialized quoted-string verifier wrappers.
+- Documented post-release remote reinstall as required before claiming an installed release.
+
 ## 0.5.1 - 2026-07-07
 
 - Reworked `/verifier status` to show a concise summary plus path-bearing file details for manual inspection.
