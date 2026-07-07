@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2 - 2026-07-07
+
+- Switched remote reinstall verification from Bun tag refs to explicit commit pins after Bun failed to resolve the pushed `v0.1.1` tag.
+
 ## 0.1.1 - 2026-07-07
 
 - Replaced the WRAP-specific verifier prompt with a generic project verifier prompt that reads local repo conventions first.

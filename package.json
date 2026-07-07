@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "OMP verifier agents, commands, and planning tools for evidence-first PR verification.",
   "type": "module",
   "license": "MIT",
