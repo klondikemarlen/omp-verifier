@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3 - 2026-07-07
+
+- Added `/verifier-bootstrap [--force]` to scaffold project-local advisor config and `WATCHDOG.yml` importing upstream verifier rules.
+
 ## 0.1.2 - 2026-07-07
 
 - Switched remote reinstall verification from Bun tag refs to explicit commit pins after Bun failed to resolve the pushed `v0.1.1` tag.

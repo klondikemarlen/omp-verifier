@@ -6,9 +6,9 @@ OMP verifier agents, commands, and planning helpers for evidence-first PR QA.
 
 OMP Verifier is an advisor-style verification layer.
 
-Primary interface: enable OMP's built-in advisor and point local `WATCHDOG.md` rules at this repo's verifier guidance. The verifier then reviews code-change turns in the background and pushes back when implementation claims lack evidence.
+Primary interface: run `/verifier-bootstrap` in a target repo, then use OMP's built-in advisor. The bootstrap creates project-local advisor settings and a thin `WATCHDOG.yml` wrapper that imports this package's upstream verifier guidance, so downstream repos keep their own setup/test/browser rules locally while reinstalling this plugin refreshes general verifier concepts.
 
-Current OMP caveat: this package does not create a separate `omp-verifier.enabled` settings role today. Always-on behavior uses OMP's built-in `advisor.enabled` runtime plus user/project `WATCHDOG.md` rules.
+Current OMP caveat: this package does not create a separate `omp-verifier.enabled` settings role today. Always-on behavior uses OMP's built-in `advisor.enabled` runtime plus user/project `WATCHDOG.yml` or `WATCHDOG.md` rules.
 
 Optional interface: `/verify-pr <repo> <pr-number>` starts an explicit verifier subagent handoff for PR review.
 
@@ -52,6 +52,7 @@ Then restart OMP or run `/reload-plugins`.
 - `WATCHDOG.md` - aggressive advisor guidance for always-on verifier review.
 - `agents/verifier.md` - generic verification agent.
 - `agents/project-verifier.md` - generic project-aware verifier that reads local repo conventions first.
+- `/verifier-bootstrap [--force]` - creates project-local `.omp/config.yml` when absent and creates or refreshes `WATCHDOG.yml`.
 - `/verify-pr <repo> <pr-number>` - starts an evidence-first verification turn.
 - `/verifier-info` - shows loaded commands/tools.
 - `verify_pr_plan` - builds a Gold-first verification plan.
@@ -60,9 +61,20 @@ Then restart OMP or run `/reload-plugins`.
 
 ## Always-on advisor setup
 
-OMP's built-in advisor is the closest supported runtime shape for "turn it on in settings and have it verify all code changes."
+OMP's built-in advisor is the supported runtime shape for "turn it on and have it verify all code changes." The plugin command scaffolds that setup in the current repo:
 
-Add an advisor model and enable the advisor in `~/.omp/agent/config.yml` or a project-local `.omp/config.yml`:
+```text
+/verifier-bootstrap
+```
+
+It creates:
+
+```text
+.omp/config.yml
+WATCHDOG.yml
+```
+
+The generated `.omp/config.yml` enables OMP's built-in advisor for this project:
 
 ```yaml
 modelRoles:
@@ -74,24 +86,26 @@ advisor:
   syncBacklog: 1
 ```
 
-`subagents: true` is optional; it extends OMP's built-in advisor to spawned task/eval subagents. It does not create a separate `omp-verifier` settings role.
+The generated `WATCHDOG.yml` defines a named `Verifier` advisor and imports the installed upstream rules:
 
-Then add a project `WATCHDOG.md` that imports or copies the verifier rules. During local development, prefer the checkout path:
-
-```markdown
-@/path/to/omp-verifier/WATCHDOG.md
-
-# Project verifier rules
-
-- Add local setup, test commands, database rules, service names, and browser routes here.
-- Keep rules that apply across projects generic; move those upstream to this repo.
+```yaml
+advisors:
+  - name: Verifier
+    model: anthropic/claude-sonnet-4-5:medium
+    tools: [read, grep, glob]
+    instructions: |
+      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
 ```
 
-After remote install verification proves the installed package is fresh, projects can import the installed copy instead:
+Downstream customization belongs in the generated `WATCHDOG.yml`: setup commands, test commands, database/service details, browser routes, and project-specific "done means" checks.
 
-```markdown
-@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+Bootstrap is non-destructive by default. If `.omp/config.yml` already exists, it is left alone so unrelated project settings are not clobbered. Rerun with `--force` to refresh only `WATCHDOG.yml` from the upstream template:
+
+```text
+/verifier-bootstrap --force
 ```
+
+Then restart OMP from that repo or run `/advisor on`.
 
 Useful OMP docs:
 

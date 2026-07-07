@@ -19,12 +19,13 @@ A normal implementation agent is optimized to change code. A verifier agent is o
 
 This package supplies that verifier layer in three tiers:
 
-1. `WATCHDOG.md` provides advisor-style rules for always-on review through OMP's built-in advisor runtime.
-2. Agent prompts in `agents/` define explicit verifier subagent behavior.
-3. The OMP extension in `omp-plugin/` registers optional slash-command sugar and pure planning tools.
-4. Helpers in `tools/` build plans and comment text without touching GitHub, browsers, or app processes.
+1. `/verifier-bootstrap` scaffolds project-local `.omp/config.yml` and `WATCHDOG.yml` for OMP's built-in advisor runtime.
+2. `WATCHDOG.md` provides upstream verifier rules imported by downstream `WATCHDOG.yml` files.
+3. Agent prompts in `agents/` define explicit verifier subagent behavior.
+4. The OMP extension in `omp-plugin/` registers slash-command sugar and pure planning tools.
+5. Helpers in `tools/` build plans and comment text without touching GitHub, browsers, or app processes.
 
-Current OMP caveat: this package does not install a custom `omp-verifier` advisor runtime or settings role. Always-on behavior uses the built-in OMP advisor plus `WATCHDOG.md`; a dedicated verifier role would need upstream OMP support.
+Current OMP caveat: this package does not install a custom `omp-verifier` settings role. Always-on behavior uses OMP's built-in advisor plus project `WATCHDOG.yml`; `/verifier-bootstrap` makes that setup convenient and downstream-customizable.
 
 ## Relationship to Marlen's skills
 
