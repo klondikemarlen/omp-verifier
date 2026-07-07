@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.8 - 2026-07-07
+
+- Added `/verifier install global` and `/verifier uninstall global` for user-level `WATCHDOG.yml` setup.
+- Made install refresh the targeted generated `WATCHDOG.yml` by default; `--force` is now uninstall-only.
+- Preserved project-local install behavior as the default.
+
 ## 0.1.7 - 2026-07-07
 
 - Added `/verifier` subcommand completions for `install`, `uninstall`, and `info`.

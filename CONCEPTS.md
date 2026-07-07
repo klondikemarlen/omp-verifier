@@ -30,14 +30,18 @@ sequenceDiagram
 
 ## Command contract
 
-`/verifier install` writes in the current repo only:
+`/verifier install` writes in the current repo by default:
 
 - `.omp/config.yml` when absent, enabling `advisor.enabled` without setting a model.
 - `WATCHDOG.yml`, keeping the default advisor and adding a named `Verifier` advisor that imports `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
 
-`/verifier install --force` refreshes only `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
+`/verifier install global` writes only `<active agent dir>/WATCHDOG.yml`; it does not edit global `config.yml`.
+
+Re-running `/verifier install` refreshes only the targeted `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
 
 `/verifier uninstall` removes generated files only when they still match the generated content. Customized files are preserved.
+
+`/verifier uninstall global` removes only the generated user-level `WATCHDOG.yml`.
 
 `/verifier uninstall --force` removes customized `WATCHDOG.yml`, but still preserves customized `.omp/config.yml`.
 
