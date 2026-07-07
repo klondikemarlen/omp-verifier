@@ -58,9 +58,9 @@ Use this when you want verifier behavior in every OMP session:
 
 By default that is `~/.omp/agent/WATCHDOG.yml`; `PI_CODING_AGENT_DIR` is respected when your active agent dir is relocated.
 
-The global file imports this plugin's shared verifier guidance and adds a second advisor named `Verifier`. It does not edit your global `config.yml`; keep `advisor.enabled` and `modelRoles.advisor` configured through OMP settings.
+The global file imports this plugin's shared verifier guidance into the default advisor. It does not edit your global `config.yml`; keep `advisor.enabled` and `modelRoles.advisor` configured through OMP settings.
 
-Re-running the install refreshes the global wrapper after updating this plugin:
+Re-running the install migrates only verifier-generated global wrappers after updating this plugin:
 
 ```text
 /verifier install global
@@ -100,15 +100,13 @@ advisor:
   syncBacklog: 1
 ```
 
-`WATCHDOG.yml` keeps the original default advisor and adds a second always-on verifier advisor:
+`WATCHDOG.yml` configures the default advisor with verifier guidance:
 ```yaml
 instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
 advisors:
   - name: default
-
-  - name: Verifier
     tools: [read, grep, glob]
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
@@ -131,17 +129,17 @@ Restart OMP from that repo or run:
 
 ## Customize downstream
 
-Edit the downstream repo's `WATCHDOG.yml` below the upstream import. Keep project-specific commands, services, database details, browser routes, and local definitions of done there.
+Edit the downstream repo's `WATCHDOG.yml` to add project-specific commands, services, database details, browser routes, and local definitions of done.
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
-Re-running the install refreshes the downstream wrapper without touching existing `.omp/config.yml`:
+Re-running the install migrates verifier-generated `WATCHDOG.yml` files without touching existing `.omp/config.yml`:
 
 ```text
 /verifier install
 ```
 
-Install always replaces only the targeted `WATCHDOG.yml`. Existing `.omp/config.yml` is preserved; merge advisor settings manually if that file already exists.
+Install preserves customized `WATCHDOG.yml` files; merge the verifier advisor manually if you keep local rules in that file.
 
 ## Uninstall verifier from a project
 
@@ -149,9 +147,10 @@ Install always replaces only the targeted `WATCHDOG.yml`. Existing `.omp/config.
 /verifier uninstall
 ```
 
-This removes the targeted verifier files:
+This removes only verifier-generated files:
 
-- `WATCHDOG.yml` is removed;
+- generated `WATCHDOG.yml` is removed;
+- customized `WATCHDOG.yml` is preserved;
 - generated `.omp/config.yml` is removed;
 - customized `.omp/config.yml` is preserved.
 

@@ -4,6 +4,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import verifierPlugin from "../omp-plugin/index.js";
 
+const OLD_WATCHDOG_ROSTER = `instructions: |
+  Everyone: keep advice concrete, evidence-first, and non-repetitive.
+
+advisors:
+  - name: default
+
+  - name: Verifier
+    tools: [read, grep, glob]
+    instructions: |
+      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+
+      You are the always-on verifier for this session.
+      Review completed code-change turns as untrusted until evidence proves them.
+      Raise a blocker when work is called done without observed evidence.
+      Raise a concern when checks are too broad, too narrow, or ignore local setup.
+      Stay silent when the evidence is sufficient.
+
+      Project-specific rules can live in downstream WATCHDOG files: setup commands,
+      test commands, database/service details, browser routes, and "done means" checks.
+`;
+
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
   setLabel(label) { registrations.label = label; },
@@ -49,6 +70,7 @@ await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: t
 assert.match(await readFile(configPath, "utf8"), /advisor:\n  enabled: true/);
 const watchdog = await readFile(watchdogPath, "utf8");
 assert.match(watchdog, /name: default/);
+assert.doesNotMatch(watchdog, /name: Verifier/);
 assert.match(watchdog, /@~\/.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
 assert.doesNotMatch(watchdog, /model:/);
 assert.match(registrations.notices.at(-1).message, /created/);
@@ -58,8 +80,19 @@ await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: t
 assert.equal(await readFile(configPath, "utf8"), "custom: true\n");
 assert.match(await readFile(watchdogPath, "utf8"), /always-on verifier/);
 assert.match(registrations.notices.at(-1).message, /kept existing .*config\.yml.*merge advisor keys manually/);
-assert.match(registrations.notices.at(-1).message, /replaced .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /kept generated .*WATCHDOG\.yml/);
 
+
+const oldRepo = await mkdtemp(join(tmpdir(), "omp-verifier-old-"));
+const oldWatchdogPath = join(oldRepo, "WATCHDOG.yml");
+await writeFile(oldWatchdogPath, OLD_WATCHDOG_ROSTER);
+await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: oldRepo });
+assert.doesNotMatch(await readFile(oldWatchdogPath, "utf8"), /name: Verifier/);
+assert.match(registrations.notices.at(-1).message, /replaced generated .*WATCHDOG\.yml/);
+await writeFile(oldWatchdogPath, OLD_WATCHDOG_ROSTER);
+await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: oldRepo });
+assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+await assert.rejects(readFile(oldWatchdogPath, "utf8"), /ENOENT/);
 await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: tempRepo });
 assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /kept customized .*config\.yml/);
@@ -75,9 +108,16 @@ const customRepo = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
 await mkdir(join(customRepo, ".omp"));
 await writeFile(join(customRepo, ".omp", "config.yml"), "custom: true\n");
 await writeFile(join(customRepo, "WATCHDOG.yml"), "custom watchdog\n");
+await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: customRepo });
+assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml.*merge verifier advisor manually/);
+assert.equal(await readFile(join(customRepo, "WATCHDOG.yml"), "utf8"), "custom watchdog\n");
+await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: customRepo });
+assert.match(registrations.notices.at(-1).message, /project WATCHDOG\.yml: .* \(customized\)/);
+
 await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: customRepo });
-assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /kept customized .*config\.yml/);
+assert.equal(await readFile(join(customRepo, "WATCHDOG.yml"), "utf8"), "custom watchdog\n");
 
 await registrations.commands.get("verifier").handler("uninstall bogus", { ...ctx, cwd: customRepo });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
@@ -95,9 +135,15 @@ assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
 
 await writeFile(globalWatchdogPath, "custom global watchdog\n");
+await registrations.commands.get("verifier").handler("install global", { ...ctx, cwd: globalRepo, agentDir });
+assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml.*merge verifier advisor manually/);
+assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
+await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: globalRepo, agentDir });
+assert.match(registrations.notices.at(-1).message, /global WATCHDOG\.yml: .* \(customized\)/);
+
 await registrations.commands.get("verifier").handler("uninstall global", { ...ctx, cwd: globalRepo, agentDir });
-assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
-await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
+assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
+assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
 
 await registrations.commands.get("verifier").handler("install local global", { ...ctx, cwd: globalRepo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
