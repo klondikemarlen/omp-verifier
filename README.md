@@ -33,11 +33,15 @@ Then restart OMP or run `/reload-plugins`.
 
 For user-facing feature work, follow the release pattern from Marlen's other OMP projects:
 
-1. Capture the user story and acceptance criteria.
-2. Keep the implementation in the smallest command/runtime surface that satisfies it.
-3. Update docs, tests, `package.json` version, and `CHANGELOG.md`.
-4. Run `npm run release:check`.
-5. Commit, push `main`, tag the package version, reinstall from the remote source, and verify the installed package behavior.
+1. Capture the user story and acceptance criteria in a GitHub issue.
+2. Create a feature branch linked to the issue.
+3. Keep the implementation in the smallest command/runtime surface that satisfies it.
+4. Update docs, tests, `package.json` version, and `CHANGELOG.md`.
+5. Run `npm run release:check`.
+6. Commit, push the branch, and open a pull request linked to the issue.
+7. Review the PR from the user's perspective and fix any findings.
+8. Merge the PR to `main`.
+9. Tag the package version, reinstall from the remote source, and verify the installed package behavior.
 
 
 ## Install verifier globally
