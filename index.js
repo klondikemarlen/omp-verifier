@@ -30,9 +30,9 @@ export default function verifierPlugin(pi) {
         return;
       }
 
-      await pi.sendUserMessage(
+      await pi.sendMessage(
         `Use the verifier agent to verify PR #${pr} in ${repo}. Start from Gold, create an isolated worktree, derive PR-specific ports/env, run targeted tests or browser QA, and report PASS | FAIL | BLOCKED with evidence.`,
-        { deliverAs: "followUp" },
+        { deliverAs: "followUp", triggerTurn: true },
       );
     },
   });

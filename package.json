@@ -20,6 +20,7 @@
     "extensions": ["./index.js"]
   },
   "scripts": {
-    "check": "node --check index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js"
+    "check": "node --check index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js && node --check test/verifier-plugin.test.js",
+    "test": "node test/verifier-plugin.test.js"
   }
 }
