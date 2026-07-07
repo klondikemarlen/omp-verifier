@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7 - 2026-07-07
+
+- Added `/verifier` subcommand completions for `install`, `uninstall`, and `info`.
+- Documented the lightweight feature workflow and release pattern.
+
 ## 0.1.6 - 2026-07-07
 
 - Changed generated `WATCHDOG.yml` to keep OMP's default advisor and add `Verifier` as a second advisor.

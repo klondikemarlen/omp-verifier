@@ -16,6 +16,9 @@ verifierPlugin(pi);
 
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("").map(item => item.label), ["install", "uninstall", "info"]);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("un").map(item => item.label), ["uninstall"]);
+assert.equal(registrations.commands.get("verifier").getArgumentCompletions("install "), null);
 assert.ok(registrations.events.has("session_start"));
 
 await registrations.commands.get("verifier").handler("info", ctx);

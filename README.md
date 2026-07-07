@@ -29,6 +29,17 @@ omp plugin link ~/code/klondikemarlen/omp-verifier
 
 Then restart OMP or run `/reload-plugins`.
 
+## Feature workflow
+
+For user-facing feature work, follow the release pattern from Marlen's other OMP projects:
+
+1. Capture the user story and acceptance criteria.
+2. Keep the implementation in the smallest command/runtime surface that satisfies it.
+3. Update docs, tests, `package.json` version, and `CHANGELOG.md`.
+4. Run `npm run release:check`.
+5. Commit, push `main`, tag the package version, reinstall from the remote source, and verify the installed package behavior.
+
+
 ## Install verifier into a project
 
 In the downstream repo:
@@ -36,6 +47,8 @@ In the downstream repo:
 ```text
 /verifier install
 ```
+
+Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `info`.
 
 This creates:
 

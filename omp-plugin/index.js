@@ -75,6 +75,26 @@ async function uninstallVerifier(cwd, force) {
   return results;
 }
 
+const SUBCOMMANDS = [
+  { name: "install", description: "Install verifier advisor files", usage: "[--force]" },
+  { name: "uninstall", description: "Remove generated verifier advisor files", usage: "[--force]" },
+  { name: "info", description: "Show verifier command help" },
+];
+
+function completeSubcommands(argumentPrefix) {
+  if (argumentPrefix.includes(" ")) return null;
+  const lower = argumentPrefix.toLowerCase();
+  const matches = SUBCOMMANDS
+    .filter(command => command.name.startsWith(lower))
+    .map(command => ({
+      value: `${command.name} `,
+      label: command.name,
+      description: command.description,
+      hint: command.usage,
+    }));
+  return matches.length ? matches : null;
+}
+
 export default function verifierPlugin(pi) {
   pi.setLabel("Verifier");
 
@@ -84,6 +104,7 @@ export default function verifierPlugin(pi) {
 
   pi.registerCommand("verifier", {
     description: "Install or uninstall omp-verifier advisor injection",
+    getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "info", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const force = rest.includes("--force");
