@@ -15,7 +15,7 @@ export default function verifierPlugin(pi) {
     description: "Show verifier plugin commands, tools, and agents",
     handler: async (_args, ctx) => {
       ctx.ui.notify(
-        "Verifier: /verify-pr <repo> <pr>; agents=verifier,wrap-verifier; tools=verify_pr_plan,boot_app_plan,format_pr_comment",
+        "Verifier: /verify-pr <repo> <pr>; agents=verifier,project-verifier; tools=verify_pr_plan,boot_app_plan,format_pr_comment",
         "info",
       );
     },
@@ -31,7 +31,7 @@ export default function verifierPlugin(pi) {
       }
 
       await pi.sendMessage(
-        `Use the verifier agent to verify PR #${pr} in ${repo}. Start from Gold, create an isolated worktree, derive PR-specific ports/env, run targeted tests or browser QA, and report PASS | FAIL | BLOCKED with evidence.`,
+        `Use the project-verifier agent to verify PR #${pr} in ${repo}. Start from Gold, read local project conventions first, create an isolated worktree when needed, derive PR-specific ports/env, run targeted tests or browser QA, and report PASS | FAIL | BLOCKED with evidence.`,
         { deliverAs: "followUp", triggerTurn: true },
       );
     },

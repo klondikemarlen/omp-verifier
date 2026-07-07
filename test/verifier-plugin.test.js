@@ -39,9 +39,13 @@ assert.ok(registrations.events.has("session_start"));
 
 await registrations.commands.get("verifier-info").handler("", ctx);
 assert.match(registrations.notices.at(-1).message, /verify-pr/);
+assert.match(registrations.notices.at(-1).message, /project-verifier/);
+assert.doesNotMatch(registrations.notices.at(-1).message, /wrap-verifier/);
 
 await registrations.commands.get("verify-pr").handler("~/code/klondikemarlen/example 42", ctx);
 assert.match(registrations.messages.at(-1).message, /PR #42/);
+assert.match(registrations.messages.at(-1).message, /project-verifier/);
+assert.match(registrations.messages.at(-1).message, /local project conventions/);
 assert.deepEqual(registrations.messages.at(-1).options, { deliverAs: "followUp", triggerTurn: true });
 
 const verifyPlan = await registrations.tools.get("verify_pr_plan").execute("1", { repo: "/repo", pr: 42 });
