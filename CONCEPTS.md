@@ -112,7 +112,15 @@ omp plugin uninstall omp-verifier
 omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
 
-Observed failure mode: OMP/Bun can keep an old git commit pinned even after uninstall/reinstall. Release verification must inspect the installed package tree, not just the install success line. If `~/.omp/plugins/node_modules/omp-verifier` still contains the old layout or old agents, remote install verification is blocked.
+For release verification, pin the exact pushed commit so the installed tree can be compared to GitHub `main`:
+
+```bash
+COMMIT=$(git rev-parse HEAD)
+omp plugin uninstall omp-verifier
+omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
+```
+
+Install success is not enough evidence. Verify `~/.omp/plugins/node_modules/omp-verifier/.bun-tag` and the installed file tree before claiming the remote package is current.
 
 ## Release flow
 

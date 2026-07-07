@@ -37,7 +37,12 @@ omp plugin uninstall omp-verifier
 omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
 
-If the remote install keeps an old commit pinned after uninstall/reinstall, use the local link workflow and treat remote release verification as blocked until OMP/Bun install state is fixed.
+If the remote install keeps an old commit pinned after uninstall/reinstall, install the pushed commit explicitly:
+```bash
+COMMIT=$(git rev-parse HEAD)
+omp plugin uninstall omp-verifier
+omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
+```
 
 For local development, link the working tree so OMP loads your checkout:
 
@@ -181,18 +186,15 @@ This is a GitHub plugin release, not an npm or Marketplace publish.
 
 3. Commit using `COMMITTING.md`.
 4. Push `main`.
-5. Reinstall from the remote:
+5. Reinstall the pushed commit from the remote:
 
    ```bash
-   npm run reinstall
-   ```
-
-   If the install source changed, reset first:
-
-   ```bash
+   COMMIT=$(git rev-parse HEAD)
    omp plugin uninstall omp-verifier
-   npm run reinstall
+   omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
    ```
+
+   `npm run reinstall` uses the unpinned SSH spec and is useful for routine refreshes, but explicit commit pinning is the release verification path because it proves the installed package matches the pushed commit.
 
 6. Restart OMP or run `/reload-plugins`.
 7. Confirm the installed package matches the pushed repo:
