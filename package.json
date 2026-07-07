@@ -36,6 +36,6 @@
     "check": "node --check omp-plugin/index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js && node --check test/verifier-plugin.test.js",
     "test": "node --test test/*.test.js",
     "release:check": "npm run check && npm test",
-    "reinstall": "omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git --force"
+    "reinstall": "omp plugin install \"git+ssh://git@github.com/klondikemarlen/omp-verifier.git#v$npm_package_version\""
   }
 }

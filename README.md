@@ -27,17 +27,17 @@ This repo is the verifier-focused layer on top of [Marlen's Skills, Rules, and T
 Private GitHub repos must use SSH. The `github:klondikemarlen/omp-verifier` shorthand resolves through Bun's GitHub tarball path and is not reliable for private repos.
 
 ```bash
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
+omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git#v0.1.1
 ```
 
-If you previously installed from another source or need to force-refresh the installed version, reset the installed plugin first:
+If you previously installed from another source or need to refresh the installed version, reset the installed plugin first:
 
 ```bash
 omp plugin uninstall omp-verifier
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git --force
+omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git#v0.1.1
 ```
 
-The package version in `package.json` is release metadata, not the git ref. After install, verify the installed `package.json` version and file tree; the success line alone is not enough.
+The Git tag is the install ref and should match `package.json`'s version. Package version alone is metadata; it does not make an unpinned Git install refresh to the latest commit.
 
 For local development, link the working tree so OMP loads your checkout:
 
@@ -181,27 +181,35 @@ This is a GitHub plugin release, not an npm or Marketplace publish.
 
 3. Commit using `COMMITTING.md`.
 4. Push `main`.
-5. Reinstall from the remote:
+5. Create and push the release tag from the committed version:
+
+   ```bash
+   git tag "v$(node -p 'require(\"./package.json\").version')"
+   git push origin "v$(node -p 'require(\"./package.json\").version')"
+   ```
+
+6. Reinstall from the tagged remote:
 
    ```bash
    omp plugin uninstall omp-verifier
    npm run reinstall
    ```
 
-   `npm run reinstall` uses the SSH Git repo with `--force`; the installed `package.json` version must match this repo's `package.json`.
+   `npm run reinstall` installs `git+ssh://...#v$npm_package_version`; the installed `package.json` version must match this repo's `package.json`.
 
-6. Restart OMP or run `/reload-plugins`.
-7. Confirm the installed package matches the pushed repo:
+7. Restart OMP or run `/reload-plugins`.
+8. Confirm the installed package matches the pushed tag:
 
    ```bash
    cat ~/.omp/plugins/node_modules/omp-verifier/.bun-tag
+   cat ~/.omp/plugins/node_modules/omp-verifier/package.json
    ls ~/.omp/plugins/node_modules/omp-verifier
    ls ~/.omp/plugins/node_modules/omp-verifier/agents
    ls ~/.omp/plugins/node_modules/omp-verifier/omp-plugin
    ```
-   The installed tree should include `agents/project-verifier.md`, `CONCEPTS.md`, and `omp-plugin/index.js`. If it still shows an old commit or `agents/wrap-verifier.md`, remote install verification failed; use `omp plugin link "$PWD"` for local development and investigate the OMP/Bun git install pin before release.
+   The installed tree should include `agents/project-verifier.md`, `CONCEPTS.md`, `WATCHDOG.md`, and `omp-plugin/index.js`. If it still shows an old version or `agents/wrap-verifier.md`, remote install verification failed.
 
-8. Confirm the installed plugin loads:
+9. Confirm the installed plugin loads:
 
    ```text
    /verifier-info
