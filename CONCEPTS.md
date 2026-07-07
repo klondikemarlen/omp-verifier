@@ -105,34 +105,27 @@ omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 
 Avoid using `github:klondikemarlen/omp-verifier` for this private repo. Bun resolves that shorthand through GitHub's tarball path, which is not reliable for private repositories.
 
-If switching an existing install between source forms fails, reset the installed plugin first:
+If switching an existing install between source forms or versions, reset the installed plugin first:
 
 ```bash
 omp plugin uninstall omp-verifier
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
+omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git --force
 ```
 
-For release verification, pin the exact pushed commit so the installed tree can be compared to GitHub `main`:
-
-```bash
-COMMIT=$(git rev-parse HEAD)
-omp plugin uninstall omp-verifier
-omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
-```
-
-Install success is not enough evidence. Verify `~/.omp/plugins/node_modules/omp-verifier/.bun-tag` and the installed file tree before claiming the remote package is current.
+The package version is release metadata. It does not choose the git ref by itself, so release verification must check the installed `package.json` version and file tree after reinstall.
 
 ## Release flow
 
 A release is a GitHub plugin release, not an npm or Marketplace publish.
 
-1. Update code, docs, tests, and `CHANGELOG.md`.
+1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md`.
 2. Run `npm run release:check`.
 3. Commit with the style in `COMMITTING.md`.
 4. Push `main`.
-5. In a fresh OMP session, reinstall from the remote source.
-6. Confirm the installed tree contains the pushed files, including `CONCEPTS.md`, `agents/project-verifier.md`, and `omp-plugin/index.js`.
-7. Run `/verifier-info` or `/verify-pr <repo> <pr>` to confirm the installed plugin loads.
+5. In a fresh OMP session, run `omp plugin uninstall omp-verifier && npm run reinstall`.
+6. Confirm the installed `package.json` version matches the pushed repo.
+7. Confirm the installed tree contains the pushed files, including `CONCEPTS.md`, `WATCHDOG.md`, `agents/project-verifier.md`, and `omp-plugin/index.js`.
+8. Run `/verifier-info` or `/verify-pr <repo> <pr>` to confirm the installed plugin loads.
 
 ## Current limits
 

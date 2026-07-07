@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OMP verifier agents, commands, and planning tools for evidence-first PR verification.",
   "type": "module",
   "license": "MIT",
@@ -36,6 +36,6 @@
     "check": "node --check omp-plugin/index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js && node --check test/verifier-plugin.test.js",
     "test": "node --test test/*.test.js",
     "release:check": "npm run check && npm test",
-    "reinstall": "omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git"
+    "reinstall": "omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git --force"
   }
 }

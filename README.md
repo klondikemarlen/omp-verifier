@@ -30,19 +30,14 @@ Private GitHub repos must use SSH. The `github:klondikemarlen/omp-verifier` shor
 omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
 
-If you previously installed from another source and remote install fails, reset the installed plugin first:
+If you previously installed from another source or need to force-refresh the installed version, reset the installed plugin first:
 
 ```bash
 omp plugin uninstall omp-verifier
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
+omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git --force
 ```
 
-If the remote install keeps an old commit pinned after uninstall/reinstall, install the pushed commit explicitly:
-```bash
-COMMIT=$(git rev-parse HEAD)
-omp plugin uninstall omp-verifier
-omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
-```
+The package version in `package.json` is release metadata, not the git ref. After install, verify the installed `package.json` version and file tree; the success line alone is not enough.
 
 For local development, link the working tree so OMP loads your checkout:
 
@@ -186,15 +181,14 @@ This is a GitHub plugin release, not an npm or Marketplace publish.
 
 3. Commit using `COMMITTING.md`.
 4. Push `main`.
-5. Reinstall the pushed commit from the remote:
+5. Reinstall from the remote:
 
    ```bash
-   COMMIT=$(git rev-parse HEAD)
    omp plugin uninstall omp-verifier
-   omp plugin install "git+ssh://git@github.com/klondikemarlen/omp-verifier.git#$COMMIT"
+   npm run reinstall
    ```
 
-   `npm run reinstall` uses the unpinned SSH spec and is useful for routine refreshes, but explicit commit pinning is the release verification path because it proves the installed package matches the pushed commit.
+   `npm run reinstall` uses the SSH Git repo with `--force`; the installed `package.json` version must match this repo's `package.json`.
 
 6. Restart OMP or run `/reload-plugins`.
 7. Confirm the installed package matches the pushed repo:
