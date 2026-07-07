@@ -1,9 +1,15 @@
 # Changelog
 
+## 0.1.9 - 2026-07-07
+
+- Added second-layer completions for `/verifier install local|global` and `/verifier uninstall local|global`.
+- Removed the `--force` option; install and uninstall now apply to the targeted verifier files directly.
+- Documented using `Scope: project` in advisor configuration to view project-level advisors after a global install.
+
 ## 0.1.8 - 2026-07-07
 
 - Added `/verifier install global` and `/verifier uninstall global` for user-level `WATCHDOG.yml` setup.
-- Made install refresh the targeted generated `WATCHDOG.yml` by default; `--force` is now uninstall-only.
+- Made install refresh the targeted generated `WATCHDOG.yml` by default.
 - Preserved project-local install behavior as the default.
 
 ## 0.1.7 - 2026-07-07

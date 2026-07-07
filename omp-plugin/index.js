@@ -81,10 +81,10 @@ async function installGlobalVerifier(ctx) {
   ];
 }
 
-async function uninstallVerifier(cwd, force) {
+async function uninstallVerifier(cwd) {
   const configDir = join(cwd, ".omp");
   const results = [
-    await removeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, force),
+    await removeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, true),
     await removeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false),
   ];
 
@@ -94,33 +94,41 @@ async function uninstallVerifier(cwd, force) {
   return results;
 }
 
-async function uninstallGlobalVerifier(ctx, force) {
-  return [await removeBootstrapFile(join(resolveAgentDir(ctx), "WATCHDOG.yml"), WATCHDOG_ROSTER, force)];
+async function uninstallGlobalVerifier(ctx) {
+  return [await removeBootstrapFile(join(resolveAgentDir(ctx), "WATCHDOG.yml"), WATCHDOG_ROSTER, true)];
 }
 
-function parseOptions(tokens, allowForce = true) {
-  const allowed = allowForce ? ["local", "global", "--force"] : ["local", "global"];
-  const invalid = tokens.find(token => !allowed.includes(token));
+function parseOptions(tokens) {
+  const invalid = tokens.find(token => !["local", "global"].includes(token));
   if (invalid) return { error: `unknown option ${invalid}` };
-  const scopes = tokens.filter(token => token === "local" || token === "global");
-  if (scopes.length > 1) return { error: "choose local or global" };
-  return {
-    force: allowForce && tokens.includes("--force"),
-    global: scopes[0] === "global",
-  };
+  if (tokens.length > 1) return { error: "choose local or global" };
+  return { global: tokens[0] === "global" };
 }
 
-const COMMAND_USAGE = "/verifier install [local|global] | /verifier uninstall [local|global] [--force] | /verifier info";
+const COMMAND_USAGE = "/verifier install [local|global] | /verifier uninstall [local|global] | /verifier info";
 
 
 const SUBCOMMANDS = [
   { name: "install", description: "Install verifier advisor files", usage: "[local|global]" },
-  { name: "uninstall", description: "Remove generated verifier advisor files", usage: "[local|global] [--force]" },
+  { name: "uninstall", description: "Remove verifier advisor files", usage: "[local|global]" },
   { name: "info", description: "Show verifier command help" },
 ];
 
 function completeSubcommands(argumentPrefix) {
-  if (argumentPrefix.includes(" ")) return null;
+  if (argumentPrefix.includes(" ")) {
+    const [action, scopePrefix = "", ...extra] = argumentPrefix.split(/\s+/);
+    if (extra.length || !["install", "uninstall"].includes(action)) return null;
+    const lowerScope = scopePrefix.toLowerCase();
+    const matches = ["local", "global"]
+      .filter(scope => scope.startsWith(lowerScope))
+      .map(scope => ({
+        value: `${action} ${scope} `,
+        label: scope,
+        description: `${scope} verifier setup`,
+      }));
+    return matches.length ? matches : null;
+  }
+
   const lower = argumentPrefix.toLowerCase();
   const matches = SUBCOMMANDS
     .filter(command => command.name.startsWith(lower))
@@ -145,7 +153,7 @@ export default function verifierPlugin(pi) {
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "info", ...rest] = args.trim().split(/\s+/).filter(Boolean);
-      const options = parseOptions(rest, action !== "install");
+      const options = parseOptions(rest);
       if (options.error) {
         ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         return;
@@ -158,7 +166,7 @@ export default function verifierPlugin(pi) {
       }
 
       if (action === "uninstall") {
-        ctx.ui.notify((await (options.global ? uninstallGlobalVerifier(ctx, options.force) : uninstallVerifier(cwd, options.force))).join("; "), "info");
+        ctx.ui.notify((await (options.global ? uninstallGlobalVerifier(ctx) : uninstallVerifier(cwd))).join("; "), "info");
         return;
       }
 
