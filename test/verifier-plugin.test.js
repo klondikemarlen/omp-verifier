@@ -16,7 +16,7 @@ verifierPlugin(pi);
 
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
-assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("").map(item => item.label), ["install", "uninstall", "info"]);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("").map(item => item.label), ["install", "uninstall", "status"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("un").map(item => item.label), ["uninstall"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("install ").map(item => item.label), ["local", "global"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("install g").map(item => item.label), ["global"]);
@@ -24,10 +24,22 @@ assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("
 assert.equal(registrations.commands.get("verifier").getArgumentCompletions("install local "), null);
 assert.ok(registrations.events.has("session_start"));
 
-await registrations.commands.get("verifier").handler("info", ctx);
-assert.match(registrations.notices.at(-1).message, /verifier install \[local\|global\] \| \/verifier uninstall \[local\|global\]/);
-assert.doesNotMatch(registrations.notices.at(-1).message, /--force/);
-assert.doesNotMatch(registrations.notices.at(-1).message, /verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment|verifier-bootstrap/);
+const statusRepo = await mkdtemp(join(tmpdir(), "omp-verifier-status-repo-"));
+const statusAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-status-agent-"));
+await writeFile(join(statusAgentDir, "config.yml"), "modelRoles:\n  advisor: openai/test:medium\nadvisor:\n  enabled: true\n");
+await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: statusRepo, agentDir: statusAgentDir });
+await registrations.commands.get("verifier").handler("install global", { ...ctx, cwd: statusRepo, agentDir: statusAgentDir });
+await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: statusRepo, agentDir: statusAgentDir });
+const statusMessage = registrations.notices.at(-1).message;
+assert.match(statusMessage, /Verifier status:/);
+assert.match(statusMessage, new RegExp(`active agent dir: ${statusAgentDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+assert.match(statusMessage, /global WATCHDOG\.yml: .* \(generated\)/);
+assert.match(statusMessage, /global config\.yml: .* \(exists; advisor enabled; modelRoles\.advisor configured\)/);
+assert.match(statusMessage, /project WATCHDOG\.yml: .* \(generated\)/);
+assert.match(statusMessage, /project \.omp\/config\.yml: .* \(generated\)/);
+assert.doesNotMatch(statusMessage, /--force|verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment|verifier-bootstrap/);
+await registrations.commands.get("verifier").handler("", { ...ctx, cwd: statusRepo, agentDir: statusAgentDir });
+assert.match(registrations.notices.at(-1).message, /Verifier status:/);
 
 const tempRepo = await mkdtemp(join(tmpdir(), "omp-verifier-"));
 const configPath = join(tempRepo, ".omp", "config.yml");

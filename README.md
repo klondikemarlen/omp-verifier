@@ -82,7 +82,7 @@ In the downstream repo:
 /verifier install
 ```
 
-Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `info`.
+Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `status`.
 
 This creates:
 
@@ -160,13 +160,20 @@ Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` i
 ## Verify plugin load
 
 ```text
-/verifier info
+/verifier status
 ```
+
+Bare `/verifier` shows the same status.
 
 Expected:
 
 ```text
-Verifier: /verifier install [local|global] | /verifier uninstall [local|global] | /verifier info
+Verifier status:
+project: /path/to/repo
+active agent dir: ~/.omp/agent
+global WATCHDOG.yml: ~/.omp/agent/WATCHDOG.yml (generated)
+global config.yml: ~/.omp/agent/config.yml (exists; advisor enabled; modelRoles.advisor configured)
+project WATCHDOG.yml: /path/to/repo/WATCHDOG.yml (absent)
 ```
 
 ## Release checklist
@@ -177,6 +184,6 @@ Verifier: /verifier install [local|global] | /verifier uninstall [local|global] 
 4. Push the branch, open a linked PR, review it, and merge it to `main`.
 5. Tag the merged version with `v<package.json version>` and push the tag.
 6. Reinstall from the remote source.
-7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier info`.
+7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier status`.
 
 See [CONCEPTS.md](./CONCEPTS.md) for design notes and install lessons.

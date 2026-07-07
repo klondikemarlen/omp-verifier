@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0 - 2026-07-07
+
+- Replaced `/verifier info` with `/verifier status`.
+- Added status reporting for active agent dir, global/project `WATCHDOG.yml`, global `config.yml`, and project `.omp/config.yml`.
+
 ## 0.1.9 - 2026-07-07
 
 - Added second-layer completions for `/verifier install local|global` and `/verifier uninstall local|global`.
