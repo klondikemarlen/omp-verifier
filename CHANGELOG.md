@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.1 - 2026-07-07
+
+- Reworked `/verifier status` to show a concise summary plus path-bearing file details for manual inspection.
+
 ## 0.5.0 - 2026-07-07
 
 - Changed generated `WATCHDOG.yml` to configure the default advisor with verifier guidance instead of adding a second `Verifier` advisor.

@@ -153,28 +153,61 @@ async function readText(path) {
   }
 }
 
-async function describeFile(path, generatedContent) {
+async function fileState(path, generatedContent) {
   const content = await readText(path);
   const generated = Array.isArray(generatedContent) ? generatedContent.includes(content) : generatedContent && content === generatedContent;
-  if (content === null) return `${path} (absent)`;
-  if (generated) return `${path} (generated)`;
-  return `${path} (customized)`;
+  if (content === null) return "absent";
+  if (generated) return "generated";
+  return "customized";
+}
+
+function sourceLabel(globalState, projectState) {
+  if (globalState !== "absent" && projectState !== "absent") return `global + project ${projectState} override`;
+  if (projectState !== "absent") return "project";
+  if (globalState !== "absent") return "global";
+  return "none";
+}
+
+function rulesLabel(globalState, projectState) {
+  if (projectState === "customized" || globalState === "customized") return "customized";
+  if (projectState === "generated" || globalState === "generated") return "generated";
+  return "none";
+}
+
+function advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig) {
+  if (projectConfig === "generated" && globalConfig === null) return "enabled via project config; global config absent";
+  const global = globalConfig === null ? "global config absent" : `global ${advisorEnabled}, model ${advisorModel}`;
+  return `${global}; project config ${projectConfig}`;
 }
 
 async function buildStatus(cwd, ctx) {
   const agentDir = resolveAgentDir(ctx);
-  const globalConfig = await readText(join(agentDir, "config.yml"));
+  const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
+  const globalConfigPath = join(agentDir, "config.yml");
+  const projectWatchdogPath = join(cwd, "WATCHDOG.yml");
+  const projectConfigPath = join(cwd, ".omp", "config.yml");
+  const globalWatchdog = await fileState(globalWatchdogPath, [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER]);
+  const projectWatchdog = await fileState(projectWatchdogPath, [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER]);
+  const projectConfig = await fileState(projectConfigPath, ADVISOR_CONFIG);
+  const globalConfig = await readText(globalConfigPath);
   const advisorEnabled = globalConfig === null ? "unknown" : /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(globalConfig) ? "enabled" : "not enabled";
   const advisorModel = globalConfig === null ? "unknown" : /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(globalConfig) ? "configured" : "missing";
+  const globalConfigSummary = globalConfig === null ? "absent" : `exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel}`;
   return [
     "Verifier status:",
     `project: ${cwd}`,
     `active agent dir: ${agentDir}`,
-    `global WATCHDOG.yml: ${await describeFile(join(agentDir, "WATCHDOG.yml"), [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER])}`,
-    `global config.yml: ${globalConfig === null ? `${join(agentDir, "config.yml")} (absent)` : `${join(agentDir, "config.yml")} (exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel})`}`,
-    `project WATCHDOG.yml: ${await describeFile(join(cwd, "WATCHDOG.yml"), [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER])}`,
-    `project .omp/config.yml: ${await describeFile(join(cwd, ".omp", "config.yml"), ADVISOR_CONFIG)}`,
-    `commands: ${COMMAND_USAGE}`,
+    "",
+    `verifier source: ${sourceLabel(globalWatchdog, projectWatchdog)}`,
+    `project override: ${projectWatchdog === "absent" ? "none" : projectWatchdog}`,
+    `advisor: ${advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig)}`,
+    `rules: ${rulesLabel(globalWatchdog, projectWatchdog)}`,
+    "",
+    "files:",
+    `  global WATCHDOG.yml: ${globalWatchdog} — ${globalWatchdogPath}`,
+    `  global config.yml: ${globalConfigSummary} — ${globalConfigPath}`,
+    `  project WATCHDOG.yml: ${projectWatchdog} — ${projectWatchdogPath}`,
+    `  project .omp/config.yml: ${projectConfig} — ${projectConfigPath}`,
   ].join("\n");
 }
 

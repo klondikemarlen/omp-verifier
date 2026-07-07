@@ -170,9 +170,16 @@ Expected:
 Verifier status:
 project: /path/to/repo
 active agent dir: ~/.omp/agent
-global WATCHDOG.yml: ~/.omp/agent/WATCHDOG.yml (generated)
-global config.yml: ~/.omp/agent/config.yml (exists; advisor enabled; modelRoles.advisor configured)
-project WATCHDOG.yml: /path/to/repo/WATCHDOG.yml (absent)
+verifier source: global
+project override: none
+advisor: global enabled, model configured; project config absent
+rules: generated
+
+files:
+  global WATCHDOG.yml: generated — ~/.omp/agent/WATCHDOG.yml
+  global config.yml: exists; advisor enabled; modelRoles.advisor configured — ~/.omp/agent/config.yml
+  project WATCHDOG.yml: absent — /path/to/repo/WATCHDOG.yml
+  project .omp/config.yml: absent — /path/to/repo/.omp/config.yml
 ```
 
 ## Release checklist

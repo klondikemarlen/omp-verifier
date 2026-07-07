@@ -54,10 +54,15 @@ await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: st
 const statusMessage = registrations.notices.at(-1).message;
 assert.match(statusMessage, /Verifier status:/);
 assert.match(statusMessage, new RegExp(`active agent dir: ${statusAgentDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
-assert.match(statusMessage, /global WATCHDOG\.yml: .* \(generated\)/);
-assert.match(statusMessage, /global config\.yml: .* \(exists; advisor enabled; modelRoles\.advisor configured\)/);
-assert.match(statusMessage, /project WATCHDOG\.yml: .* \(generated\)/);
-assert.match(statusMessage, /project \.omp\/config\.yml: .* \(generated\)/);
+assert.match(statusMessage, /verifier source: global \+ project generated override/);
+assert.match(statusMessage, /project override: generated/);
+assert.match(statusMessage, /advisor: global enabled, model configured; project config generated/);
+assert.match(statusMessage, /rules: generated/);
+assert.match(statusMessage, /files:/);
+assert.match(statusMessage, /global WATCHDOG\.yml: generated — /);
+assert.match(statusMessage, /global config\.yml: exists; advisor enabled; modelRoles\.advisor configured — /);
+assert.match(statusMessage, /project WATCHDOG\.yml: generated — /);
+assert.match(statusMessage, /project \.omp\/config\.yml: generated — /);
 assert.doesNotMatch(statusMessage, /--force|verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment|verifier-bootstrap/);
 await registrations.commands.get("verifier").handler("", { ...ctx, cwd: statusRepo, agentDir: statusAgentDir });
 assert.match(registrations.notices.at(-1).message, /Verifier status:/);
@@ -99,7 +104,11 @@ assert.match(registrations.notices.at(-1).message, /kept customized .*config\.ym
 assert.equal(await readFile(configPath, "utf8"), "custom: true\n");
 
 const cleanRepo = await mkdtemp(join(tmpdir(), "omp-verifier-clean-"));
+const localOnlyAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-local-only-agent-"));
 await registrations.commands.get("verifier").handler("install local", { ...ctx, cwd: cleanRepo });
+await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: cleanRepo, agentDir: localOnlyAgentDir });
+assert.match(registrations.notices.at(-1).message, /verifier source: project/);
+assert.match(registrations.notices.at(-1).message, /advisor: enabled via project config; global config absent/);
 await registrations.commands.get("verifier").handler("uninstall local", { ...ctx, cwd: cleanRepo });
 assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /removed .*config\.yml/);
@@ -112,7 +121,7 @@ await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: c
 assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml.*merge verifier advisor manually/);
 assert.equal(await readFile(join(customRepo, "WATCHDOG.yml"), "utf8"), "custom watchdog\n");
 await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: customRepo });
-assert.match(registrations.notices.at(-1).message, /project WATCHDOG\.yml: .* \(customized\)/);
+assert.match(registrations.notices.at(-1).message, /project WATCHDOG\.yml: customized — /);
 
 await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: customRepo });
 assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
@@ -139,7 +148,7 @@ await registrations.commands.get("verifier").handler("install global", { ...ctx,
 assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml.*merge verifier advisor manually/);
 assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
 await registrations.commands.get("verifier").handler("status", { ...ctx, cwd: globalRepo, agentDir });
-assert.match(registrations.notices.at(-1).message, /global WATCHDOG\.yml: .* \(customized\)/);
+assert.match(registrations.notices.at(-1).message, /global WATCHDOG\.yml: customized — /);
 
 await registrations.commands.get("verifier").handler("uninstall global", { ...ctx, cwd: globalRepo, agentDir });
 assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
