@@ -33,13 +33,13 @@ sequenceDiagram
 `/verifier install` writes in the current repo by default:
 
 - `.omp/config.yml` when absent, enabling `advisor.enabled` without setting a model.
-- `WATCHDOG.yml`, keeping the default advisor and adding a named `Verifier` advisor that imports `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
+- `WATCHDOG.yml`, configuring the default advisor with verifier guidance from `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
 
 `/verifier install global` writes only `<active agent dir>/WATCHDOG.yml`; it does not edit global `config.yml`.
 
-Re-running `/verifier install` refreshes only the targeted `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
+Re-running `/verifier install` creates or migrates verifier-generated `WATCHDOG.yml` files only; customized `WATCHDOG.yml` files and existing `.omp/config.yml` are preserved.
 
-`/verifier uninstall` removes the targeted `WATCHDOG.yml`. Project-local `.omp/config.yml` is removed only when it still matches the generated content.
+`/verifier uninstall` removes verifier-generated `WATCHDOG.yml` files only. Project-local `.omp/config.yml` is removed only when it still matches the generated content.
 
 ## Install lessons
 

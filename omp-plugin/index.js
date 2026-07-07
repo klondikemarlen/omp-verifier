@@ -8,13 +8,32 @@ const ADVISOR_CONFIG = `advisor:
   syncBacklog: 1
 `;
 
-const WATCHDOG_ROSTER = `instructions: |
+const OLD_WATCHDOG_ROSTER = `instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
 advisors:
   - name: default
 
   - name: Verifier
+    tools: [read, grep, glob]
+    instructions: |
+      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+
+      You are the always-on verifier for this session.
+      Review completed code-change turns as untrusted until evidence proves them.
+      Raise a blocker when work is called done without observed evidence.
+      Raise a concern when checks are too broad, too narrow, or ignore local setup.
+      Stay silent when the evidence is sufficient.
+
+      Project-specific rules can live in downstream WATCHDOG files: setup commands,
+      test commands, database/service details, browser routes, and "done means" checks.
+`;
+
+const WATCHDOG_ROSTER = `instructions: |
+  Everyone: keep advice concrete, evidence-first, and non-repetitive.
+
+advisors:
+  - name: default
     tools: [read, grep, glob]
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
@@ -62,12 +81,40 @@ async function removeBootstrapFile(path, expectedContent, force = false) {
   }
 }
 
+function isGeneratedWatchdog(content) {
+  return content === WATCHDOG_ROSTER || content === OLD_WATCHDOG_ROSTER;
+}
+
+async function writeWatchdogFile(path) {
+  const current = await readText(path);
+  if (current === null) {
+    await writeFile(path, WATCHDOG_ROSTER, { flag: "wx" });
+    return `created ${path}`;
+  }
+  if (current === WATCHDOG_ROSTER) return `kept generated ${path}`;
+  if (current === OLD_WATCHDOG_ROSTER) {
+    await writeFile(path, WATCHDOG_ROSTER, { flag: "w" });
+    return `replaced generated ${path}`;
+  }
+  return `kept customized ${path} (merge verifier advisor manually)`;
+}
+
+async function removeWatchdogFile(path) {
+  const current = await readText(path);
+  if (current === null) return `already absent ${path}`;
+  if (isGeneratedWatchdog(current)) {
+    await unlink(path);
+    return `removed ${path}`;
+  }
+  return `kept customized ${path} (remove verifier block manually)`;
+}
+
 async function installVerifier(cwd) {
   const configDir = join(cwd, ".omp");
   await mkdir(configDir, { recursive: true });
   return [
     await writeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false, false),
-    await writeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, true),
+    await writeWatchdogFile(join(cwd, "WATCHDOG.yml")),
     "restart OMP from this repo or run /advisor on",
   ];
 }
@@ -76,7 +123,7 @@ async function installGlobalVerifier(ctx) {
   const agentDir = resolveAgentDir(ctx);
   await mkdir(agentDir, { recursive: true });
   return [
-    await writeBootstrapFile(join(agentDir, "WATCHDOG.yml"), WATCHDOG_ROSTER, true),
+    await writeWatchdogFile(join(agentDir, "WATCHDOG.yml")),
     "restart OMP or run /advisor on; ensure modelRoles.advisor is configured",
   ];
 }
@@ -84,7 +131,7 @@ async function installGlobalVerifier(ctx) {
 async function uninstallVerifier(cwd) {
   const configDir = join(cwd, ".omp");
   const results = [
-    await removeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, true),
+    await removeWatchdogFile(join(cwd, "WATCHDOG.yml")),
     await removeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false),
   ];
 
@@ -95,7 +142,7 @@ async function uninstallVerifier(cwd) {
 }
 
 async function uninstallGlobalVerifier(ctx) {
-  return [await removeBootstrapFile(join(resolveAgentDir(ctx), "WATCHDOG.yml"), WATCHDOG_ROSTER, true)];
+  return [await removeWatchdogFile(join(resolveAgentDir(ctx), "WATCHDOG.yml"))];
 }
 
 async function readText(path) {
@@ -108,8 +155,9 @@ async function readText(path) {
 
 async function describeFile(path, generatedContent) {
   const content = await readText(path);
+  const generated = Array.isArray(generatedContent) ? generatedContent.includes(content) : generatedContent && content === generatedContent;
   if (content === null) return `${path} (absent)`;
-  if (generatedContent && content === generatedContent) return `${path} (generated)`;
+  if (generated) return `${path} (generated)`;
   return `${path} (customized)`;
 }
 
@@ -122,9 +170,9 @@ async function buildStatus(cwd, ctx) {
     "Verifier status:",
     `project: ${cwd}`,
     `active agent dir: ${agentDir}`,
-    `global WATCHDOG.yml: ${await describeFile(join(agentDir, "WATCHDOG.yml"), WATCHDOG_ROSTER)}`,
+    `global WATCHDOG.yml: ${await describeFile(join(agentDir, "WATCHDOG.yml"), [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER])}`,
     `global config.yml: ${globalConfig === null ? `${join(agentDir, "config.yml")} (absent)` : `${join(agentDir, "config.yml")} (exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel})`}`,
-    `project WATCHDOG.yml: ${await describeFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER)}`,
+    `project WATCHDOG.yml: ${await describeFile(join(cwd, "WATCHDOG.yml"), [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER])}`,
     `project .omp/config.yml: ${await describeFile(join(cwd, ".omp", "config.yml"), ADVISOR_CONFIG)}`,
     `commands: ${COMMAND_USAGE}`,
   ].join("\n");

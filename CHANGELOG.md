@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.1 - 2026-07-07
+
+- Changed generated `WATCHDOG.yml` to configure the default advisor with verifier guidance instead of adding a second `Verifier` advisor.
+- Preserved customized `WATCHDOG.yml` files during install and uninstall; old generated rosters still migrate or remove cleanly.
+
 ## 0.4.0 - 2026-07-07
 
 - Replaced `/verifier info` with `/verifier status`.
