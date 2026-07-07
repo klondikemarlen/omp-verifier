@@ -1,0 +1,25 @@
+{
+  "name": "omp-verifier",
+  "version": "0.1.0",
+  "description": "OMP verifier agents, commands, and planning tools for evidence-first PR verification.",
+  "type": "module",
+  "keywords": ["omp-plugin", "agents", "verification", "pr-qa"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/klondikemarlen/omp-verifier.git"
+  },
+  "files": [
+    "agents/",
+    "tools/",
+    "index.js"
+  ],
+  "omp": {
+    "extensions": ["./index.js"]
+  },
+  "pi": {
+    "extensions": ["./index.js"]
+  },
+  "scripts": {
+    "check": "node --check index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js"
+  }
+}
