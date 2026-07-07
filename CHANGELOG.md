@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4 - 2026-07-07
+
+- Reduced the plugin to advisor injection only: `/verifier-bootstrap`, `/verifier-info`, and upstream `WATCHDOG.md`.
+- Removed verifier task agents, PR handoff, planning tools, app boot planning, and PR comment formatting.
+- Stopped hard-coding the advisor model; bootstrap now uses the user's default advisor model.
+
 ## 0.1.3 - 2026-07-07
 
 - Added `/verifier-bootstrap [--force]` to scaffold project-local advisor config and `WATCHDOG.yml` importing upstream verifier rules.

@@ -1,12 +1,11 @@
 # OMP Verifier Agent Notes
 
-This repo ships an OMP plugin that adds verifier-focused agents, commands, and planning tools.
+This repo ships an OMP plugin whose only product feature is injecting verifier guidance as an OMP advisor.
 
 ## Local workflow
 
 - Keep runtime extension code in `omp-plugin/`.
-- Keep pure planning helpers in `tools/`.
-- Keep task-agent prompts in `agents/`.
+- Keep reusable verifier guidance in `WATCHDOG.md`.
 - Run `npm run release:check` before committing.
 - Reinstall from the remote plugin after pushing when testing reload behavior:
 
@@ -15,6 +14,8 @@ npm run reinstall
 ```
 
 ## Product rule
+
+Less is more. Do not add task agents, planning tools, PR checkout, app booting, GitHub comments, or a custom runtime unless explicitly requested.
 
 Verifier output must be evidence-first:
 
@@ -25,4 +26,8 @@ Verifier output must be evidence-first:
 
 ## Scope
 
-This repo currently provides the v0.1 scaffold: agents, slash command handoff, and planning/formatting tools. Real app booting and GitHub PR posting should be added behind explicit tools before the README claims those behaviors are automated.
+Current scope:
+
+- `/verifier-bootstrap [--force]` scaffolds project-local advisor setup.
+- `/verifier-info` confirms the bootstrap command is available.
+- `WATCHDOG.md` holds upstream verifier guidance imported by downstream `WATCHDOG.yml` files.
