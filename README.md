@@ -5,8 +5,10 @@ Evidence-first OMP verifier agent scaffold for PR QA.
 ## Install
 
 ```bash
-omp plugin install github:klondikemarlen/omp-verifier
+omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
+
+The shorter `github:klondikemarlen/omp-verifier` form does not work while this repo is private because Bun resolves it through GitHub's tarball API.
 
 For local development:
 
