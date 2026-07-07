@@ -72,6 +72,8 @@ Remove the generated global wrapper:
 /verifier uninstall global
 ```
 
+In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
+
 ## Install verifier into one project
 
 In the downstream repo:
@@ -147,19 +149,13 @@ Install always replaces only the targeted `WATCHDOG.yml`. Existing `.omp/config.
 /verifier uninstall
 ```
 
-This removes files only when they still match the generated verifier content:
+This removes the targeted verifier files:
 
-- generated `WATCHDOG.yml` is removed;
+- `WATCHDOG.yml` is removed;
 - generated `.omp/config.yml` is removed;
-- customized files are kept with a message to remove the verifier block manually.
+- customized `.omp/config.yml` is preserved.
 
-To remove a customized `WATCHDOG.yml` anyway:
-
-```text
-/verifier uninstall --force
-```
-
-Even with `--force`, customized `.omp/config.yml` is preserved. Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` instead of the current repo; `local` is the default.
+Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` instead of the current repo; `local` is the default.
 
 ## Verify plugin load
 
@@ -170,17 +166,17 @@ Even with `--force`, customized `.omp/config.yml` is preserved. Use `global` wit
 Expected:
 
 ```text
-Verifier: /verifier install [local|global] | /verifier uninstall [local|global] [--force] | /verifier info
+Verifier: /verifier install [local|global] | /verifier uninstall [local|global] | /verifier info
 ```
 
 ## Release checklist
 
-1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md`.
+1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md` on a feature branch.
 2. Run `npm run release:check`.
 3. Commit with the style in `COMMITTING.md`.
-4. Push `main`.
-5. Tag the committed version with `v<package.json version>` and push the tag.
-6. Run `omp plugin uninstall omp-verifier && npm run reinstall`.
+4. Push the branch, open a linked PR, review it, and merge it to `main`.
+5. Tag the merged version with `v<package.json version>` and push the tag.
+6. Reinstall from the remote source.
 7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier info`.
 
 See [CONCEPTS.md](./CONCEPTS.md) for design notes and install lessons.

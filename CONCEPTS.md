@@ -39,11 +39,7 @@ sequenceDiagram
 
 Re-running `/verifier install` refreshes only the targeted `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
 
-`/verifier uninstall` removes generated files only when they still match the generated content. Customized files are preserved.
-
-`/verifier uninstall global` removes only the generated user-level `WATCHDOG.yml`.
-
-`/verifier uninstall --force` removes customized `WATCHDOG.yml`, but still preserves customized `.omp/config.yml`.
+`/verifier uninstall` removes the targeted `WATCHDOG.yml`. Project-local `.omp/config.yml` is removed only when it still matches the generated content.
 
 ## Install lessons
 

@@ -18,11 +18,15 @@ assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("").map(item => item.label), ["install", "uninstall", "info"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("un").map(item => item.label), ["uninstall"]);
-assert.equal(registrations.commands.get("verifier").getArgumentCompletions("install "), null);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("install ").map(item => item.label), ["local", "global"]);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("install g").map(item => item.label), ["global"]);
+assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("uninstall ").map(item => item.label), ["local", "global"]);
+assert.equal(registrations.commands.get("verifier").getArgumentCompletions("install local "), null);
 assert.ok(registrations.events.has("session_start"));
 
 await registrations.commands.get("verifier").handler("info", ctx);
-assert.match(registrations.notices.at(-1).message, /verifier install \[local\|global\] \| \/verifier uninstall \[local\|global\] \[--force\]/);
+assert.match(registrations.notices.at(-1).message, /verifier install \[local\|global\] \| \/verifier uninstall \[local\|global\]/);
+assert.doesNotMatch(registrations.notices.at(-1).message, /--force/);
 assert.doesNotMatch(registrations.notices.at(-1).message, /verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment|verifier-bootstrap/);
 
 const tempRepo = await mkdtemp(join(tmpdir(), "omp-verifier-"));
@@ -59,9 +63,12 @@ const customRepo = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
 await mkdir(join(customRepo, ".omp"));
 await writeFile(join(customRepo, ".omp", "config.yml"), "custom: true\n");
 await writeFile(join(customRepo, "WATCHDOG.yml"), "custom watchdog\n");
-await registrations.commands.get("verifier").handler("uninstall --force", { ...ctx, cwd: customRepo });
+await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: customRepo });
 assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /kept customized .*config\.yml/);
+
+await registrations.commands.get("verifier").handler("uninstall bogus", { ...ctx, cwd: customRepo });
+assert.match(registrations.notices.at(-1).message, /Usage:/);
 
 const globalRepo = await mkdtemp(join(tmpdir(), "omp-verifier-global-repo-"));
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
@@ -71,6 +78,11 @@ assert.match(await readFile(globalWatchdogPath, "utf8"), /always-on verifier/);
 assert.match(registrations.notices.at(-1).message, /created .*WATCHDOG\.yml/);
 await assert.rejects(readFile(join(globalRepo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
 await assert.rejects(readFile(join(globalRepo, ".omp", "config.yml"), "utf8"), /ENOENT/);
+await registrations.commands.get("verifier").handler("uninstall global", { ...ctx, cwd: globalRepo, agentDir });
+assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
+
+await writeFile(globalWatchdogPath, "custom global watchdog\n");
 await registrations.commands.get("verifier").handler("uninstall global", { ...ctx, cwd: globalRepo, agentDir });
 assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
