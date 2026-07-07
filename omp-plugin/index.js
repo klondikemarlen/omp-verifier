@@ -98,6 +98,39 @@ async function uninstallGlobalVerifier(ctx) {
   return [await removeBootstrapFile(join(resolveAgentDir(ctx), "WATCHDOG.yml"), WATCHDOG_ROSTER, true)];
 }
 
+async function readText(path) {
+  try { return await readFile(path, "utf8"); }
+  catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function describeFile(path, generatedContent) {
+  const content = await readText(path);
+  if (content === null) return `${path} (absent)`;
+  if (generatedContent && content === generatedContent) return `${path} (generated)`;
+  return `${path} (customized)`;
+}
+
+async function buildStatus(cwd, ctx) {
+  const agentDir = resolveAgentDir(ctx);
+  const globalConfig = await readText(join(agentDir, "config.yml"));
+  const advisorEnabled = globalConfig === null ? "unknown" : /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(globalConfig) ? "enabled" : "not enabled";
+  const advisorModel = globalConfig === null ? "unknown" : /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(globalConfig) ? "configured" : "missing";
+  return [
+    "Verifier status:",
+    `project: ${cwd}`,
+    `active agent dir: ${agentDir}`,
+    `global WATCHDOG.yml: ${await describeFile(join(agentDir, "WATCHDOG.yml"), WATCHDOG_ROSTER)}`,
+    `global config.yml: ${globalConfig === null ? `${join(agentDir, "config.yml")} (absent)` : `${join(agentDir, "config.yml")} (exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel})`}`,
+    `project WATCHDOG.yml: ${await describeFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER)}`,
+    `project .omp/config.yml: ${await describeFile(join(cwd, ".omp", "config.yml"), ADVISOR_CONFIG)}`,
+    `commands: ${COMMAND_USAGE}`,
+  ].join("\n");
+}
+
+
 function parseOptions(tokens) {
   const invalid = tokens.find(token => !["local", "global"].includes(token));
   if (invalid) return { error: `unknown option ${invalid}` };
@@ -105,13 +138,13 @@ function parseOptions(tokens) {
   return { global: tokens[0] === "global" };
 }
 
-const COMMAND_USAGE = "/verifier install [local|global] | /verifier uninstall [local|global] | /verifier info";
+const COMMAND_USAGE = "/verifier install [local|global] | /verifier uninstall [local|global] | /verifier status";
 
 
 const SUBCOMMANDS = [
   { name: "install", description: "Install verifier advisor files", usage: "[local|global]" },
   { name: "uninstall", description: "Remove verifier advisor files", usage: "[local|global]" },
-  { name: "info", description: "Show verifier command help" },
+  { name: "status", description: "Show verifier setup status" },
 ];
 
 function completeSubcommands(argumentPrefix) {
@@ -152,13 +185,20 @@ export default function verifierPlugin(pi) {
     description: "Install or uninstall omp-verifier advisor injection",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
-      const [action = "info", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const cwd = ctx.cwd || process.cwd();
+
+      if (action === "status") {
+        if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
+        else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
+        return;
+      }
+
       const options = parseOptions(rest);
       if (options.error) {
         ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         return;
       }
-      const cwd = ctx.cwd || process.cwd();
 
       if (action === "install") {
         ctx.ui.notify((await (options.global ? installGlobalVerifier(ctx) : installVerifier(cwd))).join("; "), "info");
@@ -167,11 +207,6 @@ export default function verifierPlugin(pi) {
 
       if (action === "uninstall") {
         ctx.ui.notify((await (options.global ? uninstallGlobalVerifier(ctx) : uninstallVerifier(cwd))).join("; "), "info");
-        return;
-      }
-
-      if (action === "info") {
-        ctx.ui.notify(`Verifier: ${COMMAND_USAGE}`, "info");
         return;
       }
 

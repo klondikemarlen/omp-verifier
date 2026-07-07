@@ -63,10 +63,10 @@ Observed failure mode: Bun resolved `#v0.1.1` and `#refs/tags/v0.1.1` as missing
 
 A release is a GitHub plugin release, not an npm or Marketplace publish.
 
-1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md`.
+1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md` on a feature branch.
 2. Run `npm run release:check`.
 3. Commit with the style in `COMMITTING.md`.
-4. Push `main`.
-5. Tag the committed version with `v<package.json version>` and push the tag.
-6. Run `omp plugin uninstall omp-verifier && npm run reinstall` from the pushed commit.
-7. Confirm installed `.bun-tag`, `package.json` version, file tree, and `/verifier info`.
+4. Push the branch, open a linked PR, review it, and merge it to `main`.
+5. Tag the merged version with `v<package.json version>` and push the tag.
+6. Reinstall from the remote source.
+7. Confirm installed `.bun-tag`, `package.json` version, file tree, and `/verifier status`.
