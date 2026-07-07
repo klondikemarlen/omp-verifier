@@ -41,8 +41,29 @@ Inspired by Agentic Engineer concepts:
 - Keep one specialized verifier before adding orchestration.
 - Use sandboxes/worktrees to defer trust until merge.
 
+## Code organization
+
+- `omp-plugin/` wires OMP commands, hooks, and tool registration.
+- `tools/` contains pure planning and formatting helpers.
+- `agents/` contains task-agent prompts discovered by OMP plugin installs.
+- `AGENTS.md` and `COMMITTING.md` capture repo-local agent and commit conventions.
+- `CHANGELOG.md` records release-facing changes.
+
 ## Verification
 
 ```bash
-npm run check
+npm run release:check
 ```
+
+## Release checklist
+
+1. Run `npm run release:check`.
+2. Commit using `COMMITTING.md`.
+3. Push `main`.
+4. Reinstall from the remote:
+
+   ```bash
+   npm run reinstall
+   ```
+
+5. Reload OMP plugins or restart OMP.

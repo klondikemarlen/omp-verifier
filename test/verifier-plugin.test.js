@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import verifierPlugin from "../index.js";
+import verifierPlugin from "../omp-plugin/index.js";
 
 function zChain() {
   return {

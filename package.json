@@ -3,24 +3,37 @@
   "version": "0.1.0",
   "description": "OMP verifier agents, commands, and planning tools for evidence-first PR verification.",
   "type": "module",
-  "keywords": ["omp-plugin", "agents", "verification", "pr-qa"],
+  "license": "MIT",
+  "homepage": "https://github.com/klondikemarlen/omp-verifier#readme",
+  "bugs": {
+    "url": "https://github.com/klondikemarlen/omp-verifier/issues"
+  },
+  "qna": false,
+  "keywords": ["omp", "oh-my-pi", "plugin", "agents", "verification", "pr-qa"],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/klondikemarlen/omp-verifier.git"
   },
   "files": [
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "COMMITTING.md",
+    "LICENSE",
+    "README.md",
     "agents/",
-    "tools/",
-    "index.js"
+    "omp-plugin/",
+    "tools/"
   ],
   "omp": {
-    "extensions": ["./index.js"]
+    "extensions": ["./omp-plugin/index.js"]
   },
   "pi": {
-    "extensions": ["./index.js"]
+    "extensions": ["./omp-plugin/index.js"]
   },
   "scripts": {
-    "check": "node --check index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js && node --check test/verifier-plugin.test.js",
-    "test": "node test/verifier-plugin.test.js"
+    "check": "node --check omp-plugin/index.js && node --check tools/verify-pr.js && node --check tools/boot-app.js && node --check tools/comment-pr.js && node --check test/verifier-plugin.test.js",
+    "test": "node --test test/*.test.js",
+    "release:check": "npm run check && npm test",
+    "reinstall": "omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git"
   }
 }

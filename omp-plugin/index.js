@@ -1,6 +1,6 @@
-import { buildBootPlan } from "./tools/boot-app.js";
-import { formatPrComment } from "./tools/comment-pr.js";
-import { buildVerificationPlan } from "./tools/verify-pr.js";
+import { buildBootPlan } from "../tools/boot-app.js";
+import { formatPrComment } from "../tools/comment-pr.js";
+import { buildVerificationPlan } from "../tools/verify-pr.js";
 
 export default function verifierPlugin(pi) {
   const { z } = pi.zod;
