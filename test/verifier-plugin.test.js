@@ -29,6 +29,7 @@ const watchdogPath = join(tempRepo, "WATCHDOG.yml");
 await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: tempRepo });
 assert.match(await readFile(configPath, "utf8"), /advisor:\n  enabled: true/);
 const watchdog = await readFile(watchdogPath, "utf8");
+assert.match(watchdog, /name: default/);
 assert.match(watchdog, /@~\/.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
 assert.doesNotMatch(watchdog, /model:/);
 assert.match(registrations.notices.at(-1).message, /created/);

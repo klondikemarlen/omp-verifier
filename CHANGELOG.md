@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.6 - 2026-07-07
+
+- Changed generated `WATCHDOG.yml` to keep OMP's default advisor and add `Verifier` as a second advisor.
+
 ## 0.1.5 - 2026-07-07
 
 - Replaced bootstrap-specific slash commands with `/verifier install`, `/verifier uninstall`, and `/verifier info`.

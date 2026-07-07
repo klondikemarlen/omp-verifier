@@ -53,13 +53,14 @@ advisor:
   syncBacklog: 1
 ```
 
-`WATCHDOG.yml` defines the actual always-on verifier advisor:
-
+`WATCHDOG.yml` keeps the original default advisor and adds a second always-on verifier advisor:
 ```yaml
 instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
 advisors:
+  - name: default
+
   - name: Verifier
     tools: [read, grep, glob]
     instructions: |

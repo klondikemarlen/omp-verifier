@@ -20,7 +20,7 @@ No task agents, PR checkout, app booting, GitHub comments, planning tools, or cu
 sequenceDiagram
   participant User
   participant Main as Main agent
-  participant Advisor as OMP advisor: Verifier
+  participant Advisor as OMP advisors: default + Verifier
 
   User->>Main: request code change
   Main->>Main: edit and run checks
@@ -33,7 +33,7 @@ sequenceDiagram
 `/verifier install` writes in the current repo only:
 
 - `.omp/config.yml` when absent, enabling `advisor.enabled` without setting a model.
-- `WATCHDOG.yml`, defining a named `Verifier` advisor that imports `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
+- `WATCHDOG.yml`, keeping the default advisor and adding a named `Verifier` advisor that imports `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
 
 `/verifier install --force` refreshes only `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
 

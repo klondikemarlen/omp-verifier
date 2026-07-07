@@ -11,6 +11,8 @@ const WATCHDOG_ROSTER = `instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
 advisors:
+  - name: default
+
   - name: Verifier
     tools: [read, grep, glob]
     instructions: |
