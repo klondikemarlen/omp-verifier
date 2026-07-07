@@ -17,11 +17,14 @@
 
 A normal implementation agent is optimized to change code. A verifier agent is optimized to distrust the claim until the smallest useful check proves it.
 
-This package supplies that verifier layer as an OMP plugin:
+This package supplies that verifier layer in three tiers:
 
-1. Agent prompts in `agents/` define verifier behavior.
-2. The OMP extension in `omp-plugin/` registers slash commands and tools.
-3. Pure helpers in `tools/` build plans and comment text without touching GitHub, browsers, or app processes.
+1. `WATCHDOG.md` provides advisor-style rules for always-on review through OMP's built-in advisor runtime.
+2. Agent prompts in `agents/` define explicit verifier subagent behavior.
+3. The OMP extension in `omp-plugin/` registers optional slash-command sugar and pure planning tools.
+4. Helpers in `tools/` build plans and comment text without touching GitHub, browsers, or app processes.
+
+Current OMP caveat: this package does not install a custom `omp-verifier` advisor runtime or settings role. Always-on behavior uses the built-in OMP advisor plus `WATCHDOG.md`; a dedicated verifier role would need upstream OMP support.
 
 ## Relationship to Marlen's skills
 
@@ -33,16 +36,32 @@ The same precedence rule applies here: generic verifier guidance lives in this r
 
 ## Runtime flow
 
+Always-on advisor flow:
+
+```mermaid
+sequenceDiagram
+  participant User
+  participant Main as Main agent
+  participant Advisor as OMP advisor + WATCHDOG.md
+
+  User->>Main: request code change
+  Main->>Main: edit and run checks
+  Main-->>Advisor: completed turn delta
+  Advisor-->>Main: nit, concern, blocker, or silence
+```
+
+Explicit verifier subagent flow:
+
 ```mermaid
 sequenceDiagram
   participant User
   participant OMP
   participant Plugin as omp-plugin/index.js
-  participant Agent as verifier agent
+  participant Agent as project-verifier
   participant Tools as planning helpers
 
   User->>OMP: /verify-pr <repo> <pr>
-  OMP->>Plugin: command handler
+  OMP->>Plugin: optional command handler
   Plugin->>OMP: queue verifier turn
   OMP->>Agent: verify PR claim
   Agent->>Tools: request plans when useful
@@ -93,6 +112,8 @@ omp plugin uninstall omp-verifier
 omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
 
+Observed failure mode: OMP/Bun can keep an old git commit pinned even after uninstall/reinstall. Release verification must inspect the installed package tree, not just the install success line. If `~/.omp/plugins/node_modules/omp-verifier` still contains the old layout or old agents, remote install verification is blocked.
+
 ## Release flow
 
 A release is a GitHub plugin release, not an npm or Marketplace publish.
@@ -102,7 +123,8 @@ A release is a GitHub plugin release, not an npm or Marketplace publish.
 3. Commit with the style in `COMMITTING.md`.
 4. Push `main`.
 5. In a fresh OMP session, reinstall from the remote source.
-6. Run `/verifier-info` or `/verify-pr <repo> <pr>` to confirm the installed plugin loads.
+6. Confirm the installed tree contains the pushed files, including `CONCEPTS.md`, `agents/project-verifier.md`, and `omp-plugin/index.js`.
+7. Run `/verifier-info` or `/verify-pr <repo> <pr>` to confirm the installed plugin loads.
 
 ## Current limits
 

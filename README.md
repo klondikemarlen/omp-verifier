@@ -4,12 +4,19 @@ OMP verifier agents, commands, and planning helpers for evidence-first PR QA.
 
 ## What it does
 
-`/verify-pr <repo> <pr-number>` starts a verifier turn that asks OMP to prove or disprove the PR claim with targeted evidence.
+OMP Verifier is an advisor-style verification layer.
+
+Primary interface: enable OMP's built-in advisor and point local `WATCHDOG.md` rules at this repo's verifier guidance. The verifier then reviews code-change turns in the background and pushes back when implementation claims lack evidence.
+
+Current OMP caveat: this package does not create a separate `omp-verifier.enabled` settings role today. Always-on behavior uses OMP's built-in `advisor.enabled` runtime plus user/project `WATCHDOG.md` rules.
+
+Optional interface: `/verify-pr <repo> <pr-number>` starts an explicit verifier subagent handoff for PR review.
 
 The plugin keeps side effects explicit:
 
-- agent prompts describe verifier behavior;
-- slash commands hand off work to the agent;
+- `WATCHDOG.md` defines always-on aggressive advisor guidance;
+- agent prompts define verifier subagent behavior;
+- slash commands hand off work to the agent when requested;
 - tools return plans or Markdown only;
 - app booting and GitHub PR posting are not automated yet.
 
@@ -30,6 +37,8 @@ omp plugin uninstall omp-verifier
 omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git
 ```
 
+If the remote install keeps an old commit pinned after uninstall/reinstall, use the local link workflow and treat remote release verification as blocked until OMP/Bun install state is fixed.
+
 For local development, link the working tree so OMP loads your checkout:
 
 ```bash
@@ -40,6 +49,7 @@ Then restart OMP or run `/reload-plugins`.
 
 ## What this package provides
 
+- `WATCHDOG.md` - aggressive advisor guidance for always-on verifier review.
 - `agents/verifier.md` - generic verification agent.
 - `agents/project-verifier.md` - generic project-aware verifier that reads local repo conventions first.
 - `/verify-pr <repo> <pr-number>` - starts an evidence-first verification turn.
@@ -47,6 +57,48 @@ Then restart OMP or run `/reload-plugins`.
 - `verify_pr_plan` - builds a Gold-first verification plan.
 - `boot_app_plan` - derives PR-specific app boot env/ports; it does not start services.
 - `format_pr_comment` - formats PASS/FAIL/BLOCKED PR evidence; it does not post to GitHub.
+
+## Always-on advisor setup
+
+OMP's built-in advisor is the closest supported runtime shape for "turn it on in settings and have it verify all code changes."
+
+Add an advisor model and enable the advisor in `~/.omp/agent/config.yml` or a project-local `.omp/config.yml`:
+
+```yaml
+modelRoles:
+  advisor: anthropic/claude-sonnet-4-5:medium
+
+advisor:
+  enabled: true
+  subagents: true
+  syncBacklog: 1
+```
+
+`subagents: true` is optional; it extends OMP's built-in advisor to spawned task/eval subagents. It does not create a separate `omp-verifier` settings role.
+
+Then add a project `WATCHDOG.md` that imports or copies the verifier rules. During local development, prefer the checkout path:
+
+```markdown
+@/path/to/omp-verifier/WATCHDOG.md
+
+# Project verifier rules
+
+- Add local setup, test commands, database rules, service names, and browser routes here.
+- Keep rules that apply across projects generic; move those upstream to this repo.
+```
+
+After remote install verification proves the installed package is fresh, projects can import the installed copy instead:
+
+```markdown
+@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+```
+
+Useful OMP docs:
+
+- Subagents: https://omp.sh/docs/subagents
+- Advisor and WATCHDOG: https://github.com/can1357/oh-my-pi/blob/main/docs/advisor-watchdog.md
+- Extensions: https://github.com/can1357/oh-my-pi/blob/main/docs/extensions.md
+- Extension loading: https://github.com/can1357/oh-my-pi/blob/main/docs/extension-loading.md
 
 This release wires the agent prompts, command handoff, extension hook, and pure planning helpers. Real app booting and PR comment posting should be added behind explicit tools before this README claims those behaviors are automated.
 
@@ -143,7 +195,17 @@ This is a GitHub plugin release, not an npm or Marketplace publish.
    ```
 
 6. Restart OMP or run `/reload-plugins`.
-7. Confirm the installed plugin loads:
+7. Confirm the installed package matches the pushed repo:
+
+   ```bash
+   cat ~/.omp/plugins/node_modules/omp-verifier/.bun-tag
+   ls ~/.omp/plugins/node_modules/omp-verifier
+   ls ~/.omp/plugins/node_modules/omp-verifier/agents
+   ls ~/.omp/plugins/node_modules/omp-verifier/omp-plugin
+   ```
+   The installed tree should include `agents/project-verifier.md`, `CONCEPTS.md`, and `omp-plugin/index.js`. If it still shows an old commit or `agents/wrap-verifier.md`, remote install verification failed; use `omp plugin link "$PWD"` for local development and investigate the OMP/Bun git install pin before release.
+
+8. Confirm the installed plugin loads:
 
    ```text
    /verifier-info

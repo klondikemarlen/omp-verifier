@@ -21,6 +21,7 @@
     "CONCEPTS.md",
     "LICENSE",
     "README.md",
+    "WATCHDOG.md",
     "agents/",
     "omp-plugin/",
     "tools/"
