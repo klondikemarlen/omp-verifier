@@ -7,9 +7,10 @@ OMP Verifier is small on purpose.
 The only runtime feature is advisor injection:
 
 1. `WATCHDOG.md` holds reusable verifier guidance.
-2. `/verifier-bootstrap` creates project-local OMP advisor files.
-3. Downstream repos customize `WATCHDOG.yml` with local setup, test, service, database, and browser rules.
-4. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
+2. `/verifier install` creates project-local OMP advisor files.
+3. `/verifier uninstall` removes generated verifier advisor files when safe.
+4. Downstream repos customize `WATCHDOG.yml` with local setup, test, service, database, and browser rules.
+5. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
 
 No task agents, PR checkout, app booting, GitHub comments, planning tools, or custom OMP runtime live here.
 
@@ -27,14 +28,18 @@ sequenceDiagram
   Advisor-->>Main: nit, concern, blocker, or silence
 ```
 
-## Bootstrap contract
+## Command contract
 
-`/verifier-bootstrap` writes in the current repo only:
+`/verifier install` writes in the current repo only:
 
 - `.omp/config.yml` when absent, enabling `advisor.enabled` without setting a model.
 - `WATCHDOG.yml`, defining a named `Verifier` advisor that imports `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
 
-`/verifier-bootstrap --force` refreshes only `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
+`/verifier install --force` refreshes only `WATCHDOG.yml`; existing `.omp/config.yml` is preserved.
+
+`/verifier uninstall` removes generated files only when they still match the generated content. Customized files are preserved.
+
+`/verifier uninstall --force` removes customized `WATCHDOG.yml`, but still preserves customized `.omp/config.yml`.
 
 ## Install lessons
 
@@ -64,4 +69,4 @@ A release is a GitHub plugin release, not an npm or Marketplace publish.
 4. Push `main`.
 5. Tag the committed version with `v<package.json version>` and push the tag.
 6. Run `omp plugin uninstall omp-verifier && npm run reinstall` from the pushed commit.
-7. Confirm installed `.bun-tag`, `package.json` version, file tree, and `/verifier-info`.
+7. Confirm installed `.bun-tag`, `package.json` version, file tree, and `/verifier info`.

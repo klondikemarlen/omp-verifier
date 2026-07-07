@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5 - 2026-07-07
+
+- Replaced bootstrap-specific slash commands with `/verifier install`, `/verifier uninstall`, and `/verifier info`.
+- Added safe uninstall behavior that removes generated verifier files and preserves customized project config.
+
 ## 0.1.4 - 2026-07-07
 
 - Reduced the plugin to advisor injection only: `/verifier-bootstrap`, `/verifier-info`, and upstream `WATCHDOG.md`.

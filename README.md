@@ -7,13 +7,13 @@ Installable OMP plugin that injects one evidence-first verifier as an always-on 
 Only these features belong here:
 
 1. Install the plugin.
-2. Bootstrap a target repo to run the verifier through OMP's built-in advisor.
+2. Install/uninstall verifier advisor injection in a target repo.
 3. Let each downstream repo customize local rules in `WATCHDOG.yml`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
 
 Not included: PR checkout, app booting, GitHub comments, verifier task agents, planning tools, or custom runtimes.
 
-## Install
+## Install plugin
 
 Private GitHub repos must use SSH:
 
@@ -29,12 +29,12 @@ omp plugin link ~/code/klondikemarlen/omp-verifier
 
 Then restart OMP or run `/reload-plugins`.
 
-## Bootstrap a project
+## Install verifier into a project
 
 In the downstream repo:
 
 ```text
-/verifier-bootstrap
+/verifier install
 ```
 
 This creates:
@@ -90,21 +90,41 @@ Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 Refresh the downstream wrapper without touching existing `.omp/config.yml`:
 
 ```text
-/verifier-bootstrap --force
+/verifier install --force
 ```
 
 `--force` replaces only `WATCHDOG.yml`. Existing `.omp/config.yml` is preserved; merge advisor settings manually if that file already exists.
 
-## Verify install
+## Uninstall verifier from a project
 
 ```text
-/verifier-info
+/verifier uninstall
+```
+
+This removes files only when they still match the generated verifier content:
+
+- generated `WATCHDOG.yml` is removed;
+- generated `.omp/config.yml` is removed;
+- customized files are kept with a message to remove the verifier block manually.
+
+To remove a customized `WATCHDOG.yml` anyway:
+
+```text
+/verifier uninstall --force
+```
+
+Even with `--force`, customized `.omp/config.yml` is preserved.
+
+## Verify plugin load
+
+```text
+/verifier info
 ```
 
 Expected:
 
 ```text
-Verifier: /verifier-bootstrap [--force] scaffolds project-local OMP advisor setup.
+Verifier: /verifier install [--force] | /verifier uninstall [--force] | /verifier info
 ```
 
 ## Release checklist
@@ -115,6 +135,6 @@ Verifier: /verifier-bootstrap [--force] scaffolds project-local OMP advisor setu
 4. Push `main`.
 5. Tag the committed version with `v<package.json version>` and push the tag.
 6. Run `omp plugin uninstall omp-verifier && npm run reinstall`.
-7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier-info`.
+7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier info`.
 
 See [CONCEPTS.md](./CONCEPTS.md) for design notes and install lessons.

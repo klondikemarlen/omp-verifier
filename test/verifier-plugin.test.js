@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import verifierPlugin from "../omp-plugin/index.js";
@@ -15,26 +15,48 @@ const ctx = { ui: { notify(message, level) { registrations.notices.push({ messag
 verifierPlugin(pi);
 
 assert.equal(registrations.label, "Verifier");
-assert.deepEqual([...registrations.commands.keys()].sort(), ["verifier-bootstrap", "verifier-info"]);
+assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 assert.ok(registrations.events.has("session_start"));
 
-await registrations.commands.get("verifier-info").handler("", ctx);
-assert.match(registrations.notices.at(-1).message, /verifier-bootstrap/);
-assert.doesNotMatch(registrations.notices.at(-1).message, /verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment/);
+await registrations.commands.get("verifier").handler("info", ctx);
+assert.match(registrations.notices.at(-1).message, /verifier install/);
+assert.doesNotMatch(registrations.notices.at(-1).message, /verify-pr|verify_pr_plan|boot_app_plan|format_pr_comment|verifier-bootstrap/);
 
 const tempRepo = await mkdtemp(join(tmpdir(), "omp-verifier-"));
-await registrations.commands.get("verifier-bootstrap").handler("", { ...ctx, cwd: tempRepo });
 const configPath = join(tempRepo, ".omp", "config.yml");
 const watchdogPath = join(tempRepo, "WATCHDOG.yml");
+
+await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: tempRepo });
 assert.match(await readFile(configPath, "utf8"), /advisor:\n  enabled: true/);
-assert.match(await readFile(watchdogPath, "utf8"), /@~\/.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
+const watchdog = await readFile(watchdogPath, "utf8");
+assert.match(watchdog, /@~\/.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
+assert.doesNotMatch(watchdog, /model:/);
 assert.match(registrations.notices.at(-1).message, /created/);
 
 await writeFile(configPath, "custom: true\n");
-await registrations.commands.get("verifier-bootstrap").handler("--force", { ...ctx, cwd: tempRepo });
+await registrations.commands.get("verifier").handler("install --force", { ...ctx, cwd: tempRepo });
 assert.equal(await readFile(configPath, "utf8"), "custom: true\n");
 assert.match(await readFile(watchdogPath, "utf8"), /always-on verifier/);
 assert.match(registrations.notices.at(-1).message, /kept existing .*config\.yml.*merge advisor keys manually/);
 assert.match(registrations.notices.at(-1).message, /replaced .*WATCHDOG\.yml/);
 
-console.log("verifier advisor bootstrap smoke test passed");
+await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: tempRepo });
+assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /kept customized .*config\.yml/);
+assert.equal(await readFile(configPath, "utf8"), "custom: true\n");
+
+const cleanRepo = await mkdtemp(join(tmpdir(), "omp-verifier-clean-"));
+await registrations.commands.get("verifier").handler("install", { ...ctx, cwd: cleanRepo });
+await registrations.commands.get("verifier").handler("uninstall", { ...ctx, cwd: cleanRepo });
+assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /removed .*config\.yml/);
+
+const customRepo = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
+await mkdir(join(customRepo, ".omp"));
+await writeFile(join(customRepo, ".omp", "config.yml"), "custom: true\n");
+await writeFile(join(customRepo, "WATCHDOG.yml"), "custom watchdog\n");
+await registrations.commands.get("verifier").handler("uninstall --force", { ...ctx, cwd: customRepo });
+assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /kept customized .*config\.yml/);
+
+console.log("verifier advisor install/uninstall smoke test passed");

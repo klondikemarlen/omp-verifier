@@ -28,6 +28,7 @@ Verifier output must be evidence-first:
 
 Current scope:
 
-- `/verifier-bootstrap [--force]` scaffolds project-local advisor setup.
-- `/verifier-info` confirms the bootstrap command is available.
+- `/verifier install [--force]` scaffolds project-local advisor setup.
+- `/verifier uninstall [--force]` removes generated advisor setup when safe.
+- `/verifier info` confirms the command is available.
 - `WATCHDOG.md` holds upstream verifier guidance imported by downstream `WATCHDOG.yml` files.

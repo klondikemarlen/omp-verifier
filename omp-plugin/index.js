@@ -1,6 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-
 
 const ADVISOR_CONFIG = `advisor:
   enabled: true
@@ -37,39 +36,73 @@ async function writeBootstrapFile(path, content, force, forceHint = true) {
   }
 }
 
-export default function verifierPlugin(pi) {
+async function removeBootstrapFile(path, expectedContent, force = false) {
+  try {
+    const current = await readFile(path, "utf8");
+    if (current === expectedContent || force) {
+      await unlink(path);
+      return `removed ${path}`;
+    }
+    return `kept customized ${path} (remove verifier block manually)`;
+  } catch (error) {
+    if (error?.code === "ENOENT") return `already absent ${path}`;
+    throw error;
+  }
+}
 
+async function installVerifier(cwd, force) {
+  const configDir = join(cwd, ".omp");
+  await mkdir(configDir, { recursive: true });
+  return [
+    await writeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false, false),
+    await writeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, force),
+    "restart OMP from this repo or run /advisor on",
+  ];
+}
+
+async function uninstallVerifier(cwd, force) {
+  const configDir = join(cwd, ".omp");
+  const results = [
+    await removeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, force),
+    await removeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false),
+  ];
+
+  try { await rmdir(configDir); results.push(`removed empty ${configDir}`); }
+  catch (error) { if (!["ENOENT", "ENOTEMPTY"].includes(error?.code)) throw error; }
+
+  return results;
+}
+
+export default function verifierPlugin(pi) {
   pi.setLabel("Verifier");
 
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.notify("Verifier plugin loaded", "info");
   });
 
-  pi.registerCommand("verifier-info", {
-    description: "Show verifier advisor bootstrap command",
-    handler: async (_args, ctx) => {
-      ctx.ui.notify(
-        "Verifier: /verifier-bootstrap [--force] scaffolds project-local OMP advisor setup.",
-        "info",
-      );
-    },
-  });
-
-  pi.registerCommand("verifier-bootstrap", {
-    description: "Bootstrap this repo to use omp-verifier as an always-on advisor",
+  pi.registerCommand("verifier", {
+    description: "Install or uninstall omp-verifier advisor injection",
     handler: async (args, ctx) => {
-      const force = args.trim().split(/\s+/).includes("--force");
+      const [action = "info", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const force = rest.includes("--force");
       const cwd = ctx.cwd || process.cwd();
-      const configDir = join(cwd, ".omp");
-      await mkdir(configDir, { recursive: true });
 
-      const results = [
-        await writeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false, false),
-        await writeBootstrapFile(join(cwd, "WATCHDOG.yml"), WATCHDOG_ROSTER, force),
-      ];
+      if (action === "install") {
+        ctx.ui.notify((await installVerifier(cwd, force)).join("; "), "info");
+        return;
+      }
 
-      ctx.ui.notify(`${results.join("; ")}. Restart OMP from this repo or run /advisor on.`, "info");
+      if (action === "uninstall") {
+        ctx.ui.notify((await uninstallVerifier(cwd, force)).join("; "), "info");
+        return;
+      }
+
+      if (action === "info") {
+        ctx.ui.notify("Verifier: /verifier install [--force] | /verifier uninstall [--force] | /verifier info", "info");
+        return;
+      }
+
+      ctx.ui.notify("Usage: /verifier install [--force] | /verifier uninstall [--force] | /verifier info", "error");
     },
   });
-
 }
