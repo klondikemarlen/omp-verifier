@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2 - 2026-07-08
+
+- Removed duplicate `/verifier doctor`; `/verifier status` now includes plugin version and readiness metadata.
+
 ## 0.6.1 - 2026-07-08
 
 - Made `npm run reinstall` uninstall the existing plugin before installing the current pushed commit, avoiding Bun dependency-loop failures.
