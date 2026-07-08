@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 - 2026-07-08
+
+- Made `npm run reinstall` uninstall the existing plugin before installing the current pushed commit, avoiding Bun dependency-loop failures.
+
 ## 0.6.0 - 2026-07-08
 
 - Added `/verifier doctor` readiness output with installed plugin version, replace-option availability, and status evidence.
