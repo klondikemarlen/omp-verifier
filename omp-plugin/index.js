@@ -9,6 +9,11 @@ const ADVISOR_CONFIG = `advisor:
 `;
 
 const GENERATED_WATCHDOG_MARKER = "# omp-verifier: generated";
+const LOCAL_RULES_FILE = "WATCHDOG.local.md";
+const LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
+
+Add project-specific verifier rules here: setup commands, test commands, services, database details, browser routes, seed data, and local definitions of done.
+`;
 
 const OLD_WATCHDOG_ROSTER = `instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
@@ -40,6 +45,7 @@ advisors:
     tools: [read, grep, glob]
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+      @./WATCHDOG.local.md
 
       You are the always-on verifier for this session.
       Review completed code-change turns as untrusted until evidence proves them.
@@ -113,6 +119,13 @@ async function writeWatchdogFile(path, replace = false) {
   }
   return `kept customized ${path} (rerun with replace to overwrite)`;
 }
+async function writeLocalRulesFile(path) {
+  const current = await readText(path);
+  if (current !== null) return `kept local rules ${path}`;
+  await writeFile(path, LOCAL_RULES_TEMPLATE, { flag: "wx" });
+  return `created local rules ${path}`;
+}
+
 
 async function removeWatchdogFile(path) {
   const current = await readText(path);
@@ -130,6 +143,7 @@ async function installVerifier(cwd, options = {}) {
   return [
     await writeBootstrapFile(join(configDir, "config.yml"), ADVISOR_CONFIG, false, false),
     await writeWatchdogFile(join(cwd, "WATCHDOG.yml"), options.replace),
+    await writeLocalRulesFile(join(cwd, LOCAL_RULES_FILE)),
     "restart OMP from this repo or run /advisor on",
   ];
 }
@@ -139,6 +153,7 @@ async function installGlobalVerifier(ctx, options = {}) {
   await mkdir(agentDir, { recursive: true });
   return [
     await writeWatchdogFile(join(agentDir, "WATCHDOG.yml"), options.replace),
+    await writeLocalRulesFile(join(agentDir, LOCAL_RULES_FILE)),
     "restart OMP or run /advisor on; ensure modelRoles.advisor is configured",
   ];
 }
@@ -182,12 +197,11 @@ function sourceLabel(globalState, projectState) {
   return "none";
 }
 
-function rulesLabel(globalState, projectState) {
-  if (projectState === "customized" || globalState === "customized") return "customized";
-  if (projectState === "generated" || globalState === "generated") return "generated";
+function rulesLabel(...states) {
+  if (states.includes("customized")) return "customized";
+  if (states.includes("generated")) return "generated";
   return "none";
 }
-
 function advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig) {
   if (projectConfig === "generated" && globalConfig === null) return "enabled via project config; global config absent";
   const global = globalConfig === null ? "global config absent" : `global ${advisorEnabled}, model ${advisorModel}`;
@@ -200,9 +214,13 @@ async function buildStatus(cwd, ctx) {
   const globalConfigPath = join(agentDir, "config.yml");
   const projectWatchdogPath = join(cwd, "WATCHDOG.yml");
   const projectConfigPath = join(cwd, ".omp", "config.yml");
-  const globalWatchdog = await fileState(globalWatchdogPath, [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER]);
-  const projectWatchdog = await fileState(projectWatchdogPath, [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER]);
+  const globalWatchdog = await fileState(globalWatchdogPath, GENERATED_WATCHDOGS);
+  const projectWatchdog = await fileState(projectWatchdogPath, GENERATED_WATCHDOGS);
   const projectConfig = await fileState(projectConfigPath, ADVISOR_CONFIG);
+  const globalLocalRulesPath = join(agentDir, LOCAL_RULES_FILE);
+  const projectLocalRulesPath = join(cwd, LOCAL_RULES_FILE);
+  const globalLocalRules = await fileState(globalLocalRulesPath, LOCAL_RULES_TEMPLATE);
+  const projectLocalRules = await fileState(projectLocalRulesPath, LOCAL_RULES_TEMPLATE);
   const globalConfig = await readText(globalConfigPath);
   const advisorEnabled = globalConfig === null ? "unknown" : /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(globalConfig) ? "enabled" : "not enabled";
   const advisorModel = globalConfig === null ? "unknown" : /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(globalConfig) ? "configured" : "missing";
@@ -215,13 +233,35 @@ async function buildStatus(cwd, ctx) {
     `verifier source: ${sourceLabel(globalWatchdog, projectWatchdog)}`,
     `project override: ${projectWatchdog === "absent" ? "none" : projectWatchdog}`,
     `advisor: ${advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig)}`,
-    `rules: ${rulesLabel(globalWatchdog, projectWatchdog)}`,
+    `rules: ${rulesLabel(globalWatchdog, projectWatchdog, globalLocalRules, projectLocalRules)}`,
     "",
     "files:",
     `  global WATCHDOG.yml: ${globalWatchdog} — ${globalWatchdogPath}`,
     `  global config.yml: ${globalConfigSummary} — ${globalConfigPath}`,
+    `  global ${LOCAL_RULES_FILE}: ${globalLocalRules} — ${globalLocalRulesPath}`,
     `  project WATCHDOG.yml: ${projectWatchdog} — ${projectWatchdogPath}`,
     `  project .omp/config.yml: ${projectConfig} — ${projectConfigPath}`,
+    `  project ${LOCAL_RULES_FILE}: ${projectLocalRules} — ${projectLocalRulesPath}`,
+  ].join("\n");
+}
+
+async function packageVersion() {
+  try {
+    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    return pkg.version || "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
+async function buildDoctor(cwd, ctx) {
+  return [
+    "Verifier doctor:",
+    `plugin version: ${await packageVersion()}`,
+    `static command metadata: install replace option ${COMMAND_USAGE.includes("[replace]") ? "available" : "missing"}`,
+    "runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence",
+    "",
+    await buildStatus(cwd, ctx),
   ].join("\n");
 }
 
@@ -236,13 +276,14 @@ function parseOptions(tokens, allowReplace = false) {
   return { global: scopeTokens[0] === "global", replace };
 }
 
-const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier uninstall [local|global] | /verifier status";
+const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier uninstall [local|global] | /verifier status | /verifier doctor";
 
 
 const SUBCOMMANDS = [
   { name: "install", description: "Install verifier advisor files", usage: "[local|global] [replace]" },
   { name: "uninstall", description: "Remove verifier advisor files", usage: "[local|global]" },
   { name: "status", description: "Show verifier setup status" },
+  { name: "doctor", description: "Check verifier runtime readiness" },
 ];
 
 function completeSubcommands(argumentPrefix) {
@@ -293,9 +334,9 @@ export default function verifierPlugin(pi) {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const cwd = ctx.cwd || process.cwd();
 
-      if (action === "status") {
+      if (action === "status" || action === "doctor") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
-        else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
+        else ctx.ui.notify(action === "doctor" ? await buildDoctor(cwd, ctx) : await buildStatus(cwd, ctx), "info");
         return;
       }
 

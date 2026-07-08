@@ -8,7 +8,7 @@ Only these features belong here:
 
 1. Install the plugin.
 2. Install/uninstall verifier advisor injection in a target repo.
-3. Let each downstream repo customize local rules in `WATCHDOG.yml`.
+3. Let each downstream repo customize local rules in `WATCHDOG.local.md`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
 
 Not included: PR checkout, app booting, GitHub comments, verifier task agents, planning tools, or custom runtimes.
@@ -54,11 +54,12 @@ Use this when you want verifier behavior in every OMP session:
 
 ```text
 <active agent dir>/WATCHDOG.yml
+<active agent dir>/WATCHDOG.local.md
 ```
 
 By default that is `~/.omp/agent/WATCHDOG.yml`; `PI_CODING_AGENT_DIR` is respected when your active agent dir is relocated.
 
-The global file imports this plugin's shared verifier guidance into the default advisor. It does not edit your global `config.yml`; keep `advisor.enabled` and `modelRoles.advisor` configured through OMP settings.
+The global `WATCHDOG.yml` imports this plugin's shared verifier guidance and `WATCHDOG.local.md` into the default advisor. It does not edit your global `config.yml`; keep `advisor.enabled` and `modelRoles.advisor` configured through OMP settings.
 
 Re-running the install migrates only verifier-generated global wrappers after updating this plugin:
 
@@ -82,13 +83,14 @@ In the downstream repo:
 /verifier install
 ```
 
-Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `status`.
+Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, `status`, and `doctor`.
 
 This creates:
 
 ```text
 .omp/config.yml
 WATCHDOG.yml
+WATCHDOG.local.md
 ```
 
 `.omp/config.yml` is only created when absent. It enables OMP's built-in advisor for this project without changing your configured default advisor model:
@@ -111,6 +113,8 @@ advisors:
     tools: [read, grep, glob]
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+      @./WATCHDOG.local.md
+
 
       You are the always-on verifier for this session.
       Review completed code-change turns as untrusted until evidence proves them.
@@ -118,7 +122,7 @@ advisors:
       Raise a concern when checks are too broad, too narrow, or ignore local setup.
       Stay silent when the evidence is sufficient.
 
-      Project-specific rules can live in downstream WATCHDOG files: setup commands,
+      Project-specific rules can live in downstream WATCHDOG.local.md files: setup commands,
       test commands, database/service details, browser routes, and "done means" checks.
 ```
 
@@ -130,17 +134,17 @@ Restart OMP from that repo or run:
 
 ## Customize downstream
 
-Edit the downstream repo's `WATCHDOG.yml` to add project-specific commands, services, database details, browser routes, and local definitions of done.
+Edit the downstream repo's `WATCHDOG.local.md` to add project-specific commands, services, database details, browser routes, and local definitions of done.
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
-Re-running the install migrates verifier-generated `WATCHDOG.yml` files without touching existing `.omp/config.yml`:
+Re-running the install migrates verifier-generated `WATCHDOG.yml` wrappers without touching existing `.omp/config.yml` or `WATCHDOG.local.md`:
 
 ```text
 /verifier install
 ```
 
-Install preserves customized `WATCHDOG.yml` files. To intentionally overwrite one, rerun install with `replace`:
+Install preserves customized `WATCHDOG.yml` wrappers. To intentionally overwrite one, rerun install with `replace`:
 
 ```text
 /verifier install replace
@@ -152,12 +156,13 @@ Install preserves customized `WATCHDOG.yml` files. To intentionally overwrite on
 /verifier uninstall
 ```
 
-This removes only verifier-generated files:
+This removes only verifier-generated wrapper/config files:
 
 - generated `WATCHDOG.yml` is removed;
 - customized `WATCHDOG.yml` is preserved;
 - generated `.omp/config.yml` is removed;
-- customized `.omp/config.yml` is preserved.
+- customized `.omp/config.yml` is preserved;
+- `WATCHDOG.local.md` is preserved.
 
 Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` instead of the current repo; `local` is the default.
 
@@ -165,6 +170,7 @@ Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` i
 
 ```text
 /verifier status
+/verifier doctor
 ```
 
 Bare `/verifier` shows the same status.
@@ -183,8 +189,19 @@ rules: generated
 files:
   global WATCHDOG.yml: generated — ~/.omp/agent/WATCHDOG.yml
   global config.yml: exists; advisor enabled; modelRoles.advisor configured — ~/.omp/agent/config.yml
+  global WATCHDOG.local.md: generated — ~/.omp/agent/WATCHDOG.local.md
   project WATCHDOG.yml: absent — /path/to/repo/WATCHDOG.yml
   project .omp/config.yml: absent — /path/to/repo/.omp/config.yml
+  project WATCHDOG.local.md: absent — /path/to/repo/WATCHDOG.local.md
+```
+
+`/verifier doctor` adds readiness lines before the same status evidence:
+
+```text
+Verifier doctor:
+plugin version: 0.6.0
+static command metadata: install replace option available
+runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence
 ```
 
 ## Release checklist

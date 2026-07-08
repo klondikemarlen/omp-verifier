@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0 - 2026-07-08
+
+- Added `/verifier doctor` readiness output with installed plugin version, replace-option availability, and status evidence.
+- Split project customization into `WATCHDOG.local.md`, imported by the generated `WATCHDOG.yml` wrapper and preserved on uninstall.
+
 ## 0.5.2 - 2026-07-07
 
 - Added explicit `replace` install option for overwriting customized verifier `WATCHDOG.yml` files.
