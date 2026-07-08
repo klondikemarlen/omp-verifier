@@ -227,6 +227,10 @@ async function buildStatus(cwd, ctx) {
   const globalConfigSummary = globalConfig === null ? "absent" : `exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel}`;
   return [
     "Verifier status:",
+    `plugin version: ${await packageVersion()}`,
+    `static command metadata: install replace option ${COMMAND_USAGE.includes("[replace]") ? "available" : "missing"}`,
+    "runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence",
+    "",
     `project: ${cwd}`,
     `active agent dir: ${agentDir}`,
     "",
@@ -254,16 +258,6 @@ async function packageVersion() {
   }
 }
 
-async function buildDoctor(cwd, ctx) {
-  return [
-    "Verifier doctor:",
-    `plugin version: ${await packageVersion()}`,
-    `static command metadata: install replace option ${COMMAND_USAGE.includes("[replace]") ? "available" : "missing"}`,
-    "runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence",
-    "",
-    await buildStatus(cwd, ctx),
-  ].join("\n");
-}
 
 
 function parseOptions(tokens, allowReplace = false) {
@@ -276,14 +270,13 @@ function parseOptions(tokens, allowReplace = false) {
   return { global: scopeTokens[0] === "global", replace };
 }
 
-const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier uninstall [local|global] | /verifier status | /verifier doctor";
+const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier uninstall [local|global] | /verifier status";
 
 
 const SUBCOMMANDS = [
   { name: "install", description: "Install verifier advisor files", usage: "[local|global] [replace]" },
   { name: "uninstall", description: "Remove verifier advisor files", usage: "[local|global]" },
   { name: "status", description: "Show verifier setup status" },
-  { name: "doctor", description: "Check verifier runtime readiness" },
 ];
 
 function completeSubcommands(argumentPrefix) {
@@ -334,9 +327,9 @@ export default function verifierPlugin(pi) {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const cwd = ctx.cwd || process.cwd();
 
-      if (action === "status" || action === "doctor") {
+      if (action === "status") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
-        else ctx.ui.notify(action === "doctor" ? await buildDoctor(cwd, ctx) : await buildStatus(cwd, ctx), "info");
+        else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
         return;
       }
 

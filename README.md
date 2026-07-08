@@ -83,7 +83,7 @@ In the downstream repo:
 /verifier install
 ```
 
-Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, `status`, and `doctor`.
+Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `status`.
 
 This creates:
 
@@ -170,7 +170,6 @@ Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` i
 
 ```text
 /verifier status
-/verifier doctor
 ```
 
 Bare `/verifier` shows the same status.
@@ -179,6 +178,10 @@ Expected:
 
 ```text
 Verifier status:
+plugin version: 0.6.2
+static command metadata: install replace option available
+runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence
+
 project: /path/to/repo
 active agent dir: ~/.omp/agent
 verifier source: global
@@ -193,15 +196,6 @@ files:
   project WATCHDOG.yml: absent — /path/to/repo/WATCHDOG.yml
   project .omp/config.yml: absent — /path/to/repo/.omp/config.yml
   project WATCHDOG.local.md: absent — /path/to/repo/WATCHDOG.local.md
-```
-
-`/verifier doctor` adds readiness lines before the same status evidence:
-
-```text
-Verifier doctor:
-plugin version: 0.6.0
-static command metadata: install replace option available
-runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence
 ```
 
 ## Release checklist
