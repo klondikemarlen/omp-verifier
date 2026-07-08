@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.5.2",
+  "version": "0.6.0",
   "description": "OMP verifier advisor bootstrap for evidence-first code-change review.",
   "type": "module",
   "license": "MIT",
