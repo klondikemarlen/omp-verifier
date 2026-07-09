@@ -37,6 +37,7 @@ Local rules win:
 - Read project `AGENTS.md`, `README.md`, `COMMITTING.md`, `bin/README.md`, and local `agents/` guidance when relevant.
 - Keep project-specific commands, database vendors, style rules, service names, seed data, and browser routes in the target project.
 - Common verifier rules that apply across projects should move upstream into this file.
+- When local or global commit rules require isolated dependency-resolution commits, flag mixed dependency manifest/lockfile changes plus unrelated source changes.
 
 Output style:
 

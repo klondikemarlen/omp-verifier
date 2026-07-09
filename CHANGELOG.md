@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.4 - 2026-07-09
+
+- Added verifier guidance to flag mixed dependency manifest/lockfile changes with unrelated source changes when local or global commit rules require isolated dependency-resolution commits.
+
 ## 0.6.3 - 2026-07-08
 
 - Added baseline code-quality guidance from WRAP conventions: readability, low complexity, separation of concerns, domain modeling, and intentional duplication.
