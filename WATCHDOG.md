@@ -38,6 +38,7 @@ Local rules win:
 - Keep project-specific commands, database vendors, style rules, service names, seed data, and browser routes in the target project.
 - Common verifier rules that apply across projects should move upstream into this file.
 - When local or global commit rules require isolated dependency-resolution commits, flag mixed dependency manifest/lockfile changes plus unrelated source changes.
+- For changed test files, inspect repo-local test standards before approving: test READMEs, local code-review/testing workflows, and agent docs. Local test docs win over generic style. If local test structure, naming, Arrange/Act/Assert, or assertion-count rules exist, apply those rules and report violations with changed-file line evidence plus the specific local rule source.
 
 Output style:
 

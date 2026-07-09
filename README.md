@@ -208,7 +208,7 @@ Expected:
 
 ```text
 Verifier status:
-plugin version: 0.6.2
+plugin version: <installed plugin version>
 static command metadata: install replace option available
 runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence
 

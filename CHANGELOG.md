@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.7 - 2026-07-09
+
+- Added verifier guidance to apply repo-local test standards before approving changed test files.
+- Made the README `/verifier status` example version-neutral.
+
 ## 0.6.6 - 2026-07-09
 
 - Added copyable project-local verifier rule examples for targeted tests, browser QA, service prerequisites, and high-risk areas.
