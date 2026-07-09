@@ -136,6 +136,36 @@ Restart OMP from that repo or run:
 
 Edit the downstream repo's `WATCHDOG.local.md` to add project-specific commands, services, database details, browser routes, and local definitions of done.
 
+Copy a small starting point and replace placeholders with real local commands:
+
+```markdown
+# Local Verifier Rules
+
+## Targeted checks
+
+- API change: run `npm test -- <path-or-test-name>` and report PASS/FAIL/BLOCKED.
+- TypeScript change: run `npm run typecheck`.
+- Migration change: run the migration check documented in this repo before approving.
+
+## Browser QA
+
+- Route: `/example/path`
+- Action: sign in, perform the changed flow, and verify the visible success/error state.
+- Evidence: report the exact label, route, or screenshot path that proves the behavior.
+
+## Services and data
+
+- Start services: `<repo command for database/cache/queue/app server>`.
+- Run migrations: `<repo migration command>`.
+- Seed data: `<repo seed command>` or name the fixture/account needed for the check.
+- BLOCKED if a required service, migration, or seed is unavailable.
+
+## High-risk areas
+
+- Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
+- Do not approve these from compile/type checks alone.
+```
+
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
 Re-running the install migrates verifier-generated `WATCHDOG.yml` wrappers without touching existing `.omp/config.yml` or `WATCHDOG.local.md`:

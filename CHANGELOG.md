@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.6 - 2026-07-09
+
+- Added copyable project-local verifier rule examples for targeted tests, browser QA, service prerequisites, and high-risk areas.
+
 ## 0.6.5 - 2026-07-09
 
 - Replaced SSH-only install guidance with public GitHub install guidance and documented the public package-surface audit.
