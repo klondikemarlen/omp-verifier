@@ -49,15 +49,17 @@ Local development should use a linked checkout:
 omp plugin link ~/code/klondikemarlen/omp-verifier
 ```
 
-Private GitHub remote installs should use explicit SSH pinned to a commit:
+Public GitHub remote installs should use the GitHub plugin source pinned to a tag or commit:
 
 ```bash
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git#<commit>
+omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
 ```
 
-Avoid `github:klondikemarlen/omp-verifier` for this private repo. Bun resolves that shorthand through GitHub's tarball path, which is not reliable for private repositories.
+Historical note: earlier restricted-access installs needed explicit SSH commit pins because GitHub tarball resolution was unreliable for tags. This repository is public, so public install docs should use the GitHub plugin source.
 
-Observed failure mode: Bun resolved `#v0.1.1` and `#refs/tags/v0.1.1` as missing despite the remote tag existing. Commit pins installed the expected package, so release verification uses the commit hash plus `package.json` version.
+## Public package surface
+
+The shipped OMP plugin surface is the `package.json` `files` list: repository docs, `WATCHDOG.md`, `omp-plugin/`, and `package.json`. Public-release audits should inspect that package surface for secrets, credentials, restricted-repository assumptions, and local-only paths before tagging.
 
 ## Release flow
 
@@ -68,5 +70,5 @@ A release is a GitHub plugin release, not an npm or Marketplace publish.
 3. Commit with the style in `COMMITTING.md`.
 4. Push the branch, open a linked PR, review it, and merge it to `main`.
 5. Tag the merged version with `v<package.json version>` and push the tag.
-6. Reinstall from the remote source.
+6. Reinstall from the public GitHub source with `npm run reinstall`; public installs use `github:klondikemarlen/omp-verifier#<commit>` and do not need SSH.
 7. Confirm installed `.bun-tag`, `package.json` version, file tree, and `/verifier status`.

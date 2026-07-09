@@ -13,7 +13,7 @@ Examples:
 ```text
 :hammer: Scaffold evidence-first OMP verifier agents.
 :ok_hand: Trigger verifier turns from the PR command.
-:memo: Document private remote plugin installs.
+:memo: Document remote plugin installs.
 ```
 
 ## Emoji guide
