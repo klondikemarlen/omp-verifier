@@ -15,10 +15,10 @@ Not included: PR checkout, app booting, GitHub comments, verifier task agents, p
 
 ## Install plugin
 
-Private GitHub repos must use SSH:
+Install the public GitHub release:
 
 ```bash
-omp plugin install git+ssh://git@github.com/klondikemarlen/omp-verifier.git#<commit>
+omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
 ```
 
 For local development, link this checkout:
@@ -205,7 +205,7 @@ files:
 3. Commit with the style in `COMMITTING.md`.
 4. Push the branch, open a linked PR, review it, and merge it to `main`.
 5. Tag the merged version with `v<package.json version>` and push the tag.
-6. Reinstall from the remote source.
+6. Reinstall from the public GitHub source with `npm run reinstall`.
 7. Confirm installed `.bun-tag`, `package.json` version, and `/verifier status`.
 
 See [CONCEPTS.md](./CONCEPTS.md) for design notes and install lessons.
