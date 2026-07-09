@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.8 - 2026-07-09
+
+- Added `/verifier init-local [replace]` for project-local verifier guidance scaffolding.
+
 ## 0.6.7 - 2026-07-09
 
 - Added verifier guidance to apply repo-local test standards before approving changed test files.

@@ -10,9 +10,43 @@ const ADVISOR_CONFIG = `advisor:
 
 const GENERATED_WATCHDOG_MARKER = "# omp-verifier: generated";
 const LOCAL_RULES_FILE = "WATCHDOG.local.md";
-const LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
+const OLD_LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
 
 Add project-specific verifier rules here: setup commands, test commands, services, database details, browser routes, seed data, and local definitions of done.
+`;
+const LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
+
+Replace placeholders with commands from this repo. Keep uncertain entries as suggestions.
+
+## Project setup
+
+- Install dependencies: <repo command>
+- Start services: <repo command for database/cache/queue/app server>
+- Apply migrations: <repo command>
+- Seed data: <repo command or fixture/account name>
+
+## Targeted checks
+
+- Unit or API change: <focused test command>
+- Typecheck/build: <typecheck or build command>
+- Migration change: <migration verification command>
+
+## Browser/UI smoke
+
+- Route: <local route>
+- Action: <user-visible flow>
+- Expected evidence: <visible label, URL, screenshot path, or state>
+
+## High-risk areas
+
+- Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
+- Do not approve these from compile/type checks alone.
+
+## Local PASS / FAIL / BLOCKED
+
+- PASS: observed evidence proves the changed behavior or invariant.
+- FAIL: observed evidence shows a regression, broken invariant, or wrong behavior.
+- BLOCKED: a required command, service, seed, credential, or route is unavailable.
 `;
 
 const OLD_WATCHDOG_ROSTER = `instructions: |
@@ -101,6 +135,8 @@ advisors:
 `;
 
 const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
+const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
+
 
 function isGeneratedWatchdog(content) {
   return GENERATED_WATCHDOGS.includes(content);
@@ -119,11 +155,18 @@ async function writeWatchdogFile(path, replace = false) {
   }
   return `kept customized ${path} (rerun with replace to overwrite)`;
 }
-async function writeLocalRulesFile(path) {
+async function writeLocalRulesFile(path, replace = false) {
   const current = await readText(path);
-  if (current !== null) return `kept local rules ${path}`;
-  await writeFile(path, LOCAL_RULES_TEMPLATE, { flag: "wx" });
-  return `created local rules ${path}`;
+  if (current === null) {
+    await writeFile(path, LOCAL_RULES_TEMPLATE, { flag: "wx" });
+    return `created local rules ${path}`;
+  }
+  if (current === LOCAL_RULES_TEMPLATE) return `kept generated local rules ${path}`;
+  if (GENERATED_LOCAL_RULES.includes(current) || replace) {
+    await writeFile(path, LOCAL_RULES_TEMPLATE, { flag: "w" });
+    return `${replace && !GENERATED_LOCAL_RULES.includes(current) ? "replaced customized" : "replaced generated"} local rules ${path}`;
+  }
+  return `kept customized local rules ${path} (rerun /verifier init-local replace to overwrite)`;
 }
 
 
@@ -219,8 +262,8 @@ async function buildStatus(cwd, ctx) {
   const projectConfig = await fileState(projectConfigPath, ADVISOR_CONFIG);
   const globalLocalRulesPath = join(agentDir, LOCAL_RULES_FILE);
   const projectLocalRulesPath = join(cwd, LOCAL_RULES_FILE);
-  const globalLocalRules = await fileState(globalLocalRulesPath, LOCAL_RULES_TEMPLATE);
-  const projectLocalRules = await fileState(projectLocalRulesPath, LOCAL_RULES_TEMPLATE);
+  const globalLocalRules = await fileState(globalLocalRulesPath, GENERATED_LOCAL_RULES);
+  const projectLocalRules = await fileState(projectLocalRulesPath, GENERATED_LOCAL_RULES);
   const globalConfig = await readText(globalConfigPath);
   const advisorEnabled = globalConfig === null ? "unknown" : /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(globalConfig) ? "enabled" : "not enabled";
   const advisorModel = globalConfig === null ? "unknown" : /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(globalConfig) ? "configured" : "missing";
@@ -269,12 +312,20 @@ function parseOptions(tokens, allowReplace = false) {
   if (scopeTokens.length > 1) return { error: "choose local or global" };
   return { global: scopeTokens[0] === "global", replace };
 }
+function parseInitLocalOptions(tokens) {
+  const replace = tokens.includes("replace");
+  const invalid = tokens.find(token => token !== "replace");
+  if (invalid) return { error: `unknown option ${invalid}` };
+  return { replace };
+}
 
-const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier uninstall [local|global] | /verifier status";
+
+const COMMAND_USAGE = "/verifier install [local|global] [replace] | /verifier init-local [replace] | /verifier uninstall [local|global] | /verifier status";
 
 
 const SUBCOMMANDS = [
   { name: "install", description: "Install verifier advisor files", usage: "[local|global] [replace]" },
+  { name: "init-local", description: "Scaffold project-local verifier guidance", usage: "[replace]" },
   { name: "uninstall", description: "Remove verifier advisor files", usage: "[local|global]" },
   { name: "status", description: "Show verifier setup status" },
 ];
@@ -283,6 +334,12 @@ function completeSubcommands(argumentPrefix) {
   if (argumentPrefix.includes(" ")) {
     const tokens = argumentPrefix.split(/\s+/);
     const [action, scopePrefix = ""] = tokens;
+    if (action === "init-local") {
+      if (tokens.length <= 2) {
+        return "replace".startsWith((tokens[1] || "").toLowerCase()) ? [{ value: "init-local replace ", label: "replace", description: "Overwrite customized WATCHDOG.local.md" }] : null;
+      }
+      return null;
+    }
     if (!["install", "uninstall"].includes(action)) return null;
     if (tokens.length <= 2) {
       const lowerScope = scopePrefix.toLowerCase();
@@ -330,6 +387,13 @@ export default function verifierPlugin(pi) {
       if (action === "status") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
+        return;
+      }
+
+      if (action === "init-local") {
+        const options = parseInitLocalOptions(rest);
+        if (options.error) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
+        else ctx.ui.notify(await writeLocalRulesFile(join(cwd, LOCAL_RULES_FILE), options.replace), "info");
         return;
       }
 
