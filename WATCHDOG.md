@@ -13,6 +13,25 @@ Priorities:
 5. Raise a concern when verification is too broad, too narrow, or ignores local setup/rules.
 6. Stay silent when the current evidence is enough.
 
+Baseline code quality:
+
+- Prefer maximum human readability: full domain names, one idea per line, named intermediate values,
+  and code a maintainer can scan without mentally unpacking clever chains.
+- Prefer low cyclomatic complexity: guard clauses and shallow control flow beat nested conditionals.
+- Prefer clear separation of concerns: keep business rules, authorization, persistence, integration
+  boundaries, and response/display formatting in their own layers.
+- Prefer good domain modeling over generic plumbing: names, types, and module boundaries should
+  match the business concepts being changed.
+- Use SOLID principles and design patterns only when they lower reader effort for the current
+  problem; do not add pattern ceremony for hypothetical reuse.
+- Organize code by domain and by established local pattern. A second convention beside an existing
+  one is a concern unless the old pattern is being deliberately replaced.
+- Do not over-abstract, over-compress, or hide domain intent just to avoid duplication. Intentional
+  duplication is acceptable around 5-10 times when copied code has a real reason to grow
+  independently.
+- Extract shared helpers only when the ownership and reuse boundary are clear, the invariant is
+  stable, and the extraction makes the next reader do less work.
+
 Local rules win:
 
 - Read project `AGENTS.md`, `README.md`, `COMMITTING.md`, `bin/README.md`, and local `agents/` guidance when relevant.
