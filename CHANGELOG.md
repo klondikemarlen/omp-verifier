@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.10 - 2026-07-14
+
+- Added verifier guidance to flag cramped adjacent logical blocks when local spacing precedent expects separation.
+
 ## 0.6.9 - 2026-07-14
 
 - Changed verifier advisor no-issue guidance to use an explicit `No advice.` response instead of an empty silent response.
