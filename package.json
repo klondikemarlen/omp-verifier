@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "OMP verifier advisor bootstrap for evidence-first code-change review.",
   "type": "module",
   "license": "MIT",
@@ -25,10 +25,16 @@
     "omp-plugin/"
   ],
   "omp": {
-    "extensions": ["./omp-plugin/index.js"]
+    "extensions": ["./omp-plugin/index.js"],
+    "lifecycle": {
+      "uninstall": "./omp-plugin/index.js"
+    }
   },
   "pi": {
-    "extensions": ["./omp-plugin/index.js"]
+    "extensions": ["./omp-plugin/index.js"],
+    "lifecycle": {
+      "uninstall": "./omp-plugin/index.js"
+    }
   },
   "scripts": {
     "check": "node --check omp-plugin/index.js && node --check test/verifier-plugin.test.js",

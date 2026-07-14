@@ -318,6 +318,10 @@ function completeSubcommands(argumentPrefix) {
   return matches.length ? matches : null;
 }
 
+export async function uninstall(ctx) {
+  await uninstallGlobalVerifier(ctx);
+}
+
 export default function verifierPlugin(pi) {
   pi.setLabel("Verifier");
 
