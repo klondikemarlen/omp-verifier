@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.11 - 2026-07-14
+
+- Made global replace verifier setup automatic when the plugin loads, removed project-local install, and made uninstall clean generated global files.
+
 ## 0.6.10 - 2026-07-14
 
 - Added verifier guidance to flag cramped adjacent logical blocks when local spacing precedent expects separation.
