@@ -264,20 +264,11 @@ async function packageVersion() {
 }
 
 
-
-function parseUninstallOptions(tokens) {
-  const invalid = tokens[0];
-  if (invalid) return { error: `unknown option ${invalid}` };
-  return {};
-}
-
-
-const COMMAND_USAGE = "/verifier [status] | /verifier uninstall";
+const COMMAND_USAGE = "/verifier [status]";
 
 
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier setup status" },
-  { name: "uninstall", description: "Remove global verifier advisor files" },
 ];
 
 function completeSubcommands(argumentPrefix) {
@@ -307,7 +298,7 @@ export default function verifierPlugin(pi) {
   });
 
   pi.registerCommand("verifier", {
-    description: "Show or remove omp-verifier advisor injection",
+    description: "Show omp-verifier advisor status",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
@@ -316,13 +307,6 @@ export default function verifierPlugin(pi) {
       if (action === "status") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
-        return;
-      }
-
-      if (action === "uninstall") {
-        const options = parseUninstallOptions(rest);
-        if (options.error) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
-        else ctx.ui.notify((await uninstallGlobalVerifier(ctx)).join("; "), "info");
         return;
       }
 

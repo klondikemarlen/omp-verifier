@@ -28,7 +28,7 @@ Verifier output must be evidence-first:
 
 Current scope:
 
-- `/verifier install [local|global]` scaffolds project-local advisor setup by default, or user-level `WATCHDOG.yml` with `global`.
-- `/verifier uninstall [local|global]` removes generated advisor setup.
-- `/verifier status` reports active local/global verifier setup and file locations.
+- `/verifier` and `/verifier status` report active local/global verifier setup and file locations.
+- Generated verifier files are created automatically when the plugin loads.
+- Plugin uninstall lifecycle cleanup removes generated advisor setup when supported by OMP.
 - `WATCHDOG.md` holds upstream verifier guidance imported by downstream `WATCHDOG.yml` files.
