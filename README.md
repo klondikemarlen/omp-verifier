@@ -46,87 +46,47 @@ For user-facing feature work, follow the release pattern from Marlen's other OMP
 
 ## Install verifier globally
 
-Use this when you want verifier behavior in every OMP session:
+Install the plugin:
 
-```text
-/verifier install global
+```bash
+omp plugin install github:klondikemarlen/omp-verifier
 ```
 
-```text
-<active agent dir>/WATCHDOG.yml
-<active agent dir>/WATCHDOG.local.md
-```
-
-By default that is `~/.omp/agent/WATCHDOG.yml`; `PI_CODING_AGENT_DIR` is respected when your active agent dir is relocated.
-
-The global `WATCHDOG.yml` imports this plugin's shared verifier guidance and `WATCHDOG.local.md` into the default advisor. It does not edit your global `config.yml`; keep `advisor.enabled` and `modelRoles.advisor` configured through OMP settings.
-
-Re-running the install migrates only verifier-generated global wrappers after updating this plugin:
+Loading OMP now automatically creates or refreshes the user-level verifier files:
 
 ```text
-/verifier install global
+~/.omp/agent/WATCHDOG.yml
+~/.omp/agent/WATCHDOG.local.md
 ```
 
-Remove the generated global wrapper:
+`WATCHDOG.yml` is verifier-owned and refreshed like `/verifier install global replace`.
+`WATCHDOG.local.md` is generated only when absent or previously generated; customized local guidance is preserved.
 
-```text
-/verifier uninstall global
-```
-
-In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
-
-## Install verifier into one project
-
-In the downstream repo:
+The manual command is still available, but it targets the same global setup:
 
 ```text
 /verifier install
 ```
 
-Typing `/verifier ` in OMP shows subcommand completions for `install`, `uninstall`, and `status`.
-
-This creates:
+`global` and `replace` are accepted for old muscle memory:
 
 ```text
-.omp/config.yml
-WATCHDOG.yml
-WATCHDOG.local.md
+/verifier install global replace
 ```
 
-`.omp/config.yml` is only created when absent. It enables OMP's built-in advisor for this project without changing your configured default advisor model:
+Remove generated global verifier files:
 
-```yaml
-advisor:
-  enabled: true
-  subagents: true
-  syncBacklog: 1
+```text
+/verifier uninstall
 ```
 
-`WATCHDOG.yml` configures the default advisor with verifier guidance:
-```yaml
-# omp-verifier: generated
-instructions: |
-  Everyone: keep advice concrete, evidence-first, and non-repetitive.
+OMP does not currently expose a plugin-uninstall lifecycle hook, so run `/verifier uninstall` before `omp plugin uninstall omp-verifier` when you want generated files cleaned up.
 
-advisors:
-  - name: default
-    tools: [read, grep, glob]
-    instructions: |
-      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
-      @./WATCHDOG.local.md
+In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
 
+Typing `/verifier ` in OMP shows subcommand completions for `install`, `init-local`, `uninstall`, and `status`.
 
-      You are the always-on verifier for this session.
-      Review completed code-change turns as untrusted until evidence proves them.
-      Raise a blocker when work is called done without observed evidence.
-      Raise a concern when checks are too broad, too narrow, or ignore local setup.
-      When the evidence is sufficient, do not call the advice tool; reply with "No advice."
-
-      Project-specific rules can live in downstream WATCHDOG.local.md files: setup commands,
-      test commands, database/service details, browser routes, and "done means" checks.
-```
-
-Restart OMP from that repo or run:
+Restart OMP after first install if the advisor is not already active, or run:
 
 ```text
 /advisor on
@@ -188,33 +148,26 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
-Re-running the install migrates verifier-generated `WATCHDOG.yml` wrappers without touching existing `.omp/config.yml` or `WATCHDOG.local.md`:
+Re-running install refreshes the verifier-generated global `WATCHDOG.yml` wrapper without touching customized `WATCHDOG.local.md` guidance:
 
 ```text
 /verifier install
 ```
 
-Install preserves customized `WATCHDOG.yml` wrappers. To intentionally overwrite one, rerun install with `replace`:
-
-```text
-/verifier install replace
-```
-
-## Uninstall verifier from a project
+## Uninstall verifier
 
 ```text
 /verifier uninstall
 ```
 
-This removes only verifier-generated wrapper/config files:
+This removes generated user-level verifier files:
 
-- generated `WATCHDOG.yml` is removed;
-- customized `WATCHDOG.yml` is preserved;
-- generated `.omp/config.yml` is removed;
-- customized `.omp/config.yml` is preserved;
-- `WATCHDOG.local.md` is preserved.
+- generated `~/.omp/agent/WATCHDOG.yml` is removed;
+- customized `~/.omp/agent/WATCHDOG.yml` is preserved;
+- generated `~/.omp/agent/WATCHDOG.local.md` is removed;
+- customized `~/.omp/agent/WATCHDOG.local.md` is preserved.
 
-Use `global` with install or uninstall to target the user-level `WATCHDOG.yml` instead of the current repo; `local` is the default.
+Project-local install/uninstall is intentionally no longer supported; use `/verifier init-local [replace]` only to scaffold downstream repo guidance.
 
 ## Verify plugin load
 
@@ -229,7 +182,7 @@ Expected:
 ```text
 Verifier status:
 plugin version: <installed plugin version>
-static command metadata: install replace option available
+static command metadata: global auto-install enabled
 runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence
 
 project: /path/to/repo
