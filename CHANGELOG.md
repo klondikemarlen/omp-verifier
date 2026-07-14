@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.13 - 2026-07-14
+
+- Clarified that automatic plugin-uninstall cleanup depends on a future OMP lifecycle-hook release.
+
 ## 0.6.12 - 2026-07-14
 
 - Added an OMP uninstall lifecycle hook to clean generated global verifier files when supported by OMP.
