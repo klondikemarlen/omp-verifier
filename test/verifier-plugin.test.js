@@ -27,8 +27,7 @@ verifierPlugin(pi);
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 const verifier = registrations.commands.get("verifier");
-assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "uninstall"]);
-assert.equal(verifier.getArgumentCompletions("uninstall "), null);
+assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status"]);
 assert.equal(verifier.getArgumentCompletions("status "), null);
 assert.ok(registrations.events.has("session_start"));
 
@@ -71,12 +70,10 @@ assert.match(registrations.notices.at(-1).message, /Usage:/);
 
 await verifier.handler("install local", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("uninstall local", { ...ctx, cwd: repo, agentDir });
+await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
 
-await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
-assert.match(registrations.notices.at(-1).message, /removed local rules .*WATCHDOG\.local\.md/);
+await uninstallHook({ cwd: repo, agentDir });
 await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
 await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
@@ -88,10 +85,8 @@ await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
 await writeFile(globalWatchdogPath, "custom global watchdog\n");
 await writeFile(globalLocalRulesPath, "custom local rules\n");
-await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
-assert.match(registrations.notices.at(-1).message, /kept customized local rules/);
+await uninstallHook({ cwd: repo, agentDir });
 assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
 assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");
 
-console.log("verifier advisor install/uninstall smoke test passed");
+console.log("verifier advisor status/lifecycle smoke test passed");

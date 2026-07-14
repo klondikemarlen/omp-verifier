@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.15 - 2026-07-14
+
+- Removed the manual `/verifier uninstall` slash command; cleanup remains available through the plugin lifecycle hook when OMP supports it.
+
 ## 0.6.14 - 2026-07-14
 
 - Removed manual verifier install and project-local init commands; kept only status and uninstall.
