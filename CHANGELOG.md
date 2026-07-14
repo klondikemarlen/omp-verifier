@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.17 - 2026-07-14
+
+- Stopped setting verifier advisor tools; local OMP configuration now owns advisor runtime settings.
+
 ## 0.6.16 - 2026-07-14
 
 - Made the default verifier watchdog lighter by removing advisor tools and trimming broad code-quality review guidance.
