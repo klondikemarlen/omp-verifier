@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.12 - 2026-07-14
+
+- Added an OMP uninstall lifecycle hook to clean generated global verifier files when supported by OMP.
+
 ## 0.6.11 - 2026-07-14
 
 - Made global replace verifier setup automatic when the plugin loads, removed project-local install, and made uninstall clean generated global files.

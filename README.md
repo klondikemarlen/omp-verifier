@@ -80,7 +80,7 @@ Remove generated global verifier files:
 /verifier uninstall
 ```
 
-OMP does not currently expose a plugin-uninstall lifecycle hook, so run `/verifier uninstall` before `omp plugin uninstall omp-verifier` when you want generated files cleaned up.
+Automatic cleanup on `omp plugin uninstall omp-verifier` is declared through OMP's plugin uninstall lifecycle hook and becomes active once an OMP release includes can1357/oh-my-pi#5532. Until then, run `/verifier uninstall` before `omp plugin uninstall omp-verifier` when you want generated files cleaned up.
 
 In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
 

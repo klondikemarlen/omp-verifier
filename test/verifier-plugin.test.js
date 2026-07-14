@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import verifierPlugin from "../omp-plugin/index.js";
+import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
 
 const SERIALIZED_WATCHDOG_ROSTER = `instructions: "Everyone: keep advice concrete, evidence-first, and non-repetitive.\\n"
 advisors: 
@@ -107,6 +107,12 @@ assert.match(registrations.notices.at(-1).message, /removed .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /removed local rules .*WATCHDOG\.local\.md/);
 await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
 await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
+
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
+await uninstallHook({ cwd: repo, agentDir });
+await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
+await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
+
 
 await writeFile(globalWatchdogPath, "custom global watchdog\n");
 await writeFile(globalLocalRulesPath, "custom local rules\n");
