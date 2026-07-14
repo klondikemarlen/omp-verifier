@@ -138,7 +138,7 @@ async function writeLocalRulesFile(path, replace = false) {
     await writeFile(path, LOCAL_RULES_TEMPLATE, { flag: "w" });
     return `${replace && !GENERATED_LOCAL_RULES.includes(current) ? "replaced customized" : "replaced generated"} local rules ${path}`;
   }
-  return `kept customized local rules ${path} (rerun /verifier init-local replace to overwrite)`;
+  return `kept customized local rules ${path}`;
 }
 
 
@@ -265,46 +265,23 @@ async function packageVersion() {
 
 
 
-function parseInstallOptions(tokens) {
-  const invalid = tokens.find(token => !["global", "replace"].includes(token));
-  if (invalid) return { error: `unknown option ${invalid}` };
-  return { replace: true };
-}
 function parseUninstallOptions(tokens) {
-  const invalid = tokens.find(token => token !== "global");
+  const invalid = tokens[0];
   if (invalid) return { error: `unknown option ${invalid}` };
   return {};
 }
-function parseInitLocalOptions(tokens) {
-  const replace = tokens.includes("replace");
-  const invalid = tokens.find(token => token !== "replace");
-  if (invalid) return { error: `unknown option ${invalid}` };
-  return { replace };
-}
 
 
-const COMMAND_USAGE = "/verifier install [replace] | /verifier init-local [replace] | /verifier uninstall | /verifier status";
+const COMMAND_USAGE = "/verifier [status] | /verifier uninstall";
 
 
 const SUBCOMMANDS = [
-  { name: "install", description: "Install global verifier advisor files", usage: "[replace]" },
-  { name: "init-local", description: "Scaffold project-local verifier guidance", usage: "[replace]" },
-  { name: "uninstall", description: "Remove global verifier advisor files" },
   { name: "status", description: "Show verifier setup status" },
+  { name: "uninstall", description: "Remove global verifier advisor files" },
 ];
 
 function completeSubcommands(argumentPrefix) {
-  if (argumentPrefix.includes(" ")) {
-    const tokens = argumentPrefix.split(/\s+/);
-    const [action] = tokens;
-    if (["install", "init-local"].includes(action)) {
-      if (tokens.length <= 2) {
-        return "replace".startsWith((tokens[1] || "").toLowerCase()) ? [{ value: `${action} replace `, label: "replace", description: action === "install" ? "Refresh global WATCHDOG.yml" : "Overwrite customized WATCHDOG.local.md" }] : null;
-      }
-      return null;
-    }
-    return null;
-  }
+  if (argumentPrefix.includes(" ")) return null;
 
   const lower = argumentPrefix.toLowerCase();
   const matches = SUBCOMMANDS
@@ -330,7 +307,7 @@ export default function verifierPlugin(pi) {
   });
 
   pi.registerCommand("verifier", {
-    description: "Install or uninstall omp-verifier advisor injection",
+    description: "Show or remove omp-verifier advisor injection",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
@@ -339,20 +316,6 @@ export default function verifierPlugin(pi) {
       if (action === "status") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
-        return;
-      }
-
-      if (action === "init-local") {
-        const options = parseInitLocalOptions(rest);
-        if (options.error) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
-        else ctx.ui.notify(await writeLocalRulesFile(join(cwd, LOCAL_RULES_FILE), options.replace), "info");
-        return;
-      }
-
-      if (action === "install") {
-        const options = parseInstallOptions(rest);
-        if (options.error) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
-        else ctx.ui.notify((await installGlobalVerifier(ctx, options)).join("; "), "info");
         return;
       }
 
