@@ -57,6 +57,10 @@ assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("init-local ").map(item => item.label), ["replace"]);
 assert.deepEqual(registrations.commands.get("verifier").getArgumentCompletions("init-local r").map(item => item.label), ["replace"]);
 assert.ok(registrations.events.has("session_start"));
+const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
+assert.match(shippedWatchdog, /one blank line between adjacent sibling logical blocks/);
+assert.match(shippedWatchdog, /cite changed-file line evidence and the local pattern/);
+
 
 const statusRepo = await mkdtemp(join(tmpdir(), "omp-verifier-status-repo-"));
 const statusAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-status-agent-"));

@@ -32,6 +32,11 @@ Baseline code quality:
 - Extract shared helpers only when the ownership and reuse boundary are clear, the invariant is
   stable, and the extraction makes the next reader do less work.
 
+- Spacing/readability: require one blank line between adjacent sibling logical blocks
+  at the same scope (functions, methods, classes/modules, helper sections, and test
+  cases/groups) when local precedent does the same. Raise this only when crammed
+  adjacency hurts scanability; cite changed-file line evidence and the local pattern.
+
 Local rules win:
 
 - Read project `AGENTS.md`, `README.md`, `COMMITTING.md`, `bin/README.md`, and local `agents/` guidance when relevant.
