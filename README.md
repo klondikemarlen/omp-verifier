@@ -7,7 +7,7 @@ Installable OMP plugin that injects one evidence-first verifier as an always-on 
 Only these features belong here:
 
 1. Install the plugin.
-2. Install/uninstall verifier advisor injection in a target repo.
+2. Auto-install lightweight verifier advisor guidance for the active OMP agent.
 3. Let each downstream repo customize local rules in `WATCHDOG.local.md`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
 

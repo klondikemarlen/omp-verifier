@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.16 - 2026-07-14
+
+- Made the default verifier watchdog lighter by removing advisor tools and trimming broad code-quality review guidance.
+
 ## 0.6.15 - 2026-07-14
 
 - Removed the manual `/verifier uninstall` slash command; cleanup remains available through the plugin lifecycle hook when OMP supports it.

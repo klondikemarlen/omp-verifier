@@ -76,7 +76,7 @@ instructions: |
 
 advisors:
   - name: default
-    tools: [read, grep, glob]
+    tools: []
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
       @./WATCHDOG.local.md
