@@ -62,6 +62,8 @@ Loading OMP now automatically creates or refreshes the user-level verifier files
 `WATCHDOG.yml` is verifier-owned and refreshed automatically.
 `WATCHDOG.local.md` is generated only when absent or previously generated; customized local guidance is preserved.
 
+The plugin owns verifier guidance only. Configure advisor tools, model, and runtime behavior in local OMP configuration.
+
 The only manual verifier command is status:
 
 ```text

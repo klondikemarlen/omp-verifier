@@ -32,7 +32,7 @@ assert.equal(verifier.getArgumentCompletions("status "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
-assert.match(shippedWatchdog, /lightweight evidence verifier/);
+assert.match(shippedWatchdog, /Act as an evidence verifier/);
 assert.match(shippedWatchdog, /Prefer the evidence already shown/);
 
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
@@ -44,7 +44,6 @@ await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDi
 assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; created .*WATCHDOG\.yml/);
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: generated\ninstructions: \|/);
-assert.match(globalWatchdog, /tools: \[\]/);
 assert.match(globalWatchdog, /reply with "No advice\."/);
 assert.match(await readFile(globalLocalRulesPath, "utf8"), /# Local Verifier Rules/);
 await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
