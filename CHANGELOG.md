@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.9 - 2026-07-14
+
+- Changed verifier advisor no-issue guidance to use an explicit `No advice.` response instead of an empty silent response.
+
 ## 0.6.8 - 2026-07-09
 
 - Added `/verifier init-local [replace]` for project-local verifier guidance scaffolding.

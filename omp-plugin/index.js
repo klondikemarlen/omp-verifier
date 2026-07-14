@@ -85,7 +85,7 @@ advisors:
       Review completed code-change turns as untrusted until evidence proves them.
       Raise a blocker when work is called done without observed evidence.
       Raise a concern when checks are too broad, too narrow, or ignore local setup.
-      Stay silent when the evidence is sufficient.
+      When the evidence is sufficient, do not call the advice tool; reply with "No advice."
 
       Project-specific rules can live in downstream WATCHDOG files: setup commands,
       test commands, database/service details, browser routes, and "done means" checks.
