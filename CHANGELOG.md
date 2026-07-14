@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.14 - 2026-07-14
+
+- Removed manual verifier install and project-local init commands; kept only status and uninstall.
+
 ## 0.6.13 - 2026-07-14
 
 - Clarified that automatic plugin-uninstall cleanup depends on a future OMP lifecycle-hook release.

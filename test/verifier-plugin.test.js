@@ -27,11 +27,9 @@ verifierPlugin(pi);
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 const verifier = registrations.commands.get("verifier");
-assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["install", "init-local", "uninstall", "status"]);
-assert.deepEqual(verifier.getArgumentCompletions("install ").map(item => item.label), ["replace"]);
-assert.deepEqual(verifier.getArgumentCompletions("install r").map(item => item.label), ["replace"]);
+assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "uninstall"]);
 assert.equal(verifier.getArgumentCompletions("uninstall "), null);
-assert.deepEqual(verifier.getArgumentCompletions("init-local ").map(item => item.label), ["replace"]);
+assert.equal(verifier.getArgumentCompletions("status "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
@@ -52,20 +50,6 @@ assert.match(await readFile(globalLocalRulesPath, "utf8"), /# Local Verifier Rul
 await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
 await assert.rejects(readFile(join(repo, ".omp", "config.yml"), "utf8"), /ENOENT/);
 
-await writeFile(globalWatchdogPath, `${globalWatchdog}\n# stale generated edit\n`);
-await verifier.handler("install", { ...ctx, cwd: repo, agentDir });
-globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.doesNotMatch(globalWatchdog, /stale generated edit/);
-assert.match(registrations.notices.at(-1).message, /replaced customized .*WATCHDOG\.yml/);
-
-await writeFile(globalWatchdogPath, "custom global watchdog\n");
-await verifier.handler("install global replace", { ...ctx, cwd: repo, agentDir });
-assert.match(await readFile(globalWatchdogPath, "utf8"), /# omp-verifier: generated\ninstructions: \|/);
-assert.match(registrations.notices.at(-1).message, /replaced customized .*WATCHDOG\.yml/);
-
-await writeFile(globalWatchdogPath, SERIALIZED_WATCHDOG_ROSTER);
-await verifier.handler("install global", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /replaced generated .*WATCHDOG\.yml/);
 
 await verifier.handler("status", { ...ctx, cwd: repo, agentDir });
 const statusMessage = registrations.notices.at(-1).message;
@@ -79,23 +63,11 @@ assert.doesNotMatch(statusMessage, /verify-pr|boot_app_plan|format_pr_comment|ve
 await verifier.handler("", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Verifier status:/);
 
-const initLocalPath = join(repo, "WATCHDOG.local.md");
+
+await verifier.handler("install", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /Usage:/);
 await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
-const generatedLocalRules = await readFile(initLocalPath, "utf8");
-assert.match(generatedLocalRules, /## Project setup/);
-assert.match(generatedLocalRules, /## Targeted checks/);
-assert.match(generatedLocalRules, /## Browser\/UI smoke/);
-assert.match(generatedLocalRules, /## High-risk areas/);
-assert.match(generatedLocalRules, /## Local PASS \/ FAIL \/ BLOCKED/);
-await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
-assert.equal(await readFile(initLocalPath, "utf8"), generatedLocalRules);
-assert.match(registrations.notices.at(-1).message, /kept generated local rules/);
-await writeFile(initLocalPath, `${generatedLocalRules}\nTeam smoke: dashboard\n`);
-await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /kept customized local rules/);
-await verifier.handler("init-local replace", { ...ctx, cwd: repo, agentDir });
-assert.equal(await readFile(initLocalPath, "utf8"), generatedLocalRules);
-assert.match(registrations.notices.at(-1).message, /replaced customized local rules/);
+assert.match(registrations.notices.at(-1).message, /Usage:/);
 
 await verifier.handler("install local", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
@@ -116,7 +88,7 @@ await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
 await writeFile(globalWatchdogPath, "custom global watchdog\n");
 await writeFile(globalLocalRulesPath, "custom local rules\n");
-await verifier.handler("uninstall global", { ...ctx, cwd: repo, agentDir });
+await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /kept customized .*WATCHDOG\.yml/);
 assert.match(registrations.notices.at(-1).message, /kept customized local rules/);
 assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");

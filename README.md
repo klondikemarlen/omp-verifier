@@ -59,19 +59,15 @@ Loading OMP now automatically creates or refreshes the user-level verifier files
 ~/.omp/agent/WATCHDOG.local.md
 ```
 
-`WATCHDOG.yml` is verifier-owned and refreshed like `/verifier install global replace`.
+`WATCHDOG.yml` is verifier-owned and refreshed automatically.
 `WATCHDOG.local.md` is generated only when absent or previously generated; customized local guidance is preserved.
 
-The manual command is still available, but it targets the same global setup:
+The only manual verifier commands are status and cleanup:
 
 ```text
-/verifier install
-```
-
-`global` and `replace` are accepted for old muscle memory:
-
-```text
-/verifier install global replace
+/verifier
+/verifier status
+/verifier uninstall
 ```
 
 Remove generated global verifier files:
@@ -84,7 +80,7 @@ Automatic cleanup on `omp plugin uninstall omp-verifier` is declared through OMP
 
 In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
 
-Typing `/verifier ` in OMP shows subcommand completions for `install`, `init-local`, `uninstall`, and `status`.
+Typing `/verifier ` in OMP shows subcommand completions for `status` and `uninstall`.
 
 Restart OMP after first install if the advisor is not already active, or run:
 
@@ -94,22 +90,9 @@ Restart OMP after first install if the advisor is not already active, or run:
 
 ## Customize downstream
 
-Edit the downstream repo's `WATCHDOG.local.md` to add project-specific commands, services, database details, browser routes, and local definitions of done.
+Edit `WATCHDOG.local.md` in the downstream repo when a project needs specific commands, services, database details, browser routes, and local definitions of done. The verifier no longer scaffolds project-local files; keeping that file explicit avoids another command surface.
 
-To create only the local guidance file without reinstalling advisor wrappers:
-
-```text
-/verifier init-local
-```
-
-Use `replace` only when you intentionally want to overwrite customized local guidance:
-
-```text
-/verifier init-local replace
-```
-
-The generated file uses this shape; replace placeholders with real local commands:
-
+The file can use this shape; replace placeholders with real local commands:
 ```markdown
 # Local Verifier Rules
 
@@ -148,11 +131,7 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
-Re-running install refreshes the verifier-generated global `WATCHDOG.yml` wrapper without touching customized `WATCHDOG.local.md` guidance:
-
-```text
-/verifier install
-```
+The verifier setup is refreshed automatically when the plugin loads.
 
 ## Uninstall verifier
 
@@ -167,7 +146,7 @@ This removes generated user-level verifier files:
 - generated `~/.omp/agent/WATCHDOG.local.md` is removed;
 - customized `~/.omp/agent/WATCHDOG.local.md` is preserved.
 
-Project-local install/uninstall is intentionally no longer supported; use `/verifier init-local [replace]` only to scaffold downstream repo guidance.
+Project-local install/uninstall and scaffolding commands are intentionally no longer supported.
 
 ## Verify plugin load
 
