@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.20 - 2026-07-16
+
+- Aligned maintainer concepts with the global-only verifier install, status, and uninstall lifecycle.
+
 ## 0.6.19 - 2026-07-15
 
 - Migrated prior generated local verifier guidance to include semantic-style templates without replacing customized files.
