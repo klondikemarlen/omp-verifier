@@ -42,6 +42,15 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 - Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
 - Do not approve these from compile/type checks alone.
 
+## Human-readable code
+
+- Enforced style rules: <formatter, linter, static-analysis command, or local style doc>
+- Gold examples: <one or two relevant paths that demonstrate the desired shape>
+- Conditional/control-flow rule: <e.g. prefer guard clauses and named intermediate values over nested ternaries>
+- Decomposition rule: <e.g. keep each semantic decision or transformation in its own statement>
+- Transformation rule: <e.g. split layered map/filter/reduce/callback chains when intermediate meaning is not obvious>
+- Style concern evidence: <changed-file lines plus the local rule or Gold example>
+
 ## Local PASS / FAIL / BLOCKED
 
 - PASS: observed evidence proves the changed behavior or invariant.

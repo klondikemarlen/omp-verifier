@@ -85,9 +85,9 @@ Restart OMP after first install if the advisor is not already active, or run:
 
 ## Customize downstream
 
-Edit `WATCHDOG.local.md` in the downstream repo when a project needs specific commands, services, database details, browser routes, and local definitions of done. The verifier no longer scaffolds project-local files; keeping that file explicit avoids another command surface.
+Edit `WATCHDOG.local.md` in the downstream repo when a project needs specific commands, services, database details, browser routes, local definitions of done, or human-readable code rules. The verifier no longer scaffolds project-local files; keeping that file explicit avoids another command surface.
 
-The file can use this shape; replace placeholders with real local commands:
+The file can use this shape; replace placeholders with real local commands, rules, and Gold examples:
 ```markdown
 # Local Verifier Rules
 
@@ -117,12 +117,23 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 - Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
 - Do not approve these from compile/type checks alone.
 
+## Human-readable code
+
+- Enforced style rules: <formatter, linter, static-analysis command, or local style doc>
+- Gold examples: <one or two relevant paths that demonstrate the desired shape>
+- Conditional/control-flow rule: <e.g. prefer guard clauses and named intermediate values over nested ternaries>
+- Decomposition rule: <e.g. keep each semantic decision or transformation in its own statement>
+- Transformation rule: <e.g. split layered map/filter/reduce/callback chains when intermediate meaning is not obvious>
+- Style concern evidence: <changed-file lines plus the local rule or Gold example>
+
 ## Local PASS / FAIL / BLOCKED
 
 - PASS: observed evidence proves the changed behavior or invariant.
 - FAIL: observed evidence shows a regression, broken invariant, or wrong behavior.
 - BLOCKED: a required command, service, seed, credential, or route is unavailable.
 ```
+
+Start with enforced rules and one nearby Gold example. Add a local rule only after the same review correction recurs; state the readability risk and a narrow exception rather than collecting snippets.
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
 
