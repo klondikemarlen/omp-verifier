@@ -34,6 +34,8 @@ assert.ok(registrations.events.has("session_start"));
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
 assert.match(shippedWatchdog, /Act as an evidence verifier/);
 assert.match(shippedWatchdog, /Prefer the evidence already shown/);
+assert.match(shippedWatchdog, /Style evidence order/);
+assert.match(shippedWatchdog, /changed-file lines/);
 
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
@@ -45,7 +47,11 @@ assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; crea
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: generated\ninstructions: \|/);
 assert.match(globalWatchdog, /reply with "No advice\."/);
-assert.match(await readFile(globalLocalRulesPath, "utf8"), /# Local Verifier Rules/);
+const globalLocalRules = await readFile(globalLocalRulesPath, "utf8");
+assert.match(globalLocalRules, /## Human-readable code/);
+assert.match(globalLocalRules, /Gold examples/);
+assert.match(globalLocalRules, /named intermediate values over nested ternaries/);
+assert.match(globalLocalRules, /each semantic decision or transformation in its own statement/);
 await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
 await assert.rejects(readFile(join(repo, ".omp", "config.yml"), "utf8"), /ENOENT/);
 

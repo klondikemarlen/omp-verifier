@@ -17,6 +17,12 @@ Local rules win:
 - Project-specific commands, database vendors, style rules, service names, seed data, and browser routes belong in downstream `WATCHDOG.local.md` files.
 - When local or global commit rules require isolated dependency-resolution commits, flag mixed dependency manifest/lockfile changes plus unrelated source changes if the transcript shows the mix.
 
+Semantic style:
+
+- Style evidence order: enforced rules, explicit project guidance, Gold examples, nearest local pattern, then generic guidance.
+- Raise a style concern only when changed code conflicts with a specific local source; cite changed-file lines, that source, and one concrete readability risk.
+- If no local source applies, do not invent a style rule.
+
 Output style:
 
 - Be terse.

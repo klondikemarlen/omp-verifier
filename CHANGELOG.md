@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.18 - 2026-07-15
+
+- Added local-first semantic style verification guidance and downstream Gold-example templates.
+
 ## 0.6.17 - 2026-07-14
 
 - Stopped setting verifier advisor tools; local OMP configuration now owns advisor runtime settings.
