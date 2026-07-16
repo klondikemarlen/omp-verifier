@@ -52,6 +52,11 @@ assert.match(globalLocalRules, /## Human-readable code/);
 assert.match(globalLocalRules, /Gold examples/);
 assert.match(globalLocalRules, /named intermediate values over nested ternaries/);
 assert.match(globalLocalRules, /each semantic decision or transformation in its own statement/);
+const previousGeneratedLocalRules = globalLocalRules.replace(/## Human-readable code\n\n(?:.*\n){6}\n/, "");
+await writeFile(globalLocalRulesPath, previousGeneratedLocalRules);
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /replaced generated local rules/);
+assert.match(await readFile(globalLocalRulesPath, "utf8"), /## Human-readable code/);
 await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
 await assert.rejects(readFile(join(repo, ".omp", "config.yml"), "utf8"), /ENOENT/);
 
