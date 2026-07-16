@@ -27,8 +27,8 @@ verifierPlugin(pi);
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 const verifier = registrations.commands.get("verifier");
-assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status"]);
-assert.equal(verifier.getArgumentCompletions("status "), null);
+assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "uninstall"]);
+assert.equal(verifier.getArgumentCompletions("uninstall "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
@@ -37,10 +37,9 @@ assert.match(shippedWatchdog, /Prefer the evidence already shown/);
 assert.match(shippedWatchdog, /Style evidence order/);
 assert.match(shippedWatchdog, /changed-file lines/);
 const concepts = await readFile(new URL("../CONCEPTS.md", import.meta.url), "utf8");
-assert.match(concepts, /The only manual command is `\/verifier status`/);
+assert.match(concepts, /`\/verifier uninstall` for safe cleanup/);
 assert.match(concepts, /WATCHDOG\.local\.md/);
 assert.doesNotMatch(concepts, /`\/verifier install/);
-assert.doesNotMatch(concepts, /`\/verifier uninstall/);
 
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
@@ -81,13 +80,17 @@ assert.match(registrations.notices.at(-1).message, /Verifier status:/);
 
 await verifier.handler("install", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Usage:/);
-
 await verifier.handler("install local", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
+await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Usage:/);
+await verifier.handler("uninstall now", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /Usage:/);
+
+await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /Safe cleanup complete: removed .*WATCHDOG\.yml; removed local rules .*WATCHDOG\.local\.md\. Next run: omp plugin uninstall omp-verifier/);
+await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
+await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
 await uninstallHook({ cwd: repo, agentDir });
 await assert.rejects(readFile(globalWatchdogPath, "utf8"), /ENOENT/);
@@ -101,6 +104,10 @@ await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
 await writeFile(globalWatchdogPath, "custom global watchdog\n");
 await writeFile(globalLocalRulesPath, "custom local rules\n");
+await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /Safe cleanup complete: kept customized .*WATCHDOG\.yml \(remove verifier block manually\); kept customized local rules .*WATCHDOG\.local\.md\. Next run: omp plugin uninstall omp-verifier/);
+assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
+assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");
 await uninstallHook({ cwd: repo, agentDir });
 assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
 assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");

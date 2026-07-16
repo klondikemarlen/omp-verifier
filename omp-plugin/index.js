@@ -276,11 +276,11 @@ async function packageVersion() {
 }
 
 
-const COMMAND_USAGE = "/verifier [status]";
-
+const COMMAND_USAGE = "/verifier [status|uninstall]";
 
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier setup status" },
+  { name: "uninstall", description: "Safely remove generated verifier files" },
 ];
 
 function completeSubcommands(argumentPrefix) {
@@ -299,7 +299,7 @@ function completeSubcommands(argumentPrefix) {
 }
 
 export async function uninstall(ctx) {
-  await uninstallGlobalVerifier(ctx);
+  return uninstallGlobalVerifier(ctx);
 }
 
 export default function verifierPlugin(pi) {
@@ -310,7 +310,7 @@ export default function verifierPlugin(pi) {
   });
 
   pi.registerCommand("verifier", {
-    description: "Show omp-verifier advisor status",
+    description: "Show verifier status or safely remove generated setup",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
@@ -319,6 +319,12 @@ export default function verifierPlugin(pi) {
       if (action === "status") {
         if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
         else ctx.ui.notify(await buildStatus(cwd, ctx), "info");
+        return;
+      }
+
+      if (action === "uninstall") {
+        if (rest.length) ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
+        else ctx.ui.notify(`Safe cleanup complete: ${(await uninstall(ctx)).join("; ")}. Next run: omp plugin uninstall omp-verifier`, "info");
         return;
       }
 
