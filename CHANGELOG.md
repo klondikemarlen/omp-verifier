@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.19 - 2026-07-15
+
+- Migrated prior generated local verifier guidance to include semantic-style templates without replacing customized files.
+
 ## 0.6.18 - 2026-07-15
 
 - Added local-first semantic style verification guidance and downstream Gold-example templates.

@@ -14,7 +14,7 @@ const OLD_LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
 
 Add project-specific verifier rules here: setup commands, test commands, services, database details, browser routes, seed data, and local definitions of done.
 `;
-const LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
+const LOCAL_RULES_PREFIX = `# Local Verifier Rules
 
 Replace placeholders with commands from this repo. Keep uncertain entries as suggestions.
 
@@ -40,7 +40,8 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 ## High-risk areas
 
 - Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
-- Do not approve these from compile/type checks alone.
+- Do not approve these from compile/type checks alone.`;
+const SEMANTIC_STYLE_TEMPLATE = `
 
 ## Human-readable code
 
@@ -49,7 +50,8 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 - Conditional/control-flow rule: <e.g. prefer guard clauses and named intermediate values over nested ternaries>
 - Decomposition rule: <e.g. keep each semantic decision or transformation in its own statement>
 - Transformation rule: <e.g. split layered map/filter/reduce/callback chains when intermediate meaning is not obvious>
-- Style concern evidence: <changed-file lines plus the local rule or Gold example>
+- Style concern evidence: <changed-file lines plus the local rule or Gold example>`;
+const LOCAL_RULES_SUFFIX = `
 
 ## Local PASS / FAIL / BLOCKED
 
@@ -57,6 +59,8 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 - FAIL: observed evidence shows a regression, broken invariant, or wrong behavior.
 - BLOCKED: a required command, service, seed, credential, or route is unavailable.
 `;
+const PREVIOUS_LOCAL_RULES_TEMPLATE = `${LOCAL_RULES_PREFIX}${LOCAL_RULES_SUFFIX}`;
+const LOCAL_RULES_TEMPLATE = `${LOCAL_RULES_PREFIX}${SEMANTIC_STYLE_TEMPLATE}${LOCAL_RULES_SUFFIX}`;
 
 const OLD_WATCHDOG_ROSTER = `instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
@@ -115,7 +119,7 @@ advisors:
 `;
 
 const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
-const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
+const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, PREVIOUS_LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
 
 
 function isGeneratedWatchdog(content) {
