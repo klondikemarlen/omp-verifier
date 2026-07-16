@@ -3,14 +3,14 @@
 OMP Verifier is small on purpose.
 
 ## Product shape
-
 The only runtime feature is advisor injection:
 
-1. `WATCHDOG.md` holds reusable verifier guidance.
-2. `/verifier install` creates project-local OMP advisor files.
-3. `/verifier uninstall` removes generated verifier advisor files when safe.
-4. Downstream repos customize `WATCHDOG.yml` with local setup, test, service, database, and browser rules.
-5. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
+1. `WATCHDOG.md` holds reusable verifier guidance shipped by this plugin.
+2. Loading the plugin creates or refreshes user-level `WATCHDOG.yml` and `WATCHDOG.local.md`.
+3. Generated `WATCHDOG.yml` imports the shipped guidance and local rules; customized local rules are preserved.
+4. `/verifier status` reports the active global and project verifier setup.
+5. The plugin uninstall lifecycle removes generated verifier files when supported, while preserving customized files.
+6. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
 
 No task agents, PR checkout, app booting, GitHub comments, planning tools, or custom OMP runtime live here.
 
@@ -20,7 +20,7 @@ No task agents, PR checkout, app booting, GitHub comments, planning tools, or cu
 sequenceDiagram
   participant User
   participant Main as Main agent
-  participant Advisor as OMP advisors: default + Verifier
+  participant Advisor as OMP advisor: default with verifier guidance
 
   User->>Main: request code change
   Main->>Main: edit and run checks
@@ -30,16 +30,22 @@ sequenceDiagram
 
 ## Command contract
 
-`/verifier install` writes in the current repo by default:
+The only manual command is `/verifier status`; install the plugin through OMP:
 
-- `.omp/config.yml` when absent, enabling `advisor.enabled` without setting a model.
-- `WATCHDOG.yml`, configuring the default advisor with verifier guidance from `@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md`.
+```bash
+omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
+```
 
-`/verifier install global` writes only `<active agent dir>/WATCHDOG.yml`; it does not edit global `config.yml`.
+When the plugin loads, it writes these files under the active OMP agent directory:
 
-Re-running `/verifier install` creates or migrates verifier-generated `WATCHDOG.yml` files only; customized `WATCHDOG.yml` files and existing `.omp/config.yml` are preserved.
+- `WATCHDOG.yml`, containing the generated default-advisor wrapper.
+- `WATCHDOG.local.md`, containing downstream-specific setup, test, service, database, browser, and definition-of-done rules.
 
-`/verifier uninstall` removes verifier-generated `WATCHDOG.yml` files only. Project-local `.omp/config.yml` is removed only when it still matches the generated content.
+The plugin does not edit global OMP runtime configuration. Configure advisor tools, model, and runtime behavior in local OMP configuration.
+
+Re-running the plugin refreshes generated `WATCHDOG.yml` and generated `WATCHDOG.local.md` files only. Customized files are preserved.
+
+`omp plugin uninstall omp-verifier` removes generated verifier files when OMP supports plugin uninstall lifecycle hooks. Customized files are preserved.
 
 ## Install lessons
 

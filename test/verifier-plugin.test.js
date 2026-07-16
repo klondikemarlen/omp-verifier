@@ -36,6 +36,11 @@ assert.match(shippedWatchdog, /Act as an evidence verifier/);
 assert.match(shippedWatchdog, /Prefer the evidence already shown/);
 assert.match(shippedWatchdog, /Style evidence order/);
 assert.match(shippedWatchdog, /changed-file lines/);
+const concepts = await readFile(new URL("../CONCEPTS.md", import.meta.url), "utf8");
+assert.match(concepts, /The only manual command is `\/verifier status`/);
+assert.match(concepts, /WATCHDOG\.local\.md/);
+assert.doesNotMatch(concepts, /`\/verifier install/);
+assert.doesNotMatch(concepts, /`\/verifier uninstall/);
 
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
