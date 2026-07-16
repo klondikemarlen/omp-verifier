@@ -8,9 +8,10 @@ The only runtime feature is advisor injection:
 1. `WATCHDOG.md` holds reusable verifier guidance shipped by this plugin.
 2. Loading the plugin creates or refreshes user-level `WATCHDOG.yml` and `WATCHDOG.local.md`.
 3. Generated `WATCHDOG.yml` imports the shipped guidance and local rules; customized local rules are preserved.
-4. `/verifier status` reports the active global and project verifier setup.
-5. The plugin uninstall lifecycle removes generated verifier files when supported, while preserving customized files.
-6. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
+4. `/verifier` and `/verifier status` report the active global and project verifier setup.
+5. `/verifier uninstall` safely removes generated verifier files before the user removes the plugin.
+6. The plugin uninstall lifecycle removes generated verifier files automatically when supported, while preserving customized files.
+7. Reinstalling this plugin refreshes upstream verifier guidance without overwriting downstream customization.
 
 No task agents, PR checkout, app booting, GitHub comments, planning tools, or custom OMP runtime live here.
 
@@ -30,7 +31,7 @@ sequenceDiagram
 
 ## Command contract
 
-The only manual command is `/verifier status`; install the plugin through OMP:
+Manual commands are `/verifier`/`/verifier status` for setup status and `/verifier uninstall` for safe cleanup; install the plugin through OMP:
 
 ```bash
 omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
@@ -45,7 +46,7 @@ The plugin does not edit global OMP runtime configuration. Configure advisor too
 
 Re-running the plugin refreshes generated `WATCHDOG.yml` and generated `WATCHDOG.local.md` files only. Customized files are preserved.
 
-`omp plugin uninstall omp-verifier` removes generated verifier files when OMP supports plugin uninstall lifecycle hooks. Customized files are preserved.
+Before removing the plugin, run `/verifier uninstall`. It uses the generated-file checks to preserve customized files, then tells the user to run `omp plugin uninstall omp-verifier`. The plugin lifecycle hook performs the same cleanup automatically when OMP supports it.
 
 ## Install lessons
 

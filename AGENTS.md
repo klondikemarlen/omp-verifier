@@ -29,6 +29,7 @@ Verifier output must be evidence-first:
 Current scope:
 
 - `/verifier` and `/verifier status` report active local/global verifier setup and file locations.
+- `/verifier uninstall` removes generated verifier files while preserving customized files, then directs users to remove the plugin.
 - Generated verifier files are created automatically when the plugin loads.
 - Plugin uninstall lifecycle cleanup removes generated advisor setup when supported by OMP.
 - `WATCHDOG.md` holds upstream verifier guidance imported by downstream `WATCHDOG.yml` files.

@@ -64,18 +64,17 @@ Loading OMP now automatically creates or refreshes the user-level verifier files
 
 The plugin owns verifier guidance only. Configure advisor tools, model, and runtime behavior in local OMP configuration.
 
-The only manual verifier command is status:
+Manual verifier commands:
 
 ```text
 /verifier
 /verifier status
+/verifier uninstall
 ```
 
-Automatic cleanup on `omp plugin uninstall omp-verifier` is declared through OMP's plugin uninstall lifecycle hook and becomes active only after a future OMP release ships that capability; track can1357/oh-my-pi#5531. Until then, remove generated files manually when you want them cleaned up before uninstalling the plugin.
+OMP's plugin-uninstall lifecycle hook removes generated files automatically when host support is available; track can1357/oh-my-pi#5531. Until then, run `/verifier uninstall` before removing the plugin. It removes only generated verifier files, preserves customized files, and tells you to run `omp plugin uninstall omp-verifier`.
 
-In OMP's advisor configuration UI, select `Scope: project` when you want to view or edit project-level advisors after installing the global verifier. The global install lives at user scope; project-specific advisors/rules appear under project scope.
-
-Typing `/verifier ` in OMP shows subcommand completion for `status`.
+Typing `/verifier ` shows completions for `status` and `uninstall`.
 
 Restart OMP after first install if the advisor is not already active, or run:
 
@@ -141,16 +140,26 @@ The verifier setup is refreshed automatically when the plugin loads.
 
 ## Uninstall verifier
 
-`omp plugin uninstall omp-verifier` will remove generated user-level verifier files after OMP ships plugin uninstall lifecycle support:
+Before removing the plugin, run:
+
+```text
+/verifier uninstall
+```
+
+It safely removes generated user-level files while preserving customization:
 
 - generated `~/.omp/agent/WATCHDOG.yml` is removed;
 - customized `~/.omp/agent/WATCHDOG.yml` is preserved;
 - generated `~/.omp/agent/WATCHDOG.local.md` is removed;
 - customized `~/.omp/agent/WATCHDOG.local.md` is preserved.
 
-Until that OMP support is released, remove generated files manually if needed.
+Then run:
 
-Project-local install/uninstall and scaffolding commands are intentionally no longer supported.
+```bash
+omp plugin uninstall omp-verifier
+```
+
+On hosts that support plugin uninstall lifecycle hooks, `omp plugin uninstall omp-verifier` runs the same safe cleanup automatically. Project-local install and scaffolding commands remain unsupported.
 
 ## Verify plugin load
 
