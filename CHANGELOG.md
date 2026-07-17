@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.22 - 2026-07-16
+
+- Added GitHub Actions release checks for pull requests and `main` pushes.
+
 ## 0.6.21 - 2026-07-16
 
 - Restored `/verifier uninstall` for safe generated-file cleanup before plugin removal when OMP lifecycle hooks are unavailable.
