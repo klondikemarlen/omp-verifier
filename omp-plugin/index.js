@@ -83,12 +83,9 @@ advisors:
       test commands, database/service details, browser routes, and "done means" checks.
 `;
 
-const WATCHDOG_ROSTER = `${GENERATED_WATCHDOG_MARKER}
-instructions: |
-  Everyone: keep advice concrete, evidence-first, and non-repetitive.
-
-advisors:
-  - name: default
+const VERIFIER_ADVISOR_START = "  # omp-verifier: advisor begin\n";
+const VERIFIER_ADVISOR_END = "  # omp-verifier: advisor end\n";
+const VERIFIER_ADVISOR = `${VERIFIER_ADVISOR_START}  - name: default
     instructions: |
       @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
       @./WATCHDOG.local.md
@@ -101,7 +98,13 @@ advisors:
 
       Project-specific rules can live in downstream WATCHDOG files: setup commands,
       test commands, database/service details, browser routes, and "done means" checks.
-`;
+${VERIFIER_ADVISOR_END}`;
+const WATCHDOG_ROSTER = `${GENERATED_WATCHDOG_MARKER}
+instructions: |
+  Everyone: keep advice concrete, evidence-first, and non-repetitive.
+
+advisors:
+${VERIFIER_ADVISOR}`;
 
 function resolveAgentDir(ctx) {
   return ctx.agentDir || process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
@@ -118,12 +121,32 @@ advisors:
     instructions: "@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md\\n\\nYou are the always-on verifier for this session.\\nReview completed code-change turns as untrusted until evidence proves them.\\nRaise a blocker when work is called done without observed evidence.\\nRaise a concern when checks are too broad, too narrow, or ignore local setup.\\nStay silent when the evidence is sufficient.\\n\\nProject-specific rules can live in downstream WATCHDOG files: setup commands,\\ntest commands, database/service details, browser routes, and \\"done means\\" checks.\\n"
 `;
 
-const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
+const PREVIOUS_WATCHDOG_ROSTER = WATCHDOG_ROSTER
+  .replace(VERIFIER_ADVISOR_START, "")
+  .replace(VERIFIER_ADVISOR_END, "");
+const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, PREVIOUS_WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
 const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, PREVIOUS_LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
 
 
 function isGeneratedWatchdog(content) {
   return GENERATED_WATCHDOGS.includes(content);
+}
+function refreshVerifierAdvisor(content) {
+  if (!content.startsWith(`${GENERATED_WATCHDOG_MARKER}\n`)) return null;
+
+  const start = content.indexOf(VERIFIER_ADVISOR_START);
+  const end = content.indexOf(VERIFIER_ADVISOR_END);
+  if (start !== -1 && end !== -1 && end >= start) {
+    return `${content.slice(0, start)}${VERIFIER_ADVISOR}${content.slice(end + VERIFIER_ADVISOR_END.length)}`;
+  }
+
+  const refreshedLegacyAdvisor = content.replace(
+    /^  - name: default\n(?:(?: {4,}.*)?\n)*(?=^  (?:- name:|#)|(?![\s\S]))/m,
+    VERIFIER_ADVISOR,
+  );
+  if (refreshedLegacyAdvisor !== content) return refreshedLegacyAdvisor;
+
+  return content.replace("\nadvisors:\n", `\nadvisors:\n${VERIFIER_ADVISOR}`);
 }
 
 async function writeWatchdogFile(path, replace = false) {
@@ -132,10 +155,19 @@ async function writeWatchdogFile(path, replace = false) {
     await writeFile(path, WATCHDOG_ROSTER, { flag: "wx" });
     return `created ${path}`;
   }
-  if (current === WATCHDOG_ROSTER) return `kept generated ${path}`;
-  if (isGeneratedWatchdog(current) || replace) {
+  if (replace && !isGeneratedWatchdog(current)) {
     await writeFile(path, WATCHDOG_ROSTER, { flag: "w" });
-    return `${replace && !isGeneratedWatchdog(current) ? "replaced customized" : "replaced generated"} ${path}`;
+    return `replaced customized ${path}`;
+  }
+  const refreshed = refreshVerifierAdvisor(current);
+  if (refreshed && refreshed !== current) {
+    await writeFile(path, refreshed, { flag: "w" });
+    return `refreshed verifier advisor ${path}`;
+  }
+  if (current === WATCHDOG_ROSTER) return `kept generated ${path}`;
+  if (isGeneratedWatchdog(current)) {
+    await writeFile(path, WATCHDOG_ROSTER, { flag: "w" });
+    return `replaced generated ${path}`;
   }
   return `kept customized ${path} (rerun with replace to overwrite)`;
 }
@@ -153,6 +185,13 @@ async function writeLocalRulesFile(path, replace = false) {
   return `kept customized local rules ${path}`;
 }
 
+function removeVerifierAdvisor(content) {
+  const start = content.indexOf(VERIFIER_ADVISOR_START);
+  const end = content.indexOf(VERIFIER_ADVISOR_END);
+  if (start === -1 || end === -1 || end < start) return null;
+  return `${content.slice(0, start)}${content.slice(end + VERIFIER_ADVISOR_END.length)}`;
+}
+
 
 async function removeWatchdogFile(path) {
   const current = await readText(path);
@@ -161,14 +200,19 @@ async function removeWatchdogFile(path) {
     await unlink(path);
     return `removed ${path}`;
   }
+  const withoutVerifierAdvisor = removeVerifierAdvisor(current);
+  if (withoutVerifierAdvisor !== null) {
+    await writeFile(path, withoutVerifierAdvisor, { flag: "w" });
+    return `removed verifier advisor ${path}`;
+  }
   return `kept customized ${path} (remove verifier block manually)`;
 }
 
-async function installGlobalVerifier(ctx, options = {}) {
+export async function installGlobalVerifier(ctx, options = {}) {
   const agentDir = resolveAgentDir(ctx);
   await mkdir(agentDir, { recursive: true });
   return [
-    await writeWatchdogFile(join(agentDir, "WATCHDOG.yml"), options.replace ?? true),
+    await writeWatchdogFile(join(agentDir, "WATCHDOG.yml"), options.replace),
     await writeLocalRulesFile(join(agentDir, LOCAL_RULES_FILE)),
     "restart OMP or run /advisor on; ensure modelRoles.advisor is configured",
   ];
@@ -340,7 +384,7 @@ export default function verifierPlugin(pi) {
   pi.setLabel("Verifier");
 
   pi.on("session_start", async (_event, ctx) => {
-    ctx.ui.notify(`Verifier plugin loaded; ${(await installGlobalVerifier(ctx, { replace: true })).join("; ")}`, "info");
+    ctx.ui.notify(`Verifier plugin loaded; ${(await installGlobalVerifier(ctx)).join("; ")}`, "info");
   });
 
   pi.registerCommand("verifier", {
