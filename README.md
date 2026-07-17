@@ -37,7 +37,7 @@ For user-facing feature work, follow the release pattern from Marlen's other OMP
 2. Create a feature branch linked to the issue.
 3. Keep the implementation in the smallest command/runtime surface that satisfies it.
 4. Update docs, tests, `package.json` version, and `CHANGELOG.md`.
-5. Run `npm run release:check`.
+5. Run `npm run release:check` locally; the GitHub Actions `Release Check` must also pass on the pull request.
 6. Commit, push the branch, and open a pull request linked to the issue.
 7. Review the PR from the user's perspective and fix any findings.
 8. Merge the PR to `main`.
@@ -196,7 +196,7 @@ files:
 ## Release checklist
 
 1. Update code, docs, tests, `package.json` version, and `CHANGELOG.md` on a feature branch.
-2. Run `npm run release:check`.
+2. Run `npm run release:check` locally and confirm the pull request's GitHub Actions `Release Check` passes.
 3. Commit with the style in `COMMITTING.md`.
 4. Push the branch, open a linked PR, review it, and merge it to `main`.
 5. Tag the merged version with `v<package.json version>` and push the tag.
