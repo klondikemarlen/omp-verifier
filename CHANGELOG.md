@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.23 - 2026-07-16
+
+- Added focused verifier concerns for direct code risks visible in changed files.
+
 ## 0.6.22 - 2026-07-16
 
 - Added GitHub Actions release checks for pull requests and `main` pushes.
