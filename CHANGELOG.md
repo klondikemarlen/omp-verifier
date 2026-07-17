@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.25 - 2026-07-17
+
+- Removed an unused filesystem import from the verifier plugin.
+
 ## 0.6.24 - 2026-07-17
 
 - Made direct-risk review inspect omitted code and identify caller-supplied `eval` as arbitrary code execution.
