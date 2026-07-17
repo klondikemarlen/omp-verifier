@@ -61,7 +61,7 @@ Loading OMP now automatically creates or refreshes the user-level verifier files
 ~/.omp/agent/WATCHDOG.local.md
 ```
 
-`WATCHDOG.yml` is verifier-owned and refreshed automatically.
+`WATCHDOG.yml` refreshes the verifier-owned `default` advisor while preserving independently installed advisors.
 `WATCHDOG.local.md` is generated only when absent or previously generated; customized local guidance is preserved.
 
 The plugin owns verifier guidance only. Configure advisor tools, model, and runtime behavior in local OMP configuration.
@@ -151,8 +151,9 @@ Before removing the plugin, run:
 
 It safely removes generated user-level files while preserving customization:
 
-- generated `~/.omp/agent/WATCHDOG.yml` is removed;
-- customized `~/.omp/agent/WATCHDOG.yml` is preserved;
+- a fully generated `~/.omp/agent/WATCHDOG.yml` is removed;
+- when that roster also has independent advisors, only the verifier advisor is removed;
+- a customized `~/.omp/agent/WATCHDOG.yml` is preserved;
 - generated `~/.omp/agent/WATCHDOG.local.md` is removed;
 - customized `~/.omp/agent/WATCHDOG.local.md` is preserved.
 
