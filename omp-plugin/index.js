@@ -219,51 +219,85 @@ function rulesLabel(...states) {
   if (states.includes("generated")) return "generated";
   return "none";
 }
-function advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig) {
-  if (projectConfig === "generated" && globalConfig === null) return "enabled via project config; global config absent";
-  const global = globalConfig === null ? "global config absent" : `global ${advisorEnabled}, model ${advisorModel}`;
+function advisorConfigState(config) {
+  if (config === null) return { summary: "absent", enabled: "unknown", model: "unknown" };
+
+  const enabled = /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(config) ? "enabled" : "not enabled";
+  const model = /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(config) ? "configured" : "missing";
+  return {
+    summary: `exists; advisor ${enabled}; modelRoles.advisor ${model}`,
+    enabled,
+    model,
+  };
+}
+function advisorLabel(advisor, projectConfig) {
+  if (projectConfig === "generated" && advisor.summary === "absent") return "enabled via project config; global config absent";
+  const global = advisor.summary === "absent" ? "global config absent" : `global ${advisor.enabled}, model ${advisor.model}`;
   return `${global}; project config ${projectConfig}`;
 }
 
-async function buildStatus(cwd, ctx) {
+async function statusFile(path, generatedContent) {
+  return { path, state: await fileState(path, generatedContent) };
+}
+async function collectStatus(cwd, ctx) {
   const agentDir = resolveAgentDir(ctx);
-  const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
   const globalConfigPath = join(agentDir, "config.yml");
-  const projectWatchdogPath = join(cwd, "WATCHDOG.yml");
-  const projectConfigPath = join(cwd, ".omp", "config.yml");
-  const globalWatchdog = await fileState(globalWatchdogPath, GENERATED_WATCHDOGS);
-  const projectWatchdog = await fileState(projectWatchdogPath, GENERATED_WATCHDOGS);
-  const projectConfig = await fileState(projectConfigPath, ADVISOR_CONFIG);
-  const globalLocalRulesPath = join(agentDir, LOCAL_RULES_FILE);
-  const projectLocalRulesPath = join(cwd, LOCAL_RULES_FILE);
-  const globalLocalRules = await fileState(globalLocalRulesPath, GENERATED_LOCAL_RULES);
-  const projectLocalRules = await fileState(projectLocalRulesPath, GENERATED_LOCAL_RULES);
-  const globalConfig = await readText(globalConfigPath);
-  const advisorEnabled = globalConfig === null ? "unknown" : /\badvisor:\s*\n(?:.*\n)*?\s+enabled:\s*true\b/.test(globalConfig) ? "enabled" : "not enabled";
-  const advisorModel = globalConfig === null ? "unknown" : /\bmodelRoles:\s*\n(?:.*\n)*?\s+advisor:\s*\S+/.test(globalConfig) ? "configured" : "missing";
-  const globalConfigSummary = globalConfig === null ? "absent" : `exists; advisor ${advisorEnabled}; modelRoles.advisor ${advisorModel}`;
+  const [globalWatchdog, projectWatchdog, projectConfig, globalLocalRules, projectLocalRules, globalConfig] = await Promise.all([
+    statusFile(join(agentDir, "WATCHDOG.yml"), GENERATED_WATCHDOGS),
+    statusFile(join(cwd, "WATCHDOG.yml"), GENERATED_WATCHDOGS),
+    statusFile(join(cwd, ".omp", "config.yml"), ADVISOR_CONFIG),
+    statusFile(join(agentDir, LOCAL_RULES_FILE), GENERATED_LOCAL_RULES),
+    statusFile(join(cwd, LOCAL_RULES_FILE), GENERATED_LOCAL_RULES),
+    readText(globalConfigPath),
+  ]);
+  const advisor = advisorConfigState(globalConfig);
+  const files = {
+    globalWatchdog,
+    globalConfig: { path: globalConfigPath, summary: advisor.summary },
+    globalLocalRules,
+    projectWatchdog,
+    projectConfig,
+    projectLocalRules,
+  };
+
+  return {
+    cwd,
+    agentDir,
+    source: sourceLabel(globalWatchdog.state, projectWatchdog.state),
+    projectOverride: projectWatchdog.state === "absent" ? "none" : projectWatchdog.state,
+    advisor: advisorLabel(advisor, projectConfig.state),
+    rules: rulesLabel(globalWatchdog.state, projectWatchdog.state, globalLocalRules.state, projectLocalRules.state),
+    files,
+  };
+}
+function formatStatus(status, version) {
+  const { cwd, agentDir, source, projectOverride, advisor, rules, files } = status;
   return [
     "Verifier status:",
-    `plugin version: ${await packageVersion()}`,
+    `plugin version: ${version}`,
     "static command metadata: global auto-install enabled",
     "runtime advisor state: not directly observable from plugin command; file/config checks below are readiness evidence",
     "",
     `project: ${cwd}`,
     `active agent dir: ${agentDir}`,
     "",
-    `verifier source: ${sourceLabel(globalWatchdog, projectWatchdog)}`,
-    `project override: ${projectWatchdog === "absent" ? "none" : projectWatchdog}`,
-    `advisor: ${advisorLabel(globalConfig, advisorEnabled, advisorModel, projectConfig)}`,
-    `rules: ${rulesLabel(globalWatchdog, projectWatchdog, globalLocalRules, projectLocalRules)}`,
+    `verifier source: ${source}`,
+    `project override: ${projectOverride}`,
+    `advisor: ${advisor}`,
+    `rules: ${rules}`,
     "",
     "files:",
-    `  global WATCHDOG.yml: ${globalWatchdog} — ${globalWatchdogPath}`,
-    `  global config.yml: ${globalConfigSummary} — ${globalConfigPath}`,
-    `  global ${LOCAL_RULES_FILE}: ${globalLocalRules} — ${globalLocalRulesPath}`,
-    `  project WATCHDOG.yml: ${projectWatchdog} — ${projectWatchdogPath}`,
-    `  project .omp/config.yml: ${projectConfig} — ${projectConfigPath}`,
-    `  project ${LOCAL_RULES_FILE}: ${projectLocalRules} — ${projectLocalRulesPath}`,
+    `  global WATCHDOG.yml: ${files.globalWatchdog.state} — ${files.globalWatchdog.path}`,
+    `  global config.yml: ${files.globalConfig.summary} — ${files.globalConfig.path}`,
+    `  global ${LOCAL_RULES_FILE}: ${files.globalLocalRules.state} — ${files.globalLocalRules.path}`,
+    `  project WATCHDOG.yml: ${files.projectWatchdog.state} — ${files.projectWatchdog.path}`,
+    `  project .omp/config.yml: ${files.projectConfig.state} — ${files.projectConfig.path}`,
+    `  project ${LOCAL_RULES_FILE}: ${files.projectLocalRules.state} — ${files.projectLocalRules.path}`,
   ].join("\n");
+}
+async function buildStatus(cwd, ctx) {
+  const [status, version] = await Promise.all([collectStatus(cwd, ctx), packageVersion()]);
+  return formatStatus(status, version);
 }
 
 async function packageVersion() {

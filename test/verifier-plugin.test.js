@@ -53,6 +53,7 @@ const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
 const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
 const globalLocalRulesPath = join(agentDir, "WATCHDOG.local.md");
+const globalConfigPath = join(agentDir, "config.yml");
 
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; created .*WATCHDOG\.yml/);
@@ -82,6 +83,15 @@ assert.match(statusMessage, /global WATCHDOG\.local\.md: generated — /);
 assert.match(statusMessage, /project WATCHDOG\.yml: absent — /);
 assert.match(statusMessage, /project \.omp\/config\.yml: absent — /);
 assert.doesNotMatch(statusMessage, /verify-pr|boot_app_plan|format_pr_comment|verifier-bootstrap/);
+assert.match(statusMessage, /verifier source: global/);
+assert.match(statusMessage, /project override: none/);
+assert.match(statusMessage, /advisor: global config absent; project config absent/);
+assert.match(statusMessage, /rules: generated/);
+await writeFile(globalConfigPath, "modelRoles:\n  advisor: gpt-5.6\nadvisor:\n  enabled: true\n");
+await verifier.handler("status", { ...ctx, cwd: repo, agentDir });
+const configuredStatusMessage = registrations.notices.at(-1).message;
+assert.match(configuredStatusMessage, /advisor: global enabled, model configured; project config absent/);
+assert.match(configuredStatusMessage, /global config\.yml: exists; advisor enabled; modelRoles\.advisor configured/);
 await verifier.handler("", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Verifier status:/);
 
