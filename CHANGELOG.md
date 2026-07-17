@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.26 - 2026-07-17
+
+- Separated verifier status collection from status rendering and added focused status coverage.
+
 ## 0.6.25 - 2026-07-17
 
 - Removed an unused filesystem import from the verifier plugin.
