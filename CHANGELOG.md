@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.27 - 2026-07-17
+
+- Preserved independent advisors while refreshing the verifier-owned default advisor.
+
 ## 0.6.26 - 2026-07-17
 
 - Separated verifier status collection from status rendering and added focused status coverage.
