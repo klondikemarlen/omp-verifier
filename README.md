@@ -11,6 +11,8 @@ Only these features belong here:
 3. Let each downstream repo customize local rules in `WATCHDOG.local.md`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
 
+5. Flag a direct, observed correctness, security, or data-loss risk with a concrete reason and smallest corrective action or check.
+
 Not included: PR checkout, app booting, GitHub comments, verifier task agents, planning tools, or custom runtimes.
 
 ## Install plugin
@@ -135,6 +137,7 @@ Replace placeholders with commands from this repo. Keep uncertain entries as sug
 Start with enforced rules and one nearby Gold example. Add a local rule only after the same review correction recurs; state the readability risk and a narrow exception rather than collecting snippets.
 
 Keep generic verifier behavior in this repo's `WATCHDOG.md`.
+Shared guidance also flags direct correctness, security, or data-loss risks visible in changed code. It does not replace downstream semantic-style rules or invent hypothetical concerns.
 
 The verifier setup is refreshed automatically when the plugin loads.
 
