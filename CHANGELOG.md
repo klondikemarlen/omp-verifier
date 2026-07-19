@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.31 - 2026-07-19
+
+- Focused generated verifier guidance and local rules on explicit policy checks; retained legacy generated-file recognition for safe migration.
+
 ## 0.6.30 - 2026-07-19
 
 - Classified explicit local verifier requirements consistently as PASS, FAIL, or BLOCKED before raising actionable advice.
