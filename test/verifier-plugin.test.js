@@ -86,6 +86,7 @@ globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: advisor begin/);
 assert.match(globalWatchdog, /When the evidence is sufficient, do not call the advice tool/);
 assert.match(globalWatchdog, /name: learner/);
+assert.doesNotMatch(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /Preserve durable project knowledge/);
 assert.match(registrations.notices.at(-1).message, /refreshed verifier advisor/);
 const defaultAdvisor = `  - name: default
