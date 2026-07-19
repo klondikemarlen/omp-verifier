@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.29 - 2026-07-19
+
+- Limited verifier advice to explicit downstream verification-policy requirements, leaving generic advisor review to OMP.
+
 ## 0.6.28 - 2026-07-18
 
 - Bootstrapped verifier guidance as a separate `verifier` advisor without replacing regular or independent advisors.
