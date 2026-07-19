@@ -8,6 +8,7 @@ Only these features belong here:
 
 1. Install the plugin.
 2. Auto-install lightweight verifier advisor guidance for the active OMP agent.
+   It is named `verifier`, so the regular `default` advisor and independent advisors such as `learner` remain available.
 3. Let each downstream repo customize local rules in `WATCHDOG.local.md`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
 
