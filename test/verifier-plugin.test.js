@@ -1,18 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import verifierPlugin, { installGlobalVerifier, uninstall as uninstallHook } from "../omp-plugin/index.js";
-
-const SERIALIZED_WATCHDOG_ROSTER = `instructions: "Everyone: keep advice concrete, evidence-first, and non-repetitive.\\n"
-advisors: 
-  - name: default
-    tools: 
-      - read
-      - grep
-      - glob
-    instructions: "@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md\\n\\nYou are the always-on verifier for this session.\\nReview completed code-change turns as untrusted until evidence proves them.\\nRaise a blocker when work is called done without observed evidence.\\nRaise a concern when checks are too broad, too narrow, or ignore local setup.\\nStay silent when the evidence is sufficient.\\n\\nProject-specific rules can live in downstream WATCHDOG files: setup commands,\\ntest commands, database/service details, browser routes, and \\"done means\\" checks.\\n"
-`;
+import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
 
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
@@ -32,143 +22,80 @@ assert.equal(verifier.getArgumentCompletions("uninstall "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
-assert.match(shippedWatchdog, /explicit project-local verification policy/);
-assert.match(shippedWatchdog, /host advisor owns generic code quality/);
-assert.match(shippedWatchdog, /each completed code-change claim with an applicable downstream/);
-assert.match(shippedWatchdog, /`PASS` — observed evidence proves the requirement/);
-assert.match(shippedWatchdog, /`FAIL` — observed evidence disproves the requirement/);
-assert.match(shippedWatchdog, /`BLOCKED` — the required evidence or check is unavailable/);
-assert.match(shippedWatchdog, /Raise advice only for `FAIL` or `BLOCKED`/);
-assert.match(shippedWatchdog, /On `PASS`, do not call the advice tool; reply with `No advice\.`/);
-assert.match(shippedWatchdog, /Never call a requirement successful without observed evidence/);
-assert.match(shippedWatchdog, /Do not infer requirements from placeholders/);
-assert.match(shippedWatchdog, /When no explicit local requirement applies, reply with `No advice\.`/);
-const concepts = await readFile(new URL("../CONCEPTS.md", import.meta.url), "utf8");
-assert.match(concepts, /`\/verifier uninstall` for safe cleanup/);
-assert.match(concepts, /WATCHDOG\.local\.md/);
-assert.doesNotMatch(concepts, /`\/verifier install/);
+assert.match(shippedWatchdog, /distinct verifier advisor/);
+assert.match(shippedWatchdog, /`default` advisor owns generic code quality/);
+assert.match(shippedWatchdog, /explicit verifier requirement/);
+assert.match(shippedWatchdog, /`PASS` — evidence proves the requirement/);
+assert.match(shippedWatchdog, /For `FAIL` or `BLOCKED`, cite the requirement/);
 
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
 const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
 const globalLocalRulesPath = join(agentDir, "WATCHDOG.local.md");
-const globalConfigPath = join(agentDir, "config.yml");
 
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; created .*WATCHDOG\.yml/);
+assert.match(registrations.notices.at(-1).message, /created verifier advisor/);
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.match(globalWatchdog, /# omp-verifier: generated\ninstructions: \|/);
-assert.match(globalWatchdog, /@~\/\.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
-assert.match(globalWatchdog, /name: verifier/);
+assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: advisor begin\n  - name: verifier/m);
 assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
-const globalLocalRules = await readFile(globalLocalRulesPath, "utf8");
-assert.match(globalLocalRules, /Add only explicit project-specific verifier requirements/);
-assert.match(globalLocalRules, /the narrow command or action that proves it/);
-assert.match(globalLocalRules, /The verifier ignores placeholders and generic guidance/);
-await writeFile(globalLocalRulesPath, "# Local Verifier Rules\n\nAdd project-specific verifier rules here: setup commands, test commands, services, database details, browser routes, seed data, and local definitions of done.\n");
-await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /replaced generated local rules/);
-assert.match(await readFile(globalLocalRulesPath, "utf8"), /Add only explicit project-specific verifier requirements/);
-const learnerAdvisor = `  # omp-learner: begin
+await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
+
+const learnerAdvisor = `# omp-learner: begin
   - name: learner
     instructions: |
       Preserve durable project knowledge.
-  # omp-learner: end
+# omp-learner: end
 `;
-const staleWatchdog = globalWatchdog.replace("- name: verifier", "- name: default");
-await writeFile(globalWatchdogPath, `${staleWatchdog}${learnerAdvisor}`);
+await writeFile(globalWatchdogPath, `${globalWatchdog}${learnerAdvisor}`);
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.match(globalWatchdog, /# omp-verifier: advisor begin/);
-assert.match(globalWatchdog, /@\.\/WATCHDOG\.local\.md/);
-assert.match(globalWatchdog, /name: learner/);
-assert.doesNotMatch(globalWatchdog, /name: default/);
-assert.match(globalWatchdog, /Preserve durable project knowledge/);
-assert.match(registrations.notices.at(-1).message, /refreshed verifier advisor/);
-const defaultAdvisor = `  - name: default
-    instructions: |
-      Keep the regular advisor behavior.
-`;
-await writeFile(globalWatchdogPath, `${globalWatchdog}${defaultAdvisor}`);
-await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.match(globalWatchdog, /name: verifier/);
 assert.match(globalWatchdog, /name: default/);
-assert.match(globalWatchdog, /Keep the regular advisor behavior/);
+assert.match(globalWatchdog, /name: verifier/);
+assert.match(globalWatchdog, /name: learner/);
+assert.match(globalWatchdog, /Preserve durable project knowledge/);
 
-await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
-await assert.rejects(readFile(join(repo, ".omp", "config.yml"), "utf8"), /ENOENT/);
+const legacyWatchdog = `# omp-verifier: generated
+instructions: |
+  Everyone: keep advice concrete, evidence-first, and non-repetitive.
 
+advisors:
+# omp-verifier: advisor begin
+  - name: verifier
+    instructions: |
+      @~\/.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG.md
+      Review completed code-change turns as untrusted until evidence proves them.
+# omp-verifier: advisor end
+${learnerAdvisor}`;
+await writeFile(globalWatchdogPath, legacyWatchdog);
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
+globalWatchdog = await readFile(globalWatchdogPath, "utf8");
+assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: advisor begin\n  - name: verifier/m);
+assert.doesNotMatch(globalWatchdog, /# omp-verifier: generated/);
+assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
+assert.match(globalWatchdog, /name: learner/);
 
 await verifier.handler("status", { ...ctx, cwd: repo, agentDir });
 const statusMessage = registrations.notices.at(-1).message;
 assert.match(statusMessage, /Verifier status:/);
-assert.match(statusMessage, /plugin version: /);
-assert.match(statusMessage, /global WATCHDOG\.yml: customized — /);
-assert.match(statusMessage, /global WATCHDOG\.local\.md: generated — /);
-assert.match(statusMessage, /project WATCHDOG\.yml: absent — /);
-assert.match(statusMessage, /project \.omp\/config\.yml: absent — /);
-assert.doesNotMatch(statusMessage, /verify-pr|boot_app_plan|format_pr_comment|verifier-bootstrap/);
-assert.match(statusMessage, /verifier source: global/);
-assert.match(statusMessage, /project override: none/);
-assert.match(statusMessage, /advisor: global config absent; project config absent/);
-assert.match(statusMessage, /rules: customized/);
-await writeFile(globalConfigPath, "modelRoles:\n  advisor: gpt-5.6\nadvisor:\n  enabled: true\n");
-await verifier.handler("status", { ...ctx, cwd: repo, agentDir });
-const configuredStatusMessage = registrations.notices.at(-1).message;
-assert.match(configuredStatusMessage, /advisor: global enabled, model configured; project config absent/);
-assert.match(configuredStatusMessage, /global config\.yml: exists; advisor enabled; modelRoles\.advisor configured/);
-await verifier.handler("", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Verifier status:/);
-
-
-await verifier.handler("install", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("install local", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("init-local", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Usage:/);
-await verifier.handler("uninstall now", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Usage:/);
+assert.match(statusMessage, /global roster: default, verifier, learner/);
+assert.match(statusMessage, /project roster: absent/);
 
 await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Safe cleanup complete: removed verifier advisor .*WATCHDOG\.yml; removed local rules .*WATCHDOG\.local\.md\. Next run: omp plugin uninstall omp-verifier/);
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.doesNotMatch(globalWatchdog, /name: verifier/);
 assert.match(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /name: learner/);
-await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
-
-await uninstallHook({ cwd: repo, agentDir });
-assert.match(await readFile(globalWatchdogPath, "utf8"), /name: learner/);
-await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
-
-await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-await uninstallHook({ cwd: repo, agentDir });
-globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.doesNotMatch(globalWatchdog, /name: verifier/);
-assert.match(globalWatchdog, /name: default/);
-assert.match(globalWatchdog, /name: learner/);
-await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
+await uninstallHook({ agentDir });
+assert.doesNotMatch(await readFile(globalWatchdogPath, "utf8"), /name: verifier/);
 
+const customAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
+const customWatchdogPath = join(customAgentDir, "WATCHDOG.yml");
+await writeFile(customWatchdogPath, "instructions: |\n  Keep custom setup.\n\nadvisors:\n  - name: learner\n");
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir: customAgentDir });
+const customWatchdog = await readFile(customWatchdogPath, "utf8");
+assert.match(customWatchdog, /Keep custom setup/);
+assert.match(customWatchdog, /name: default/);
+assert.match(customWatchdog, /name: verifier/);
+assert.match(customWatchdog, /name: learner/);
 
-await writeFile(globalWatchdogPath, "custom global watchdog\n");
-await writeFile(globalLocalRulesPath, "custom local rules\n");
-await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
-assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");
-
-await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /Safe cleanup complete: kept customized .*WATCHDOG\.yml \(remove verifier block manually\); kept customized local rules .*WATCHDOG\.local\.md\. Next run: omp plugin uninstall omp-verifier/);
-assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
-assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");
-await uninstallHook({ cwd: repo, agentDir });
-assert.equal(await readFile(globalWatchdogPath, "utf8"), "custom global watchdog\n");
-assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n");
-const explicitReplacement = await installGlobalVerifier({ agentDir }, { replace: true });
-assert.match(explicitReplacement[0], /replaced customized .*WATCHDOG\.yml/);
-globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.match(globalWatchdog, /name: verifier/);
-assert.doesNotMatch(globalWatchdog, /custom global watchdog/);
-
-console.log("verifier advisor status/lifecycle smoke test passed");
+console.log("default and verifier advisor lifecycle smoke test passed");
