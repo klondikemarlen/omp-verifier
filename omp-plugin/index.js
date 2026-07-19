@@ -60,7 +60,18 @@ const LOCAL_RULES_SUFFIX = `
 - BLOCKED: a required command, service, seed, credential, or route is unavailable.
 `;
 const PREVIOUS_LOCAL_RULES_TEMPLATE = `${LOCAL_RULES_PREFIX}${LOCAL_RULES_SUFFIX}`;
-const LOCAL_RULES_TEMPLATE = `${LOCAL_RULES_PREFIX}${SEMANTIC_STYLE_TEMPLATE}${LOCAL_RULES_SUFFIX}`;
+const LEGACY_LOCAL_RULES_TEMPLATE = `${LOCAL_RULES_PREFIX}${SEMANTIC_STYLE_TEMPLATE}${LOCAL_RULES_SUFFIX}`;
+const LOCAL_RULES_TEMPLATE = `# Local Verifier Rules
+
+Add only explicit project-specific verifier requirements. Each requirement must name:
+
+- the change or release condition that triggers it;
+- the behavior or invariant to prove;
+- the narrow command or action that proves it; and
+- the PASS evidence to observe.
+
+The verifier ignores placeholders and generic guidance.
+`;
 
 const OLD_WATCHDOG_ROSTER = `instructions: |
   Everyone: keep advice concrete, evidence-first, and non-repetitive.
@@ -90,15 +101,6 @@ const VERIFIER_ADVISOR = `${VERIFIER_ADVISOR_START}  - name: verifier
     instructions: |
       ${VERIFIER_GUIDANCE_PATH}
       @./WATCHDOG.local.md
-
-      You are the always-on verifier for this session.
-      Review completed code-change turns as untrusted until evidence proves them.
-      Raise a blocker when work is called done without observed evidence.
-      Raise a concern when checks are too broad, too narrow, or ignore local setup.
-      When the evidence is sufficient, do not call the advice tool; reply with "No advice."
-
-      Project-specific rules can live in downstream WATCHDOG files: setup commands,
-      test commands, database/service details, browser routes, and "done means" checks.
 ${VERIFIER_ADVISOR_END}`;
 const WATCHDOG_ROSTER = `${GENERATED_WATCHDOG_MARKER}
 instructions: |
@@ -127,7 +129,7 @@ const PREVIOUS_WATCHDOG_ROSTER = WATCHDOG_ROSTER
   .replace(VERIFIER_ADVISOR_START, "")
   .replace(VERIFIER_ADVISOR_END, "");
 const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, LEGACY_WATCHDOG_ROSTER, PREVIOUS_WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
-const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, PREVIOUS_LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
+const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, LEGACY_LOCAL_RULES_TEMPLATE, PREVIOUS_LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
 
 
 function isGeneratedWatchdog(content) {

@@ -58,32 +58,29 @@ await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDi
 assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; created .*WATCHDOG\.yml/);
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: generated\ninstructions: \|/);
-assert.match(globalWatchdog, /reply with "No advice\."/);
+assert.match(globalWatchdog, /@~\/\.omp\/plugins\/node_modules\/omp-verifier\/WATCHDOG\.md/);
 assert.match(globalWatchdog, /name: verifier/);
+assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
 const globalLocalRules = await readFile(globalLocalRulesPath, "utf8");
-assert.match(globalLocalRules, /## Human-readable code/);
-assert.match(globalLocalRules, /Gold examples/);
-assert.match(globalLocalRules, /named intermediate values over nested ternaries/);
-assert.match(globalLocalRules, /each semantic decision or transformation in its own statement/);
-const previousGeneratedLocalRules = globalLocalRules.replace(/## Human-readable code\n\n(?:.*\n){6}\n/, "");
-await writeFile(globalLocalRulesPath, previousGeneratedLocalRules);
+assert.match(globalLocalRules, /Add only explicit project-specific verifier requirements/);
+assert.match(globalLocalRules, /the narrow command or action that proves it/);
+assert.match(globalLocalRules, /The verifier ignores placeholders and generic guidance/);
+await writeFile(globalLocalRulesPath, "# Local Verifier Rules\n\nAdd project-specific verifier rules here: setup commands, test commands, services, database details, browser routes, seed data, and local definitions of done.\n");
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /replaced generated local rules/);
-assert.match(await readFile(globalLocalRulesPath, "utf8"), /## Human-readable code/);
+assert.match(await readFile(globalLocalRulesPath, "utf8"), /Add only explicit project-specific verifier requirements/);
 const learnerAdvisor = `  # omp-learner: begin
   - name: learner
     instructions: |
       Preserve durable project knowledge.
   # omp-learner: end
 `;
-const staleWatchdog = globalWatchdog
-  .replace("- name: verifier", "- name: default")
-  .replace('reply with "No advice."', 'reply with "Stale verifier guidance."');
+const staleWatchdog = globalWatchdog.replace("- name: verifier", "- name: default");
 await writeFile(globalWatchdogPath, `${staleWatchdog}${learnerAdvisor}`);
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: advisor begin/);
-assert.match(globalWatchdog, /When the evidence is sufficient, do not call the advice tool/);
+assert.match(globalWatchdog, /@\.\/WATCHDOG\.local\.md/);
 assert.match(globalWatchdog, /name: learner/);
 assert.doesNotMatch(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /Preserve durable project knowledge/);
