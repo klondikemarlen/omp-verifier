@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.30 - 2026-07-19
+
+- Classified explicit local verifier requirements consistently as PASS, FAIL, or BLOCKED before raising actionable advice.
+
 ## 0.6.29 - 2026-07-19
 
 - Limited verifier advice to explicit downstream verification-policy requirements, leaving generic advisor review to OMP.
