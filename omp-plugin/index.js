@@ -85,9 +85,10 @@ advisors:
 
 const VERIFIER_ADVISOR_START = "  # omp-verifier: advisor begin\n";
 const VERIFIER_ADVISOR_END = "  # omp-verifier: advisor end\n";
-const VERIFIER_ADVISOR = `${VERIFIER_ADVISOR_START}  - name: default
+const VERIFIER_GUIDANCE_PATH = "@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md";
+const VERIFIER_ADVISOR = `${VERIFIER_ADVISOR_START}  - name: verifier
     instructions: |
-      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+      ${VERIFIER_GUIDANCE_PATH}
       @./WATCHDOG.local.md
 
       You are the always-on verifier for this session.
@@ -121,10 +122,11 @@ advisors:
     instructions: "@~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md\\n\\nYou are the always-on verifier for this session.\\nReview completed code-change turns as untrusted until evidence proves them.\\nRaise a blocker when work is called done without observed evidence.\\nRaise a concern when checks are too broad, too narrow, or ignore local setup.\\nStay silent when the evidence is sufficient.\\n\\nProject-specific rules can live in downstream WATCHDOG files: setup commands,\\ntest commands, database/service details, browser routes, and \\"done means\\" checks.\\n"
 `;
 
+const LEGACY_WATCHDOG_ROSTER = WATCHDOG_ROSTER.replace("- name: verifier", "- name: default");
 const PREVIOUS_WATCHDOG_ROSTER = WATCHDOG_ROSTER
   .replace(VERIFIER_ADVISOR_START, "")
   .replace(VERIFIER_ADVISOR_END, "");
-const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, PREVIOUS_WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
+const GENERATED_WATCHDOGS = [WATCHDOG_ROSTER, LEGACY_WATCHDOG_ROSTER, PREVIOUS_WATCHDOG_ROSTER, OLD_WATCHDOG_ROSTER, SERIALIZED_WATCHDOG_ROSTER];
 const GENERATED_LOCAL_RULES = [LOCAL_RULES_TEMPLATE, PREVIOUS_LOCAL_RULES_TEMPLATE, OLD_LOCAL_RULES_TEMPLATE];
 
 
@@ -139,12 +141,16 @@ function refreshVerifierAdvisor(content) {
   if (start !== -1 && end !== -1 && end >= start) {
     return `${content.slice(0, start)}${VERIFIER_ADVISOR}${content.slice(end + VERIFIER_ADVISOR_END.length)}`;
   }
-
+  let refreshedLegacy = false;
   const refreshedLegacyAdvisor = content.replace(
-    /^  - name: default\n(?:(?: {4,}.*)?\n)*(?=^  (?:- name:|#)|(?![\s\S]))/m,
-    VERIFIER_ADVISOR,
+    /^  - name: default\n(?:(?: {4,}.*)?\n)*(?=^  (?:- name:|#)|(?![\s\S]))/gm,
+    advisor => {
+      if (!advisor.includes(VERIFIER_GUIDANCE_PATH)) return advisor;
+      refreshedLegacy = true;
+      return VERIFIER_ADVISOR;
+    },
   );
-  if (refreshedLegacyAdvisor !== content) return refreshedLegacyAdvisor;
+  if (refreshedLegacy) return refreshedLegacyAdvisor;
 
   return content.replace("\nadvisors:\n", `\nadvisors:\n${VERIFIER_ADVISOR}`);
 }

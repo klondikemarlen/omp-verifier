@@ -60,6 +60,7 @@ assert.match(registrations.notices.at(-1).message, /Verifier plugin loaded; crea
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: generated\ninstructions: \|/);
 assert.match(globalWatchdog, /reply with "No advice\."/);
+assert.match(globalWatchdog, /name: verifier/);
 const globalLocalRules = await readFile(globalLocalRulesPath, "utf8");
 assert.match(globalLocalRules, /## Human-readable code/);
 assert.match(globalLocalRules, /Gold examples/);
@@ -77,8 +78,7 @@ const learnerAdvisor = `  # omp-learner: begin
   # omp-learner: end
 `;
 const staleWatchdog = globalWatchdog
-  .replace("  # omp-verifier: advisor begin\n", "")
-  .replace("  # omp-verifier: advisor end\n", "")
+  .replace("- name: verifier", "- name: default")
   .replace('reply with "No advice."', 'reply with "Stale verifier guidance."');
 await writeFile(globalWatchdogPath, `${staleWatchdog}${learnerAdvisor}`);
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
@@ -86,8 +86,19 @@ globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /# omp-verifier: advisor begin/);
 assert.match(globalWatchdog, /When the evidence is sufficient, do not call the advice tool/);
 assert.match(globalWatchdog, /name: learner/);
+assert.doesNotMatch(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /Preserve durable project knowledge/);
 assert.match(registrations.notices.at(-1).message, /refreshed verifier advisor/);
+const defaultAdvisor = `  - name: default
+    instructions: |
+      Keep the regular advisor behavior.
+`;
+await writeFile(globalWatchdogPath, `${globalWatchdog}${defaultAdvisor}`);
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
+globalWatchdog = await readFile(globalWatchdogPath, "utf8");
+assert.match(globalWatchdog, /name: verifier/);
+assert.match(globalWatchdog, /name: default/);
+assert.match(globalWatchdog, /Keep the regular advisor behavior/);
 
 await assert.rejects(readFile(join(repo, "WATCHDOG.yml"), "utf8"), /ENOENT/);
 await assert.rejects(readFile(join(repo, ".omp", "config.yml"), "utf8"), /ENOENT/);
@@ -127,7 +138,8 @@ assert.match(registrations.notices.at(-1).message, /Usage:/);
 await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
 assert.match(registrations.notices.at(-1).message, /Safe cleanup complete: removed verifier advisor .*WATCHDOG\.yml; removed local rules .*WATCHDOG\.local\.md\. Next run: omp plugin uninstall omp-verifier/);
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.doesNotMatch(globalWatchdog, /name: default/);
+assert.doesNotMatch(globalWatchdog, /name: verifier/);
+assert.match(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /name: learner/);
 await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
@@ -138,7 +150,8 @@ await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 await uninstallHook({ cwd: repo, agentDir });
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.doesNotMatch(globalWatchdog, /name: default/);
+assert.doesNotMatch(globalWatchdog, /name: verifier/);
+assert.match(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /name: learner/);
 await assert.rejects(readFile(globalLocalRulesPath, "utf8"), /ENOENT/);
 
@@ -159,7 +172,7 @@ assert.equal(await readFile(globalLocalRulesPath, "utf8"), "custom local rules\n
 const explicitReplacement = await installGlobalVerifier({ agentDir }, { replace: true });
 assert.match(explicitReplacement[0], /replaced customized .*WATCHDOG\.yml/);
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
-assert.match(globalWatchdog, /name: default/);
+assert.match(globalWatchdog, /name: verifier/);
 assert.doesNotMatch(globalWatchdog, /custom global watchdog/);
 
 console.log("verifier advisor status/lifecycle smoke test passed");

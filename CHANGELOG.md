@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.28 - 2026-07-18
+
+- Bootstrapped verifier guidance as a separate `verifier` advisor without replacing regular or independent advisors.
+
 ## 0.6.27 - 2026-07-17
 
 - Preserved independent advisors while refreshing the verifier-owned default advisor.
