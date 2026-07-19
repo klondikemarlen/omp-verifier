@@ -7,12 +7,10 @@ Installable OMP plugin that injects one evidence-first verifier as an always-on 
 Only these features belong here:
 
 1. Install the plugin.
-2. Auto-install lightweight verifier advisor guidance for the active OMP agent.
-   It is named `verifier`, so the regular `default` advisor and independent advisors such as `learner` remain available.
+2. Auto-install a named `verifier` advisor for explicit downstream verification-policy checks.
+   It does not create or modify the host-owned default role or independent advisors such as `learner`.
 3. Let each downstream repo customize local rules in `WATCHDOG.local.md`.
 4. Let upstream verifier guidance change here and flow downstream after reinstall.
-
-5. Flag a direct, observed correctness, security, or data-loss risk with a concrete reason and smallest corrective action or check.
 
 Not included: PR checkout, app booting, GitHub comments, verifier task agents, planning tools, or custom runtimes.
 
