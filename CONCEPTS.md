@@ -21,7 +21,7 @@ No task agents, PR checkout, app booting, GitHub comments, planning tools, or cu
 sequenceDiagram
   participant User
   participant Main as Main agent
-  participant Advisor as OMP advisor: default with verifier guidance
+  participant Advisor as OMP advisor: verifier
 
   User->>Main: request code change
   Main->>Main: edit and run checks
@@ -39,8 +39,8 @@ omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
 
 When the plugin loads, it writes these files under the active OMP agent directory:
 
-- `WATCHDOG.yml`, containing the generated default-advisor wrapper.
-- `WATCHDOG.local.md`, containing downstream-specific setup, test, service, database, browser, and definition-of-done rules.
+- `WATCHDOG.yml`, containing the generated named verifier advisor and its guidance imports.
+- `WATCHDOG.local.md`, containing explicit project-specific verifier requirements.
 
 The plugin does not edit global OMP runtime configuration. Configure advisor tools, model, and runtime behavior in local OMP configuration.
 

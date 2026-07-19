@@ -60,7 +60,7 @@ Loading OMP now automatically creates or refreshes the user-level verifier files
 ~/.omp/agent/WATCHDOG.local.md
 ```
 
-`WATCHDOG.yml` refreshes the verifier-owned `default` advisor while preserving independently installed advisors.
+`WATCHDOG.yml` owns only a named `verifier` advisor and imports its shipped and local policy guidance.
 `WATCHDOG.local.md` is generated only when absent or previously generated; customized local guidance is preserved.
 
 The plugin owns verifier guidance only. Configure advisor tools, model, and runtime behavior in local OMP configuration.
@@ -85,58 +85,16 @@ Restart OMP after first install if the advisor is not already active, or run:
 
 ## Customize downstream
 
-Edit `WATCHDOG.local.md` in the downstream repo when a project needs specific commands, services, database details, browser routes, local definitions of done, or human-readable code rules. The verifier no longer scaffolds project-local files; keeping that file explicit avoids another command surface.
+`WATCHDOG.local.md` contains only explicit verifier requirements. Add a rule when a project-specific condition needs evidence beyond OMP's generic advisor review:
 
-The file can use this shape; replace placeholders with real local commands, rules, and Gold examples:
 ```markdown
 # Local Verifier Rules
 
-Replace placeholders with commands from this repo. Keep uncertain entries as suggestions.
-
-## Project setup
-
-- Install dependencies: <repo command>
-- Start services: <repo command for database/cache/queue/app server>
-- Apply migrations: <repo command>
-- Seed data: <repo command or fixture/account name>
-
-## Targeted checks
-
-- Unit or API change: <focused test command>
-- Typecheck/build: <typecheck or build command>
-- Migration change: <migration verification command>
-
-## Browser/UI smoke
-
-- Route: <local route>
-- Action: <user-visible flow>
-- Expected evidence: <visible label, URL, screenshot path, or state>
-
-## High-risk areas
-
-- Auth, billing, migrations, permissions, admin flows, and data deletion require focused checks.
-- Do not approve these from compile/type checks alone.
-
-## Human-readable code
-
-- Enforced style rules: <formatter, linter, static-analysis command, or local style doc>
-- Gold examples: <one or two relevant paths that demonstrate the desired shape>
-- Conditional/control-flow rule: <e.g. prefer guard clauses and named intermediate values over nested ternaries>
-- Decomposition rule: <e.g. keep each semantic decision or transformation in its own statement>
-- Transformation rule: <e.g. split layered map/filter/reduce/callback chains when intermediate meaning is not obvious>
-- Style concern evidence: <changed-file lines plus the local rule or Gold example>
-
-## Local PASS / FAIL / BLOCKED
-
-- PASS: observed evidence proves the changed behavior or invariant.
-- FAIL: observed evidence shows a regression, broken invariant, or wrong behavior.
-- BLOCKED: a required command, service, seed, credential, or route is unavailable.
+- When a database migration changes: run `npm run db:verify`; PASS when the migration status is current.
+- Before a production release: run `npm run release:check`; PASS when it exits successfully.
 ```
 
-Start with enforced rules and one nearby Gold example. Add a local rule only after the same review correction recurs; state the readability risk and a narrow exception rather than collecting snippets.
-
-Keep generic verifier behavior in this repo's `WATCHDOG.md`.
-Shared guidance also flags direct correctness, security, or data-loss risks visible in changed code. It does not replace downstream semantic-style rules or invent hypothetical concerns.
+Each rule must name its trigger, behavior or invariant, narrow check, and PASS evidence. The verifier ignores placeholders and generic guidance; keep generic code-quality, strategy, and risk review with OMP's host advisor.
 
 The verifier setup is refreshed automatically when the plugin loads.
 
