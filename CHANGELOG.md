@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.32 - 2026-07-19
+
+- Restored OMP's stock default advisor, inserted verifier second, and removed obsolete generated-roster and local-rules compatibility code.
+
 ## 0.6.31 - 2026-07-19
 
 - Focused generated verifier guidance and local rules on explicit policy checks; retained legacy generated-file recognition for safe migration.
