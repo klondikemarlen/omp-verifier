@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.33 - 2026-07-20
+
+- Aligned verifier installation with OMP Learner by syncing guidance into the active agent directory.
+
 ## 0.6.32 - 2026-07-19
 
 - Restored OMP's stock default advisor, inserted verifier second, and removed obsolete generated-roster and local-rules compatibility code.

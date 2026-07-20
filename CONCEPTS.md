@@ -16,13 +16,13 @@ sequenceDiagram
 
 The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts and owns only its marked `verifier` block immediately after `default`; independent advisors remain untouched.
 
-`default` receives OMP's stock advisor prompt. `verifier` imports this repository's `WATCHDOG.md` and evaluates only explicit verifier requirements. Generic quality, scope, strategy, and direct-risk concerns remain with `default`.
+`default` receives OMP's stock advisor prompt. On setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md` and imports that agent-owned file. Generic quality, scope, strategy, and direct-risk concerns remain with `default`.
 
 ## Lifecycle
 
-- Loading the plugin reconciles the user roster to `default`, then marked `verifier`.
-- `/verifier status` reports global and project roster entries.
-- `/verifier uninstall` removes only the marked verifier block.
+- Loading the plugin refreshes the agent-owned guidance file and reconciles the user roster to `default`, then marked `verifier`.
+- `/verifier status` reports global and project roster entries plus the guidance-file path.
+- `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create configuration files, local-rules templates, task agents, or custom runtimes.
 
 ## Requirement contract
