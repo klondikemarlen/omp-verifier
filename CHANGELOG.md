@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.36 - 2026-07-20
+
+- Kept successful verifier startup silent while retaining warning notifications for setup failures.
+
 ## 0.6.35 - 2026-07-20
 
 - Simplified successful verifier startup notifications to confirm that the advisor is ready.
