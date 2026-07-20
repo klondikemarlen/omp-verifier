@@ -190,7 +190,6 @@ export default function verifierPlugin(pi) {
   pi.on("session_start", async (_event, ctx) => {
     try {
       await installGlobalVerifier(ctx);
-      ctx.ui.notify("Verifier advisor ready.", "info");
     } catch (error) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
     }
