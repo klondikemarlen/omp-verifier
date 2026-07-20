@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.35 - 2026-07-20
+
+- Simplified successful verifier startup notifications to confirm that the advisor is ready.
+
 ## 0.6.34 - 2026-07-20
 
 - Clarified and tested that setup refreshes the generated agent-owned verifier guidance file.
