@@ -34,7 +34,7 @@ const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
 const guidancePath = join(agentDir, "verifier", "WATCHDOG.md");
 
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /created verifier guidance/);
+assert.deepEqual(registrations.notices.at(-1), { message: "Verifier advisor ready.", level: "info" });
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: advisor begin\n  - name: verifier/m);
 assert.match(globalWatchdog, new RegExp(`@${guidancePath}`));
@@ -42,7 +42,7 @@ assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
 assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
 await writeFile(guidancePath, "custom verifier guidance\n");
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
-assert.match(registrations.notices.at(-1).message, /refreshed verifier guidance/);
+assert.deepEqual(registrations.notices.at(-1), { message: "Verifier advisor ready.", level: "info" });
 assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
 
 const learnerAdvisor = `# omp-learner: begin
