@@ -40,6 +40,10 @@ assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: a
 assert.match(globalWatchdog, new RegExp(`@${guidancePath}`));
 assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
 assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
+await writeFile(guidancePath, "custom verifier guidance\n");
+await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /refreshed verifier guidance/);
+assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
 
 const learnerAdvisor = `# omp-learner: begin
   - name: learner
