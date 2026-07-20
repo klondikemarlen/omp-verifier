@@ -8,7 +8,7 @@ The plugin does only four things:
 
 1. Preserves or restores the stock `default` advisor entry.
 2. Adds a marked `verifier` advisor entry immediately after it.
-3. Ships verifier-only evidence guidance in `WATCHDOG.md`.
+3. Syncs verifier-only evidence guidance into the active agent directory.
 4. Shows or removes its marked advisor block with `/verifier`.
 
 It does not configure models, tools, OMP runtime settings, task agents, GitHub workflows, browser checks, style rules, or generic code review.
@@ -28,9 +28,12 @@ advisors:
   # omp-verifier: advisor begin
   - name: verifier
     instructions: |
-      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+      @/home/<user>/.omp/agent/verifier/WATCHDOG.md
   # omp-verifier: advisor end
 ```
+
+
+The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on setup. The roster imports that agent-owned file, matching OMP Learner's ownership model. Reinstall refreshes the copy; uninstall removes it only when it is unchanged.
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier block adds only the plugin's explicit-requirement evidence review.
 
@@ -42,7 +45,7 @@ Add a project `WATCHDOG.yml` entry named `verifier` when a repository needs a re
 advisors:
   - name: verifier
     instructions: |
-      @~/.omp/plugins/node_modules/omp-verifier/WATCHDOG.md
+      @/home/<user>/.omp/agent/verifier/WATCHDOG.md
 
       - When a database migration changes: run `npm run db:verify`; PASS when migration status is current.
 ```
