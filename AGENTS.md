@@ -31,7 +31,7 @@ Current scope:
 - `/verifier` and `/verifier status` report global and project advisor rosters.
 - `/verifier uninstall` removes only the marked verifier advisor block.
 - Plugin load preserves or restores OMP's stock `default` advisor, then inserts `verifier` as the second advisor.
-- Plugin load syncs shipped guidance into `<agent-dir>/verifier/WATCHDOG.md`.
+- Plugin load refreshes the generated guidance file at `<agent-dir>/verifier/WATCHDOG.md`.
 - Independent advisors remain untouched.
 - Plugin uninstall lifecycle cleanup removes only the marked verifier advisor block and unchanged guidance file when supported by OMP.
 - `WATCHDOG.md` is the source copied into named `verifier` entries.

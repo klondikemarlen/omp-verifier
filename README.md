@@ -33,7 +33,7 @@ advisors:
 ```
 
 
-The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on setup. The roster imports that agent-owned file, matching OMP Learner's ownership model. Reinstall refreshes the copy; uninstall removes it only when it is unchanged.
+The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. The roster imports that agent-owned generated file, matching OMP Learner's ownership model. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier block adds only the plugin's explicit-requirement evidence review.
 

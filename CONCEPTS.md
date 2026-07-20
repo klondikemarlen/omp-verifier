@@ -16,7 +16,7 @@ sequenceDiagram
 
 The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts and owns only its marked `verifier` block immediately after `default`; independent advisors remain untouched.
 
-`default` receives OMP's stock advisor prompt. On setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md` and imports that agent-owned file. Generic quality, scope, strategy, and direct-risk concerns remain with `default`.
+`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md` and imports that agent-owned generated file. Generic quality, scope, strategy, and direct-risk concerns remain with `default`.
 
 ## Lifecycle
 

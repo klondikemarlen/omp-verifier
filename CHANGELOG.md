@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.34 - 2026-07-20
+
+- Clarified and tested that setup refreshes the generated agent-owned verifier guidance file.
+
 ## 0.6.33 - 2026-07-20
 
 - Aligned verifier installation with OMP Learner by syncing guidance into the active agent directory.
