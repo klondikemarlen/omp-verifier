@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
@@ -114,6 +114,23 @@ await writeFile(
   join(malformedPackagePath, "package.json"),
   JSON.stringify({ name: "publisher-malformed", omp: { extensions: ["./index.js"], verifications: "not-an-array" } }),
 );
+const symlinkPackagePath = join(verificationPackageDirectory, "publisher-symlink");
+const outsideCheckPath = join(verificationCwd, "outside-check.mjs");
+await mkdir(symlinkPackagePath, { recursive: true });
+await writeFile(join(symlinkPackagePath, "package.json"), JSON.stringify({
+  name: "publisher-symlink",
+  omp: {
+    extensions: ["./index.js"],
+    verifications: [{
+      id: "publisher-symlink:check",
+      label: "Symlink check",
+      description: "Unsafe symlink entry",
+      entry: "./link.mjs",
+    }],
+  },
+}));
+await writeFile(outsideCheckPath, jsonResult({ status: "PASS", summary: "should not run" }));
+await symlink(outsideCheckPath, join(symlinkPackagePath, "link.mjs"));
 
 const discovered = await discoverVerificationChecks({ packageDirectory: verificationPackageDirectory });
 assert.deepEqual(
@@ -123,6 +140,7 @@ assert.deepEqual(
 assert.equal(discovered.blockedResults.filter(result => result.id === "publisher-duplicate:check").length, 3);
 assert.equal(discovered.blockedResults.find(result => result.id === "publisher-traversal:check").status, "BLOCKED");
 assert.equal(discovered.blockedResults.find(result => result.id === "manifest:publisher-malformed").status, "BLOCKED");
+assert.equal(discovered.blockedResults.find(result => result.id === "publisher-symlink:check").status, "BLOCKED");
 
 const verificationResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-pass:check", "publisher-pass:check", "publisher-missing:check"]);
 assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);
@@ -143,6 +161,7 @@ assert.match(verificationMessage, /FAIL publisher-fail:check/);
 assert.match(verificationMessage, /BLOCKED publisher-missing-entry:check/);
 assert.match(verificationMessage, /BLOCKED publisher-nonzero:check/);
 assert.match(verificationMessage, /BLOCKED publisher-invalid:check/);
+assert.match(verificationMessage, /BLOCKED publisher-symlink:check/);
 assert.match(verificationMessage, /BLOCKED publisher-timeout:check/);
 assert.match(verificationMessage, /BLOCKED publisher-duplicate:check/);
 
