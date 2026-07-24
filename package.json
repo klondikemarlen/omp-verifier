@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.6.36",
+  "version": "0.7.0",
   "description": "OMP verifier advisor bootstrap for evidence-first code-change review.",
   "type": "module",
   "license": "MIT",
@@ -37,7 +37,7 @@
     }
   },
   "scripts": {
-    "check": "node --check omp-plugin/index.js && node --check test/verifier-plugin.test.js",
+    "check": "node --check omp-plugin/index.js && node --check omp-plugin/verifications.js && node --check test/verifier-plugin.test.js",
     "test": "node --test test/*.test.js",
     "release:check": "npm run check && npm test",
     "reinstall": "omp plugin uninstall omp-verifier; omp plugin install \"github:klondikemarlen/omp-verifier#$(git rev-parse HEAD)\""

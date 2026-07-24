@@ -4,14 +4,15 @@ An OMP plugin that adds a focused `verifier` advisor after OMP's stock `default`
 
 ## Scope
 
-The plugin does only four things:
+The plugin does five things:
 
 1. Preserves or restores the stock `default` advisor entry.
 2. Adds a marked `verifier` advisor entry immediately after it.
 3. Syncs verifier-only evidence guidance into the active agent directory.
 4. Shows or removes its marked advisor block with `/verifier`.
+5. Discovers and runs opt-in verification manifests exposed by installed OMP plugin packages.
 
-It does not configure models, tools, OMP runtime settings, task agents, GitHub workflows, browser checks, style rules, or generic code review.
+It does not configure models, tools, OMP runtime settings, task agents, GitHub workflows, browser checks, or generic code review. Verification manifests are explicit package-owned checks; they are not inferred from arbitrary tools or maintainer test filenames.
 
 ## Install
 
@@ -57,8 +58,38 @@ Each requirement names its trigger, Gold condition, narrow check, and PASS evide
 ```text
 /verifier
 /verifier status
+/verifier checks
+/verifier verify
+/verifier verify <check-id...>
 /verifier uninstall
 ```
+
+`/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
+
+With no compatible manifests installed, `checks` reports `none installed` and `verify` reports `BLOCKED`. Existing advisor setup and cleanup remain independent of the optional check surface.
+
+## Verification manifests
+
+An installed OMP plugin can opt in through `package.json`:
+
+```json
+{
+  "omp": {
+    "extensions": ["./omp-plugin/index.js"],
+    "verifications": [{
+      "id": "publisher:check-id",
+      "label": "Human label",
+      "description": "What the check proves",
+      "entry": "./verifications/check-id.mjs",
+      "timeoutMs": 30000
+    }]
+  }
+}
+```
+
+Each entry must be a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. The package must expose an `omp.extensions` or `pi.extensions` entry; the verifier invokes entries without a shell in the active project directory. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and non-zero exits fail closed as `BLOCKED`; model-supplied commands are never accepted.
+
+`/verifier verify` does not scan remote repositories or execute arbitrary `verify-*` files. Installed plugin code remains trusted; the manifest is a discovery convention, not a sandbox.
 
 `/verifier uninstall` removes only the marked verifier block. It leaves `default` and independent advisors such as `learner` in place.
 
