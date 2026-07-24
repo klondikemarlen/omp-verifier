@@ -1,4 +1,4 @@
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, readFile, readdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -59,7 +59,7 @@ async function packageDirectories(packageDirectory) {
   return { directories, errors };
 }
 
-function manifestCheck(packageName, packagePath, entry) {
+async function manifestCheck(packageName, packagePath, entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("verification entry must be an object");
 
   const id = validString(entry.id, "id");
@@ -78,6 +78,15 @@ function manifestCheck(packageName, packagePath, entry) {
 
   const entryPath = resolve(packagePath, moduleEntry);
   if (relative(packagePath, entryPath).startsWith("..")) throw new Error("entry must stay inside its package");
+  try {
+    const [packageRealPath, entryRealPath] = await Promise.all([realpath(packagePath), realpath(entryPath)]);
+    const realEntryRelativePath = relative(packageRealPath, entryRealPath);
+    if (realEntryRelativePath.startsWith("..") || isAbsolute(realEntryRelativePath)) {
+      throw new Error("entry must stay inside its package");
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
 
   const timeoutMs = entry.timeoutMs === undefined ? DEFAULT_TIMEOUT_MS : entry.timeoutMs;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_TIMEOUT_MS) {
@@ -124,7 +133,7 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
     for (const entry of manifest.omp.verifications) {
       let check;
       try {
-        check = manifestCheck(packageName, directory, entry);
+        check = await manifestCheck(packageName, directory, entry);
       } catch (error) {
         const id = typeof entry?.id === "string" ? entry.id : `manifest:${packageName}`;
         blockedResults.push(blocked(id, "Invalid plugin verification manifest", error.message));
