@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0 - 2026-07-23
+
+- Added optional discovery and execution of installed plugin verification manifests through `/verifier checks` and `/verifier verify`.
+
 ## 0.6.36 - 2026-07-20
 
 - Kept successful verifier startup silent while retaining warning notifications for setup failures.

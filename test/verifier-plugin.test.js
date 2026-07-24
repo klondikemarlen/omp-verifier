@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
+import { discoverVerificationChecks, runVerificationChecks } from "../omp-plugin/verifications.js";
 
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
@@ -17,8 +18,8 @@ verifierPlugin(pi);
 assert.equal(registrations.label, "Verifier");
 assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 const verifier = registrations.commands.get("verifier");
-assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "uninstall"]);
-assert.equal(verifier.getArgumentCompletions("uninstall "), null);
+assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "uninstall"]);
+assert.equal(verifier.getArgumentCompletions("verify "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
@@ -28,6 +29,130 @@ assert.match(shippedWatchdog, /explicit verifier requirement/);
 assert.match(shippedWatchdog, /`PASS` — evidence proves the requirement/);
 assert.match(shippedWatchdog, /For `FAIL` or `BLOCKED`, cite the requirement/);
 
+const verificationCwd = await mkdtemp(join(tmpdir(), "omp-verifier-check-cwd-"));
+const verificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-packages-"));
+async function writeVerificationPackage(name, verifications, files = {}) {
+  const packagePath = join(verificationPackageDirectory, name);
+  await mkdir(packagePath, { recursive: true });
+  await writeFile(
+    join(packagePath, "package.json"),
+    JSON.stringify({ name, omp: { extensions: ["./index.js"], verifications } }),
+  );
+  for (const [file, content] of Object.entries(files)) await writeFile(join(packagePath, file), content);
+}
+
+const jsonResult = result => `process.stdout.write(${JSON.stringify(JSON.stringify(result))});\n`;
+await writeVerificationPackage(
+  "publisher-pass",
+  [{ id: "publisher-pass:check", label: "Pass check", description: "A passing check", entry: "./pass.mjs" }],
+  { "pass.mjs": jsonResult({ status: "PASS", summary: "The check passed", evidence: "fixture passed" }) },
+);
+const piOnlyPackagePath = join(verificationPackageDirectory, "publisher-pi-only");
+await mkdir(piOnlyPackagePath, { recursive: true });
+await writeFile(
+  join(piOnlyPackagePath, "package.json"),
+  JSON.stringify({
+    name: "publisher-pi-only",
+    pi: { extensions: ["./index.js"] },
+    omp: {
+      verifications: [{
+        id: "publisher-pi-only:check",
+        label: "Pi-only check",
+        description: "A pi-only plugin check",
+        entry: "./pi-only.mjs",
+      }],
+    },
+  }),
+);
+await writeFile(join(piOnlyPackagePath, "pi-only.mjs"), jsonResult({ status: "PASS", summary: "The pi-only check passed" }));
+await writeVerificationPackage(
+  "publisher-fail",
+  [{ id: "publisher-fail:check", label: "Fail check", description: "A failing check", entry: "./fail.mjs" }],
+  { "fail.mjs": jsonResult({ status: "FAIL", summary: "The check failed", evidence: "fixture failed", nextCheck: "inspect fixture" }) },
+);
+await writeVerificationPackage(
+  "publisher-duplicate-one",
+  [{ id: "publisher-duplicate:check", label: "Duplicate one", description: "Duplicate check", entry: "./one.mjs" }],
+  { "one.mjs": jsonResult({ status: "PASS", summary: "should not run" }) },
+);
+await writeVerificationPackage(
+  "publisher-duplicate-two",
+  [{ id: "publisher-duplicate:check", label: "Duplicate two", description: "Duplicate check", entry: "./two.mjs" }],
+  { "two.mjs": jsonResult({ status: "PASS", summary: "should not run" }) },
+);
+await writeVerificationPackage(
+  "publisher-duplicate-three",
+  [{ id: "publisher-duplicate:check", label: "Duplicate three", description: "Duplicate check", entry: "./three.mjs" }],
+  { "three.mjs": jsonResult({ status: "PASS", summary: "should not run" }) },
+);
+await writeVerificationPackage(
+  "publisher-invalid",
+  [{ id: "publisher-invalid:check", label: "Invalid check", description: "Invalid output", entry: "./invalid.mjs" }],
+  { "invalid.mjs": 'process.stdout.write("not json");\n' },
+);
+await writeVerificationPackage(
+  "publisher-timeout",
+  [{ id: "publisher-timeout:check", label: "Timeout check", description: "Timed out check", entry: "./timeout.mjs", timeoutMs: 10 }],
+  { "timeout.mjs": 'setTimeout(() => process.stdout.write("{}"), 1000);\n' },
+);
+await writeVerificationPackage(
+  "publisher-traversal",
+  [{ id: "publisher-traversal:check", label: "Traversal check", description: "Unsafe entry", entry: "./../escape.mjs" }],
+);
+await writeVerificationPackage(
+  "publisher-missing-entry",
+  [{ id: "publisher-missing-entry:check", label: "Missing entry", description: "Missing entry", entry: "./missing.mjs" }],
+);
+await writeVerificationPackage(
+  "publisher-nonzero",
+  [{ id: "publisher-nonzero:check", label: "Non-zero check", description: "Non-zero result", entry: "./nonzero.mjs" }],
+  { "nonzero.mjs": "process.exitCode = 2;\n" },
+);
+const malformedPackagePath = join(verificationPackageDirectory, "publisher-malformed");
+await mkdir(malformedPackagePath, { recursive: true });
+await writeFile(
+  join(malformedPackagePath, "package.json"),
+  JSON.stringify({ name: "publisher-malformed", omp: { extensions: ["./index.js"], verifications: "not-an-array" } }),
+);
+
+const discovered = await discoverVerificationChecks({ packageDirectory: verificationPackageDirectory });
+assert.deepEqual(
+  discovered.checks.map(check => check.id).sort(),
+  ["publisher-fail:check", "publisher-invalid:check", "publisher-missing-entry:check", "publisher-nonzero:check", "publisher-pass:check", "publisher-pi-only:check", "publisher-timeout:check"],
+);
+assert.equal(discovered.blockedResults.filter(result => result.id === "publisher-duplicate:check").length, 3);
+assert.equal(discovered.blockedResults.find(result => result.id === "publisher-traversal:check").status, "BLOCKED");
+assert.equal(discovered.blockedResults.find(result => result.id === "manifest:publisher-malformed").status, "BLOCKED");
+
+const verificationResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-pass:check", "publisher-pass:check", "publisher-missing:check"]);
+assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);
+assert.equal(verificationResults.find(result => result.id === "publisher-pass:check").status, "PASS");
+
+await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
+const checksMessage = registrations.notices.at(-1).message;
+assert.match(checksMessage, /Verifier checks:/);
+assert.match(checksMessage, /discovered: 7/);
+assert.match(checksMessage, /publisher-pass:check — Pass check/);
+assert.match(checksMessage, /BLOCKED publisher-duplicate:check/);
+
+await verifier.handler("verify", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
+const verificationMessage = registrations.notices.at(-1).message;
+assert.match(verificationMessage, /PASS publisher-pass:check/);
+assert.match(verificationMessage, /PASS publisher-pi-only:check/);
+assert.match(verificationMessage, /FAIL publisher-fail:check/);
+assert.match(verificationMessage, /BLOCKED publisher-missing-entry:check/);
+assert.match(verificationMessage, /BLOCKED publisher-nonzero:check/);
+assert.match(verificationMessage, /BLOCKED publisher-invalid:check/);
+assert.match(verificationMessage, /BLOCKED publisher-timeout:check/);
+assert.match(verificationMessage, /BLOCKED publisher-duplicate:check/);
+
+const emptyVerificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-empty-packages-"));
+await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory: emptyVerificationPackageDirectory });
+assert.match(registrations.notices.at(-1).message, /none installed/);
+await verifier.handler("verify", { ...ctx, cwd: verificationCwd, verificationPackageDirectory: emptyVerificationPackageDirectory });
+assert.match(registrations.notices.at(-1).message, /BLOCKED verifier — No verification checks are installed/);
+
+registrations.notices.length = 0;
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
 const repo = await mkdtemp(join(tmpdir(), "omp-verifier-repo-"));
 const globalWatchdogPath = join(agentDir, "WATCHDOG.yml");
@@ -115,5 +240,13 @@ assert.match(customWatchdog, /name: learner/);
 await writeFile(customGuidancePath, "custom verifier guidance\n");
 await uninstallHook({ agentDir: customAgentDir });
 assert.equal(await readFile(customGuidancePath, "utf8"), "custom verifier guidance\n");
+await Promise.all([
+  rm(verificationPackageDirectory, { recursive: true, force: true }),
+  rm(emptyVerificationPackageDirectory, { recursive: true, force: true }),
+  rm(verificationCwd, { recursive: true, force: true }),
+  rm(agentDir, { recursive: true, force: true }),
+  rm(repo, { recursive: true, force: true }),
+  rm(customAgentDir, { recursive: true, force: true }),
+]);
 
 console.log("agent-owned verifier guidance lifecycle smoke test passed");
