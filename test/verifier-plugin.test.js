@@ -209,6 +209,24 @@ const invalidSuppressionResults = await runAutomaticVerification({
   changedPaths: ["tests/active/example.test.js"],
   packageDirectory: verificationPackageDirectory,
 });
+
+await writeFile(
+  join(verificationCwd, ".omp-verifier.json"),
+  JSON.stringify({
+    suppressions: [{
+      id: "publisher-missing:check",
+      path: "tests/**",
+      reason: "The installed check was removed.",
+    }],
+  }),
+);
+const unknownSuppressionResults = await runAutomaticVerification({
+  cwd: verificationCwd,
+  repositoryRoot: verificationCwd,
+  changedPaths: ["tests/active/example.test.js"],
+  packageDirectory: verificationPackageDirectory,
+});
+assert.equal(unknownSuppressionResults.find(result => result.id === "publisher-missing:check").status, "BLOCKED");
 assert.equal(invalidSuppressionResults.find(result => result.id === "suppression:.omp-verifier.json").status, "BLOCKED");
 
 await registrations.events.get("agent_end")({}, { ...ctx, cwd: verificationCwd, verificationPackageDirectory });

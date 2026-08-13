@@ -360,11 +360,14 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
   }
 
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
-  const selectedChecks = selectAutomaticVerificationChecks(checks, paths);
-  if (selectedChecks.length === 0) return blockedResults;
-
   const { suppressions, blockedResults: suppressionBlocks } = await discoverSuppressions(repositoryRoot, paths);
-  const results = [...blockedResults, ...suppressionBlocks];
+  const installedIds = new Set(checks.map(check => check.id));
+  const unknownSuppressionBlocks = suppressions
+    .filter(suppression => !installedIds.has(suppression.id))
+    .map(suppression => blocked(suppression.id, "Invalid verification suppression configuration", "suppression id is not installed"));
+  const selectedChecks = selectAutomaticVerificationChecks(checks, paths);
+  if (selectedChecks.length === 0) return [...blockedResults, ...suppressionBlocks, ...unknownSuppressionBlocks];
+  const results = [...blockedResults, ...suppressionBlocks, ...unknownSuppressionBlocks];
   for (const { check, matches } of selectedChecks) {
     const unsuppressedMatches = [];
     for (const match of matches) {
