@@ -13,6 +13,8 @@ const MAX_FIELD_LENGTH = 4_000;
 const CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const SUPPRESSION_FILE = ".omp-verifier.json";
+
 function defaultPackageDirectory() {
   const parent = dirname(packageRoot);
   if (basename(parent) === "node_modules") return parent;
@@ -29,6 +31,130 @@ function validString(value, name, required = true) {
     throw new Error(`${name} must be a ${required ? "non-empty " : ""}string no longer than ${MAX_FIELD_LENGTH} characters`);
   }
   return value;
+}
+
+function projectPath(value, name) {
+  const path = validString(value, name).replaceAll("\\", "/").replace(/^\.\//, "");
+  if (!path || path === "." || isAbsolute(path) || path.split("/").includes("..")) {
+    throw new Error(`${name} must be a project-relative path without traversal`);
+  }
+  return path;
+}
+
+function globPattern(value, name, { bounded = false } = {}) {
+  const pattern = projectPath(value, name);
+  if (bounded && (pattern === "**" || pattern === "**/*")) {
+    throw new Error(`${name} must not match the entire project`);
+  }
+  return pattern;
+}
+
+function matchesGlob(path, pattern) {
+  let expression = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "*" && pattern[index + 1] === "*") {
+      if (pattern[index + 2] === "/") {
+        expression += "(?:.*/)?";
+        index += 2;
+      } else {
+        expression += ".*";
+        index += 1;
+      }
+    } else if (character === "*") {
+      expression += "[^/]*";
+    } else if (character === "?") {
+      expression += "[^/]";
+    } else {
+      expression += "\\^$+?.()|{}[]".includes(character) ? `\\${character}` : character;
+    }
+  }
+  return new RegExp(`${expression}$`).test(path);
+}
+
+function verificationPathTriggers(entry) {
+  if (entry.pathTriggers === undefined) return undefined;
+  if (!Array.isArray(entry.pathTriggers) || entry.pathTriggers.length === 0) {
+    throw new Error("pathTriggers must be a non-empty array");
+  }
+  return entry.pathTriggers.map((trigger, index) => globPattern(trigger, `pathTriggers[${index}]`));
+}
+
+function suppressionResultId(configPath, root) {
+  return `suppression:${relative(root, configPath) || SUPPRESSION_FILE}`;
+}
+
+function validExpiry(value) {
+  if (value === undefined) return undefined;
+  const expiry = validString(value, "expires");
+  const date = new Date(`${expiry}T00:00:00.000Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(expiry) || Number.isNaN(date.valueOf()) || date.toISOString().slice(0, 10) !== expiry) {
+    throw new Error("expires must use a valid YYYY-MM-DD date");
+  }
+  if (expiry < new Date().toISOString().slice(0, 10)) throw new Error(`suppression expired on ${expiry}`);
+  return expiry;
+}
+
+function manifestSuppression(entry, configDirectory) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("suppression entry must be an object");
+  const id = validString(entry.id, "suppression id");
+  if (!CHECK_ID.test(id)) throw new Error("suppression id must use namespace:name lowercase identifiers");
+  return {
+    id,
+    path: globPattern(entry.path, "suppression path", { bounded: true }),
+    reason: validString(entry.reason, "suppression reason"),
+    expires: validExpiry(entry.expires),
+    configDirectory,
+  };
+}
+
+async function discoverSuppressions(root, changedPaths) {
+  const directories = new Set([root]);
+  for (const changedPath of changedPaths) {
+    let directory = dirname(changedPath);
+    while (directory !== ".") {
+      directories.add(resolve(root, directory));
+      directory = dirname(directory);
+    }
+  }
+
+  const suppressions = [];
+  const blockedResults = [];
+  for (const directory of [...directories].sort((left, right) => left.length - right.length)) {
+    const configPath = join(directory, SUPPRESSION_FILE);
+    let config;
+    try {
+      config = JSON.parse(await readFile(configPath, "utf8"));
+    } catch (error) {
+      if (error?.code === "ENOENT") continue;
+      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification suppression configuration", error.message));
+      continue;
+    }
+
+    if (!config || typeof config !== "object" || Array.isArray(config) || !Array.isArray(config.suppressions)) {
+      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification suppression configuration", "suppressions must be an array"));
+      continue;
+    }
+
+    for (const entry of config.suppressions) {
+      try {
+        suppressions.push(manifestSuppression(entry, directory));
+      } catch (error) {
+        const id = typeof entry?.id === "string" ? entry.id : suppressionResultId(configPath, root);
+        blockedResults.push(blocked(id, "Invalid verification suppression configuration", error.message));
+      }
+    }
+  }
+  return { suppressions, blockedResults };
+}
+
+function suppressionFor(checkId, root, changedPath, suppressions) {
+  return suppressions.find(suppression => {
+    if (suppression.id !== checkId) return false;
+    const scopedPath = relative(suppression.configDirectory, resolve(root, changedPath));
+    if (!scopedPath || scopedPath.startsWith("..") || isAbsolute(scopedPath)) return false;
+    return matchesGlob(scopedPath.replaceAll("\\", "/"), suppression.path);
+  });
 }
 
 async function packageDirectories(packageDirectory) {
@@ -93,7 +219,7 @@ async function manifestCheck(packageName, packagePath, entry) {
     throw new Error(`timeoutMs must be an integer between 1 and ${MAX_TIMEOUT_MS}`);
   }
 
-  return { id, label, description, entryPath, packageName, timeoutMs };
+  return { id, label, description, entryPath, packageName, pathTriggers: verificationPathTriggers(entry), timeoutMs };
 }
 
 export async function discoverVerificationChecks({ packageDirectory = defaultPackageDirectory() } = {}) {
@@ -212,4 +338,74 @@ export async function runVerificationChecks(checks, cwd, ids = []) {
   const selected = requestedIds.length === 0 ? checks : requestedIds.map(id => byId.get(id)).filter(Boolean);
   const unknown = requestedIds.filter(id => !byId.has(id)).map(id => blocked(id, "Verification check is not installed"));
   return [...unknown, ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd))))];
+}
+
+export function selectAutomaticVerificationChecks(checks, changedPaths) {
+  return checks.flatMap(check => {
+    if (!check.pathTriggers) return [];
+    const matches = changedPaths.flatMap(path => {
+      const trigger = check.pathTriggers.find(pattern => matchesGlob(path, pattern));
+      return trigger ? [{ path, trigger }] : [];
+    });
+    return matches.length === 0 ? [] : [{ check, matches }];
+  });
+}
+
+export async function runAutomaticVerification({ cwd, changedPaths, packageDirectory, repositoryRoot = cwd }) {
+  let paths;
+  try {
+    paths = [...new Set(changedPaths.map(path => projectPath(path, "changed path")))];
+  } catch (error) {
+    return [blocked("verifier:auto-selection", "Could not select verification checks", error.message)];
+  }
+
+  const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
+  const selectedChecks = selectAutomaticVerificationChecks(checks, paths);
+  if (selectedChecks.length === 0) return blockedResults;
+
+  const { suppressions, blockedResults: suppressionBlocks } = await discoverSuppressions(repositoryRoot, paths);
+  const results = [...blockedResults, ...suppressionBlocks];
+  for (const { check, matches } of selectedChecks) {
+    const unsuppressedMatches = [];
+    for (const match of matches) {
+      const suppression = suppressionFor(check.id, repositoryRoot, match.path, suppressions);
+      if (!suppression) {
+        unsuppressedMatches.push(match);
+        continue;
+      }
+      results.push({
+        id: check.id,
+        status: "SUPPRESSED",
+        summary: "Automatic verification suppressed",
+        evidence: `${match.path} matched ${suppression.path}: ${suppression.reason}`,
+        matches: [match],
+      });
+    }
+    if (unsuppressedMatches.length === 0) continue;
+    results.push({ ...(await runVerificationCheck(check, cwd)), matches: unsuppressedMatches });
+  }
+  return results;
+}
+
+export async function changedProjectPaths(cwd) {
+  try {
+    const { stdout: rootOutput } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+    const repositoryRoot = rootOutput.trim();
+    const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+    const entries = stdout.split("\0");
+    const paths = new Set();
+    for (let index = 0; index < entries.length - 1; index += 1) {
+      const entry = entries[index];
+      const status = entry.slice(0, 2);
+      paths.add(entry.slice(3));
+      if (status.includes("R") || status.includes("C")) paths.add(entries[++index]);
+    }
+    return { repositoryRoot, paths: [...paths].filter(Boolean) };
+  } catch (error) {
+    return { error: error.message };
+  }
 }
