@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
-import { discoverVerificationChecks, runVerificationChecks } from "../omp-plugin/verifications.js";
+import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "../omp-plugin/verifications.js";
 
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
@@ -21,6 +21,7 @@ const verifier = registrations.commands.get("verifier");
 assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "uninstall"]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
 assert.ok(registrations.events.has("session_start"));
+assert.ok(registrations.events.has("agent_end"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
 assert.match(shippedWatchdog, /distinct verifier advisor/);
@@ -44,8 +45,25 @@ async function writeVerificationPackage(name, verifications, files = {}) {
 const jsonResult = result => `process.stdout.write(${JSON.stringify(JSON.stringify(result))});\n`;
 await writeVerificationPackage(
   "publisher-pass",
-  [{ id: "publisher-pass:check", label: "Pass check", description: "A passing check", entry: "./pass.mjs" }],
+  [{
+    id: "publisher-pass:check",
+    label: "Pass check",
+    description: "A passing check",
+    entry: "./pass.mjs",
+    pathTriggers: ["tests/**"],
+  }],
   { "pass.mjs": jsonResult({ status: "PASS", summary: "The check passed", evidence: "fixture passed" }) },
+);
+await writeVerificationPackage(
+  "publisher-unrelated",
+  [{
+    id: "publisher-unrelated:check",
+    label: "Unrelated check",
+    description: "A check for source files only",
+    entry: "./unrelated.mjs",
+    pathTriggers: ["src/**"],
+  }],
+  { "unrelated.mjs": jsonResult({ status: "PASS", summary: "The unrelated check passed" }) },
 );
 const piOnlyPackagePath = join(verificationPackageDirectory, "publisher-pi-only");
 await mkdir(piOnlyPackagePath, { recursive: true });
@@ -135,7 +153,16 @@ await symlink(outsideCheckPath, join(symlinkPackagePath, "link.mjs"));
 const discovered = await discoverVerificationChecks({ packageDirectory: verificationPackageDirectory });
 assert.deepEqual(
   discovered.checks.map(check => check.id).sort(),
-  ["publisher-fail:check", "publisher-invalid:check", "publisher-missing-entry:check", "publisher-nonzero:check", "publisher-pass:check", "publisher-pi-only:check", "publisher-timeout:check"],
+  [
+    "publisher-fail:check",
+    "publisher-invalid:check",
+    "publisher-missing-entry:check",
+    "publisher-nonzero:check",
+    "publisher-pass:check",
+    "publisher-pi-only:check",
+    "publisher-timeout:check",
+    "publisher-unrelated:check",
+  ],
 );
 assert.equal(discovered.blockedResults.filter(result => result.id === "publisher-duplicate:check").length, 3);
 assert.equal(discovered.blockedResults.find(result => result.id === "publisher-traversal:check").status, "BLOCKED");
@@ -146,10 +173,69 @@ const verificationResults = await runVerificationChecks(discovered.checks, verif
 assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);
 assert.equal(verificationResults.find(result => result.id === "publisher-pass:check").status, "PASS");
 
+const automaticResults = await runAutomaticVerification({
+  cwd: verificationCwd,
+  repositoryRoot: verificationCwd,
+  changedPaths: ["tests/active/example.test.js"],
+  packageDirectory: verificationPackageDirectory,
+});
+const automaticPass = automaticResults.find(result => result.id === "publisher-pass:check" && result.status === "PASS");
+assert.deepEqual(automaticPass.matches, [{ path: "tests/active/example.test.js", trigger: "tests/**" }]);
+assert.equal(automaticResults.some(result => result.id === "publisher-unrelated:check"), false);
+
+await writeFile(
+  join(verificationCwd, ".omp-verifier.json"),
+  JSON.stringify({
+    suppressions: [{
+      id: "publisher-pass:check",
+      path: "tests/suppressed/**",
+      reason: "Legacy fixture is intentionally exempt.",
+    }],
+  }),
+);
+const suppressedResults = await runAutomaticVerification({
+  cwd: verificationCwd,
+  repositoryRoot: verificationCwd,
+  changedPaths: ["tests/suppressed/example.test.js"],
+  packageDirectory: verificationPackageDirectory,
+});
+assert.equal(suppressedResults.find(result => result.id === "publisher-pass:check").status, "SUPPRESSED");
+assert.match(suppressedResults.find(result => result.id === "publisher-pass:check").evidence, /Legacy fixture is intentionally exempt/);
+
+await writeFile(join(verificationCwd, ".omp-verifier.json"), "{\"suppressions\": \"invalid\"}");
+const invalidSuppressionResults = await runAutomaticVerification({
+  cwd: verificationCwd,
+  repositoryRoot: verificationCwd,
+  changedPaths: ["tests/active/example.test.js"],
+  packageDirectory: verificationPackageDirectory,
+});
+
+await writeFile(
+  join(verificationCwd, ".omp-verifier.json"),
+  JSON.stringify({
+    suppressions: [{
+      id: "publisher-missing:check",
+      path: "tests/**",
+      reason: "The installed check was removed.",
+    }],
+  }),
+);
+const unknownSuppressionResults = await runAutomaticVerification({
+  cwd: verificationCwd,
+  repositoryRoot: verificationCwd,
+  changedPaths: ["tests/active/example.test.js"],
+  packageDirectory: verificationPackageDirectory,
+});
+assert.equal(unknownSuppressionResults.find(result => result.id === "publisher-missing:check").status, "BLOCKED");
+assert.equal(invalidSuppressionResults.find(result => result.id === "suppression:.omp-verifier.json").status, "BLOCKED");
+
+await registrations.events.get("agent_end")({}, { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
+assert.match(registrations.notices.at(-1).message, /BLOCKED verifier:auto-selection/);
+
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const checksMessage = registrations.notices.at(-1).message;
 assert.match(checksMessage, /Verifier checks:/);
-assert.match(checksMessage, /discovered: 7/);
+assert.match(checksMessage, /discovered: 8/);
 assert.match(checksMessage, /publisher-pass:check — Pass check/);
 assert.match(checksMessage, /BLOCKED publisher-duplicate:check/);
 

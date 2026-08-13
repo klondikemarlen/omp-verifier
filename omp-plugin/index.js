@@ -1,7 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { discoverVerificationChecks, runVerificationChecks } from "./verifications.js";
+import { changedProjectPaths, discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "./verifications.js";
 
 const WATCHDOG_FILE = "WATCHDOG.md";
 const ROSTER_FILE = "WATCHDOG.yml";
@@ -182,6 +182,9 @@ const SUBCOMMANDS = [
 
 function formatVerificationResult(result) {
   const lines = [`${result.status} ${result.id} — ${result.summary}`];
+  if (result.matches) {
+    for (const match of result.matches) lines.push(`  trigger: ${match.path} matched ${match.trigger}`);
+  }
   if (result.evidence) lines.push(`  evidence: ${result.evidence}`);
   if (result.nextCheck) lines.push(`  next check: ${result.nextCheck}`);
   return lines;
@@ -209,6 +212,29 @@ async function buildVerification(cwd, ids, packageDirectory) {
   return ["Verifier verification:", ...results.flatMap(formatVerificationResult)].join("\n");
 }
 
+async function buildAutomaticVerification(cwd, packageDirectory) {
+  const changeSet = await changedProjectPaths(cwd);
+  if (changeSet.error) {
+    const { checks } = await discoverVerificationChecks({ packageDirectory });
+    if (!checks.some(check => check.pathTriggers)) return null;
+    return [
+      "Verifier automatic verification:",
+      `BLOCKED verifier:auto-selection — Could not inspect changed paths`,
+      `  evidence: ${changeSet.error}`,
+    ].join("\n");
+  }
+  if (changeSet.paths.length === 0) return null;
+
+  const results = await runAutomaticVerification({
+    cwd,
+    changedPaths: changeSet.paths,
+    packageDirectory,
+    repositoryRoot: changeSet.repositoryRoot,
+  });
+  if (results.length === 0) return null;
+  return ["Verifier automatic verification:", ...results.flatMap(formatVerificationResult)].join("\n");
+}
+
 function completeSubcommands(argumentPrefix) {
   if (argumentPrefix.includes(" ")) return null;
   return SUBCOMMANDS
@@ -224,6 +250,15 @@ export default function verifierPlugin(pi) {
       await installGlobalVerifier(ctx);
     } catch (error) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
+    }
+  });
+
+  pi.on("agent_end", async (_event, ctx) => {
+    try {
+      const message = await buildAutomaticVerification(ctx.cwd || process.cwd(), ctx.verificationPackageDirectory);
+      if (message) ctx.ui.notify(message, "info");
+    } catch (error) {
+      ctx.ui.notify(`Verifier automatic verification failed: ${error.message}`, "warning");
     }
   });
 
