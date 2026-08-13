@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0 - 2026-08-13
+
+- Automatically run installed verification manifests whose explicit path triggers match changed Git-worktree paths, with visible scoped suppression and fail-closed evidence.
+
 ## 0.7.0 - 2026-07-23
 
 - Added optional discovery and execution of installed plugin verification manifests through `/verifier checks` and `/verifier verify`.
