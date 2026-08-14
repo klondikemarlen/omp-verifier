@@ -325,6 +325,10 @@ export async function runVerificationCheck(check, cwd) {
     if (stderr) return blocked(check.id, "Verification wrote to stderr", stderr.slice(0, MAX_FIELD_LENGTH));
     return resultFromOutput(check, stdout.trim());
   } catch (error) {
+    if (typeof error?.code === "number" && !error.stderr) {
+      const result = resultFromOutput(check, String(error.stdout || "").trim());
+      if (result.status === "FAIL") return result;
+    }
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return blocked(check.id, "Verification output exceeded the limit");
     if (error?.killed || error?.signal === "SIGTERM") return blocked(check.id, "Verification timed out");
     if (typeof error?.code === "number") return blocked(check.id, `Verification exited with code ${error.code}`, String(error.stderr || error.stdout || "").slice(0, MAX_FIELD_LENGTH));
