@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 - 2026-08-13
+
+- Preserve a verification's JSON `FAIL` result when it exits with code `1`.
+
 ## 0.8.0 - 2026-08-13
 
 - Automatically run installed verification manifests whose explicit path triggers match changed Git-worktree paths, with visible scoped suppression and fail-closed evidence.
