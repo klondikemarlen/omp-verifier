@@ -42,7 +42,7 @@ async function writeVerificationPackage(name, verifications, files = {}) {
   for (const [file, content] of Object.entries(files)) await writeFile(join(packagePath, file), content);
 }
 
-const jsonResult = result => `process.stdout.write(${JSON.stringify(JSON.stringify(result))});\n`;
+const jsonResult = (result, exitCode) => `process.stdout.write(${JSON.stringify(JSON.stringify(result))});${exitCode === undefined ? "" : `\nprocess.exitCode = ${exitCode};`}\n`;
 await writeVerificationPackage(
   "publisher-pass",
   [{
@@ -85,8 +85,14 @@ await writeFile(
 await writeFile(join(piOnlyPackagePath, "pi-only.mjs"), jsonResult({ status: "PASS", summary: "The pi-only check passed" }));
 await writeVerificationPackage(
   "publisher-fail",
-  [{ id: "publisher-fail:check", label: "Fail check", description: "A failing check", entry: "./fail.mjs" }],
-  { "fail.mjs": jsonResult({ status: "FAIL", summary: "The check failed", evidence: "fixture failed", nextCheck: "inspect fixture" }) },
+  [{
+    id: "publisher-fail:check",
+    label: "Fail check",
+    description: "A failing check",
+    entry: "./fail.mjs",
+    pathTriggers: ["tests/**"],
+  }],
+  { "fail.mjs": jsonResult({ status: "FAIL", summary: "The check failed", evidence: "fixture failed", nextCheck: "inspect fixture" }, 1) },
 );
 await writeVerificationPackage(
   "publisher-duplicate-one",
@@ -173,6 +179,9 @@ const verificationResults = await runVerificationChecks(discovered.checks, verif
 assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);
 assert.equal(verificationResults.find(result => result.id === "publisher-pass:check").status, "PASS");
 
+const failureResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-fail:check"]);
+assert.equal(failureResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
+
 const automaticResults = await runAutomaticVerification({
   cwd: verificationCwd,
   repositoryRoot: verificationCwd,
@@ -182,6 +191,7 @@ const automaticResults = await runAutomaticVerification({
 const automaticPass = automaticResults.find(result => result.id === "publisher-pass:check" && result.status === "PASS");
 assert.deepEqual(automaticPass.matches, [{ path: "tests/active/example.test.js", trigger: "tests/**" }]);
 assert.equal(automaticResults.some(result => result.id === "publisher-unrelated:check"), false);
+assert.equal(automaticResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
 
 await writeFile(
   join(verificationCwd, ".omp-verifier.json"),
