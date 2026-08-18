@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.4 - 2026-08-18
+
+- Run verification modules with Node instead of OMP's executable.
+- Name plugin-registry discovery steps explicitly and add a focused runtime-selection regression.
+
 ## 0.8.3 - 2026-08-18
 
 - Discover verification manifests from OMP's plugin registry instead of scanning every transitive package.
