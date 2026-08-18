@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.3 - 2026-08-18
+
+- Discover verification manifests from OMP's plugin registry instead of scanning every transitive package.
+
 ## 0.8.2 - 2026-08-18
 
 - Kept automatic verification running after `agent_end` without consuming OMP's extension-handler timeout budget.
