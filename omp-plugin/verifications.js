@@ -12,6 +12,7 @@ const MAX_OUTPUT_BYTES = 64_000;
 const MAX_FIELD_LENGTH = 4_000;
 const CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
+const NODE_RUNTIME = "node";
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const SUPPRESSION_FILE = ".omp-verifier.json";
 
@@ -157,14 +158,32 @@ function suppressionFor(checkId, root, changedPath, suppressions) {
   });
 }
 
-async function packageDirectories(packageDirectory) {
+async function registeredPluginDirectories(packageDirectory) {
+  const registryPath = join(dirname(packageDirectory), "package.json");
+  let registry;
   try {
-    const registry = JSON.parse(await readFile(join(dirname(packageDirectory), "package.json"), "utf8"));
-    if (registry.name === "omp-plugins" && registry.dependencies && typeof registry.dependencies === "object" && !Array.isArray(registry.dependencies)) {
-      return { directories: Object.keys(registry.dependencies).map(name => join(packageDirectory, name)), errors: [] };
-    }
-  } catch {}
+    const registryContents = await readFile(registryPath, "utf8");
+    registry = JSON.parse(registryContents);
+  } catch {
+    return undefined;
+  }
 
+  if (!registry) return undefined;
+  if (typeof registry !== "object") return undefined;
+  if (Array.isArray(registry)) return undefined;
+  if (registry.name !== "omp-plugins") return undefined;
+
+  const dependencies = registry.dependencies;
+  if (!dependencies) return undefined;
+  if (typeof dependencies !== "object") return undefined;
+  if (Array.isArray(dependencies)) return undefined;
+
+  return Object.keys(dependencies).map(name => join(packageDirectory, name));
+}
+
+async function packageDirectories(packageDirectory) {
+  const registeredDirectories = await registeredPluginDirectories(packageDirectory);
+  if (registeredDirectories) return { directories: registeredDirectories, errors: [] };
   const directories = [];
   const errors = [];
   let entries;
@@ -324,7 +343,7 @@ function resultFromOutput(check, output) {
 export async function runVerificationCheck(check, cwd) {
   try {
     await access(check.entryPath);
-    const { stdout, stderr } = await execFileAsync(process.execPath, [check.entryPath], {
+    const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
       timeout: check.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
