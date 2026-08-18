@@ -32,6 +32,14 @@ assert.match(shippedWatchdog, /explicit verifier requirement/);
 assert.match(shippedWatchdog, /`PASS` — evidence proves the requirement/);
 assert.match(shippedWatchdog, /For `FAIL` or `BLOCKED`, cite the requirement/);
 
+const registryRoot = await mkdtemp(join(tmpdir(), "omp-verifier-registry-"));
+const registryPackageDirectory = join(registryRoot, "node_modules");
+await mkdir(registryPackageDirectory);
+await writeFile(
+  join(registryRoot, "package.json"),
+  JSON.stringify({ name: "omp-plugins", dependencies: { "publisher-registry": "1.0.0" } }),
+);
+
 const verificationCwd = await mkdtemp(join(tmpdir(), "omp-verifier-check-cwd-"));
 const verificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-packages-"));
 async function writeVerificationPackage(name, verifications, files = {}, packageDirectory = verificationPackageDirectory) {
@@ -157,6 +165,21 @@ await writeFile(join(symlinkPackagePath, "package.json"), JSON.stringify({
 }));
 await writeFile(outsideCheckPath, jsonResult({ status: "PASS", summary: "should not run" }));
 await symlink(outsideCheckPath, join(symlinkPackagePath, "link.mjs"));
+
+await writeVerificationPackage(
+  "publisher-registry",
+  [{ id: "publisher-registry:check", label: "Registry check", description: "Declared plugin check", entry: "./registry.mjs" }],
+  { "registry.mjs": jsonResult({ status: "PASS", summary: "should run" }) },
+  registryPackageDirectory,
+);
+await writeVerificationPackage(
+  "publisher-ignored",
+  [{ id: "publisher-ignored:check", label: "Ignored check", description: "Transitive package check", entry: "./ignored.mjs" }],
+  { "ignored.mjs": jsonResult({ status: "PASS", summary: "must not be discovered" }) },
+  registryPackageDirectory,
+);
+const registryDiscovered = await discoverVerificationChecks({ packageDirectory: registryPackageDirectory });
+assert.deepEqual(registryDiscovered.checks.map(check => check.id), ["publisher-registry:check"]);
 
 const discovered = await discoverVerificationChecks({ packageDirectory: verificationPackageDirectory });
 assert.deepEqual(
@@ -403,6 +426,7 @@ await Promise.all([
   rm(verificationPackageDirectory, { recursive: true, force: true }),
   rm(emptyVerificationPackageDirectory, { recursive: true, force: true }),
   rm(verificationCwd, { recursive: true, force: true }),
+  rm(registryRoot, { recursive: true, force: true }),
   rm(automaticCwd, { recursive: true, force: true }),
   rm(automaticPackageDirectory, { recursive: true, force: true }),
   rm(agentDir, { recursive: true, force: true }),

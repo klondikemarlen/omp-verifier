@@ -158,6 +158,13 @@ function suppressionFor(checkId, root, changedPath, suppressions) {
 }
 
 async function packageDirectories(packageDirectory) {
+  try {
+    const registry = JSON.parse(await readFile(join(dirname(packageDirectory), "package.json"), "utf8"));
+    if (registry.name === "omp-plugins" && registry.dependencies && typeof registry.dependencies === "object" && !Array.isArray(registry.dependencies)) {
+      return { directories: Object.keys(registry.dependencies).map(name => join(packageDirectory, name)), errors: [] };
+    }
+  } catch {}
+
   const directories = [];
   const errors = [];
   let entries;
