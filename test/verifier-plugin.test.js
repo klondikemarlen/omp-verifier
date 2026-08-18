@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
 import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
 import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "../omp-plugin/verifications.js";
 
@@ -32,8 +34,8 @@ assert.match(shippedWatchdog, /For `FAIL` or `BLOCKED`, cite the requirement/);
 
 const verificationCwd = await mkdtemp(join(tmpdir(), "omp-verifier-check-cwd-"));
 const verificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-packages-"));
-async function writeVerificationPackage(name, verifications, files = {}) {
-  const packagePath = join(verificationPackageDirectory, name);
+async function writeVerificationPackage(name, verifications, files = {}, packageDirectory = verificationPackageDirectory) {
+  const packagePath = join(packageDirectory, name);
   await mkdir(packagePath, { recursive: true });
   await writeFile(
     join(packagePath, "package.json"),
@@ -239,8 +241,50 @@ const unknownSuppressionResults = await runAutomaticVerification({
 assert.equal(unknownSuppressionResults.find(result => result.id === "publisher-missing:check").status, "BLOCKED");
 assert.equal(invalidSuppressionResults.find(result => result.id === "suppression:.omp-verifier.json").status, "BLOCKED");
 
-await registrations.events.get("agent_end")({}, { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
-assert.match(registrations.notices.at(-1).message, /BLOCKED verifier:auto-selection/);
+let notifyBlockedAutomaticVerification;
+const blockedAutomaticVerification = new Promise(resolve => {
+  notifyBlockedAutomaticVerification = resolve;
+});
+await registrations.events.get("agent_end")({}, {
+  ...ctx,
+  cwd: verificationCwd,
+  verificationPackageDirectory,
+  ui: { notify(message, level) { notifyBlockedAutomaticVerification({ message, level }); } },
+});
+assert.match((await blockedAutomaticVerification).message, /BLOCKED verifier:auto-selection/);
+
+const automaticCwd = await mkdtemp(join(tmpdir(), "omp-verifier-automatic-cwd-"));
+const automaticPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-automatic-packages-"));
+await mkdir(join(automaticCwd, "tests"), { recursive: true });
+await writeFile(join(automaticCwd, "tests", "active.test.js"), "export {};\n");
+execFileSync("git", ["init", "--quiet"], { cwd: automaticCwd });
+await writeVerificationPackage(
+  "publisher-automatic",
+  [{
+    id: "publisher-automatic:check",
+    label: "Automatic check",
+    description: "Finishes after the event handler returns",
+    entry: "./automatic.mjs",
+    pathTriggers: ["tests/**"],
+  }],
+  { "automatic.mjs": 'setTimeout(() => process.stdout.write("{\\"status\\":\\"PASS\\",\\"summary\\":\\"Automatic check passed\\"}"), 200);\n' },
+  automaticPackageDirectory,
+);
+let notifyAutomaticVerification;
+const automaticVerification = new Promise(resolve => {
+  notifyAutomaticVerification = resolve;
+});
+const startedAutomaticVerification = Date.now();
+await registrations.events.get("agent_end")({}, {
+  ...ctx,
+  cwd: automaticCwd,
+  verificationPackageDirectory: automaticPackageDirectory,
+  ui: { notify(message, level) { notifyAutomaticVerification({ message, level }); } },
+});
+assert.ok(Date.now() - startedAutomaticVerification < 100);
+const automaticNotification = await automaticVerification;
+assert.equal(automaticNotification.level, "info");
+assert.match(automaticNotification.message, /PASS publisher-automatic:check/);
 
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const checksMessage = registrations.notices.at(-1).message;
@@ -359,6 +403,8 @@ await Promise.all([
   rm(verificationPackageDirectory, { recursive: true, force: true }),
   rm(emptyVerificationPackageDirectory, { recursive: true, force: true }),
   rm(verificationCwd, { recursive: true, force: true }),
+  rm(automaticCwd, { recursive: true, force: true }),
+  rm(automaticPackageDirectory, { recursive: true, force: true }),
   rm(agentDir, { recursive: true, force: true }),
   rm(repo, { recursive: true, force: true }),
   rm(customAgentDir, { recursive: true, force: true }),

@@ -253,13 +253,14 @@ export default function verifierPlugin(pi) {
     }
   });
 
-  pi.on("agent_end", async (_event, ctx) => {
-    try {
-      const message = await buildAutomaticVerification(ctx.cwd || process.cwd(), ctx.verificationPackageDirectory);
-      if (message) ctx.ui.notify(message, "info");
-    } catch (error) {
-      ctx.ui.notify(`Verifier automatic verification failed: ${error.message}`, "warning");
-    }
+  pi.on("agent_end", (_event, ctx) => {
+    void buildAutomaticVerification(ctx.cwd || process.cwd(), ctx.verificationPackageDirectory)
+      .then(message => {
+        if (message) ctx.ui.notify(message, "info");
+      })
+      .catch(error => {
+        ctx.ui.notify(`Verifier automatic verification failed: ${error.message}`, "warning");
+      });
   });
 
   pi.registerCommand("verifier", {
