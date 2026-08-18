@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2 - 2026-08-18
+
+- Kept automatic verification running after `agent_end` without consuming OMP's extension-handler timeout budget.
+
 ## 0.8.1 - 2026-08-13
 
 - Preserve a verification's JSON `FAIL` result when it exits with code `1`.
