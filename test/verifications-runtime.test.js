@@ -12,20 +12,21 @@ test("when OMP has a non-Node executable, runs verification checks with Node", a
   const checkPath = join(checkDirectory, "check.mjs");
   const originalExecutable = process.execPath;
 
-  await writeFile(
-    checkPath,
-    'process.stdout.write(JSON.stringify({ status: "PASS", summary: "Node ran the check" }));\n',
-  );
-
-  process.execPath = "missing-omp-runtime";
-
   try {
-    // Act
-    const result = await runVerificationCheck({
+    await writeFile(
+      checkPath,
+      'process.stdout.write(JSON.stringify({ status: "PASS", summary: "Node ran the check" }));\n',
+    );
+
+    const runtimeCheck = {
       id: "runtime:node",
       entryPath: checkPath,
       timeoutMs: 1_000,
-    }, checkDirectory);
+    };
+    process.execPath = "missing-omp-runtime";
+
+    // Act
+    const result = await runVerificationCheck(runtimeCheck, checkDirectory);
 
     // Assert
     assert.deepEqual(result, {
