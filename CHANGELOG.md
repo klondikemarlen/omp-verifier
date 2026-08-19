@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.9 - 2026-08-19
+
+- Documented the standard release workflow and end-to-end advisor correction QA.
+
 ## 0.8.8 - 2026-08-19
 
 - Derived the advisor's automatic-verification CLI path from the installed package.

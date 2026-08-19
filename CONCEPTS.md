@@ -6,34 +6,42 @@ OMP Verifier is a second advisor, not a replacement for OMP's default advisor.
 
 ```mermaid
 sequenceDiagram
-  participant Main as Main agent
-  participant Default as OMP default advisor
+  participant Main as Primary agent
   participant Verifier as Verifier advisor
+  participant CLI as Automatic coordinator
 
-  Main-->>Default: completed turn
-  Main-->>Verifier: completed turn with explicit local requirement
+  Main-->>Verifier: completed changed turn
+  Verifier->>CLI: run packaged coordinator
+  CLI-->>Verifier: structured results
+  alt FAIL or BLOCKED
+    Verifier-->>Main: advise blocker with evidence and next check
+    Main-->>Verifier: remediated turn
+  else PASS, SUPPRESSED, or no result
+    Verifier-->>Verifier: stay silent
+  end
 ```
 
 The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts and owns only its marked `verifier` block immediately after `default`; independent advisors remain untouched.
 
-`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md` and imports that agent-owned generated file. Generic quality, scope, strategy, and direct-risk concerns remain with `default`.
+`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md`, substitutes the coordinator path derived from the installed package, and imports that generated file. The generated verifier advisor receives `bash`; generic quality, scope, strategy, and direct-risk concerns remain with `default`.
 
 ## Lifecycle
 
 - Loading the plugin refreshes the agent-owned guidance file and reconciles the user roster to `default`, then marked `verifier`.
+- After a changed turn, the verifier advisor invokes the packaged automatic coordinator. The plugin has no `agent_end` notification runner.
 - `/verifier status` reports global and project roster entries plus the guidance-file path.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
-- The plugin does not create configuration files, local-rules templates, or task agents; its optional manifest runner only executes explicitly declared package-relative verification modules.
+- The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
 
 ## Requirement contract
 
 A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, Gold condition, narrow check, and PASS evidence.
 
-The verifier classifies applicable evidence as PASS, FAIL, or BLOCKED. PASS stays silent. FAIL and BLOCKED cite the requirement and the smallest next check.
+The verifier classifies applicable evidence as `PASS`, `FAIL`, `BLOCKED`, or scoped `SUPPRESSED`. `PASS`, `SUPPRESSED`, and no applicable results stay silent. `FAIL` and `BLOCKED` produce standard OMP blocker advice with the check id, evidence, and smallest next check.
 
 ## Verification capability direction
 
-The plugin remains an independent advisor and does not require an OMP-core API. Installed OMP plugins can opt into deterministic verification by declaring package metadata; `omp-verifier` discovers that metadata when its commands run. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
+The plugin remains an independent advisor and does not require an OMP-core API. Installed OMP plugins opt into deterministic verification through package metadata. The package-local `automatic` coordinator handles selection and execution; the advisor owns interpretation and corrective delivery. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
 
 ## Manifest contract
 
@@ -101,4 +109,6 @@ Deterministic checks belong in manifests when a rule has a bounded, reproducible
 
 ## Release
 
-Run `npm run release:check`, merge the reviewed pull request, tag the version, then run `npm run reinstall` and verify the installed package version.
+Release ownership runs issue → issue-named branch → linked draft PR → complete self-review → focused QA and `npm run release:check` → resolved feedback and required checks → merge commit → synchronized `main` → remote reinstall → fresh-process installed behavior.
+
+Advisor-correction claims additionally require a resolved verifier model in `/advisor status`, a packed or remotely installed failing-check scenario, observed verifier blocker delivery, primary-agent remediation, and a clean follow-up coordinator result. `PASS`, `SUPPRESSED`, and no results must remain silent; incomplete remediation must be checked across `advisor.immuneTurns`.

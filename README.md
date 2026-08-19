@@ -10,14 +10,14 @@ The plugin does five things:
 2. Adds a marked `verifier` advisor entry immediately after it.
 3. Syncs verifier-only evidence guidance into the active agent directory.
 4. Shows or removes its marked advisor block with `/verifier`.
-5. Discovers installed verification manifests, runs matching `pathTriggers` automatically after changed turns, and retains explicit manual runs.
+5. Exposes deterministic verification manifests to explicit commands and to the verifier advisor after changed turns.
 
-It does not configure models, tools, OMP runtime settings, task agents, GitHub workflows, browser checks, or generic code review. Verification manifests are explicit package-owned checks; they are not inferred from arbitrary tools or maintainer test filenames.
+It does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged automatic-verification coordinator. Verification manifests are explicit package-owned checks; they are not inferred from arbitrary tools or maintainer test filenames.
 
 ## Install
 
 ```bash
-omp plugin install github:klondikemarlen/omp-verifier#<tag-or-commit>
+omp plugin install github:klondikemarlen/omp-verifier
 ```
 
 On the next OMP session, the user-level roster is reconciled to this shape while preserving other advisors:
@@ -28,15 +28,15 @@ advisors:
 
   # omp-verifier: advisor begin
   - name: verifier
+    tools: [bash]
     instructions: |
       @/home/<user>/.omp/agent/verifier/WATCHDOG.md
   # omp-verifier: advisor end
 ```
 
+The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp`. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
-The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. The roster imports that agent-owned generated file, matching OMP Learner's ownership model. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
-
-The empty `default` entry uses OMP's stock advisor behavior. The verifier block adds only the plugin's explicit-requirement evidence review.
+The empty `default` entry uses OMP's stock advisor behavior. The verifier advisor runs matching automatic checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` or `BLOCKED`, it emits standard OMP `blocker` advice with evidence and the smallest next check.
 
 ## Project-specific verifier requirements
 
@@ -66,9 +66,9 @@ Each requirement names its trigger, Gold condition, narrow check, and PASS evide
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
 
-After a changed agent turn in a Git worktree, every installed check with a matching `pathTriggers` pattern runs automatically. Its result identifies the changed path and matched trigger. Checks without `pathTriggers`, explicitly named checks, and `/verifier verify` retain their manual behavior. Scoped suppressions are reported as `SUPPRESSED`; they are not PASS evidence.
+After a changed agent turn in a Git worktree, the verifier advisor runs the packaged `automatic` coordinator. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. The advisor emits no advice for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` become standard OMP blocker advice that resumes or steers the primary agent. Checks without `pathTriggers` and `/verifier verify` remain manual.
 
-With no compatible manifests installed, `checks` reports `none installed` and `verify` reports `BLOCKED`. Existing advisor setup and cleanup remain independent of the optional check surface.
+With no compatible manifests installed, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. Existing advisor setup and cleanup remain independent of the optional check surface.
 
 ## Verification manifests
 
@@ -115,14 +115,26 @@ Each suppression requires a verification id, bounded path, and non-empty reason.
 
 Use `/advisor status` for OMP runtime state.
 
-## Development
+## Development and release
 
-```bash
-npm run release:check
-```
+Every release uses the same workflow:
 
-After a release, reinstall the remote plugin:
+1. Create or update an issue with acceptance criteria and learner coverage.
+2. Work on an issue-named branch and open a linked draft pull request.
+3. Self-review the complete PR diff.
+4. Run focused QA plus `npm run release:check`.
+5. Record QA and self-review status in the PR; resolve actionable feedback.
+6. Mark the PR ready only after required checks pass, then merge with a merge commit.
+7. Fetch and prune, return to synchronized `main`, and delete only the merged agent-owned branch.
+8. Run `npm run reinstall`, verify the installed version in a fresh OMP process, and exercise `/verifier` completion and the changed behavior.
 
-```bash
-npm run reinstall
-```
+For advisor-correction releases, QA with a temporary deterministic failing manifest:
+
+1. Check `/advisor status`; the `verifier` advisor must be enabled with a resolved model. `[no model]` blocks correction claims.
+2. Trigger a changed path and run the coordinator from the packed or remotely installed artifact. Observe structured `FAIL` or `BLOCKED` JSON and exit `1`.
+3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">` with the check id, evidence, and next check.
+4. Verify the primary agent resumes or is steered, applies remediation, and the next coordinator run returns `PASS` or no applicable results.
+5. Verify `PASS`, `SUPPRESSED`, and no results inject no advice.
+6. If remediation remains incomplete, wait through `advisor.immuneTurns` and verify the repeated failure eventually re-enters the correction loop.
+
+Do not claim publish, install, or advisor correction without observed evidence.
