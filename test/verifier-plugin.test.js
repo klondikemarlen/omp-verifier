@@ -24,6 +24,7 @@ assert.equal(verifier.getArgumentCompletions("verify "), null);
 assert.ok(registrations.events.has("session_start"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
+const generatedWatchdog = shippedWatchdog.replace("{{OMP_VERIFIER_CLI}}", JSON.stringify(join(process.cwd(), "bin", "omp-verifier.js")));
 assert.match(shippedWatchdog, /distinct verifier advisor/);
 assert.match(shippedWatchdog, /`default` advisor owns generic code quality/);
 assert.match(shippedWatchdog, /explicit verifier requirement/);
@@ -299,11 +300,11 @@ assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: a
 assert.match(globalWatchdog, /name: verifier\n    tools: \[bash\]/);
 assert.match(globalWatchdog, new RegExp(`@${guidancePath}`));
 assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
-assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
+assert.equal(await readFile(guidancePath, "utf8"), generatedWatchdog);
 await writeFile(guidancePath, "custom verifier guidance\n");
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir });
 assert.equal(registrations.notices.length, 0);
-assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
+assert.equal(await readFile(guidancePath, "utf8"), generatedWatchdog);
 const blockedAgentDir = join(agentDir, "blocked");
 await writeFile(blockedAgentDir, "not a directory\n");
 await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDir: blockedAgentDir });
