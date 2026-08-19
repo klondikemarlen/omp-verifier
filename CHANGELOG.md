@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.8 - 2026-08-19
+
+- Derived the advisor's automatic-verification CLI path from the installed package.
+
 ## 0.8.7 - 2026-08-19
 
 - Invoked the packaged automatic-verification CLI by its installed path for advisor shell access.

@@ -1,6 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { discoverVerificationChecks, runVerificationChecks } from "./verifications.js";
 
 const WATCHDOG_FILE = "WATCHDOG.md";
@@ -9,6 +10,8 @@ const VERIFIER_DIR = "verifier";
 const VERIFIER_ADVISOR_START = "# omp-verifier: advisor begin";
 const VERIFIER_ADVISOR_END = "# omp-verifier: advisor end";
 const LEGACY_GENERATED_MARKER = "# omp-verifier: generated";
+const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
+const cliPath = join(packageRoot, "bin", "omp-verifier.js");
 
 function resolveAgentDir(ctx) {
   return ctx.agentDir || process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
@@ -73,7 +76,8 @@ async function readText(path) {
 }
 
 async function shippedGuidance() {
-  return readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
+  const template = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
+  return template.replace("{{OMP_VERIFIER_CLI}}", JSON.stringify(cliPath));
 }
 
 async function writeGuidanceFile(path) {
