@@ -41,42 +41,21 @@ test("when OMP has a non-Node executable, runs verification checks with Node", a
   }
 });
 
-test("when Git metadata is unavailable, automatic CLI reports a blocked result", async () => {
+test("when no automatic checks are installed, automatic CLI emits an empty result", async () => {
   // Arrange
   const projectDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-cli-"));
+  const agentDirectory = join(projectDirectory, "agent");
 
   try {
     // Act
-    let exitCode;
-    let results;
-    try {
-      execFileSync(process.execPath, [join(process.cwd(), "bin", "omp-verifier.js"), "automatic"], {
-        cwd: projectDirectory,
-        encoding: "utf8",
-      });
-    } catch (error) {
-      exitCode = error.status;
-      results = JSON.parse(error.stdout);
-    }
+    const output = execFileSync(process.execPath, [join(process.cwd(), "bin", "omp-verifier.js"), "automatic"], {
+      cwd: projectDirectory,
+      encoding: "utf8",
+      env: { ...process.env, PI_CODING_AGENT_DIR: agentDirectory },
+    });
 
     // Assert
-    assert.deepEqual({
-      exitCode,
-      result: {
-        id: results[0]?.id,
-        status: results[0]?.status,
-        summary: results[0]?.summary,
-        hasEvidence: typeof results[0]?.evidence === "string",
-      },
-    }, {
-      exitCode: 1,
-      result: {
-        id: "verifier:auto-selection",
-        status: "BLOCKED",
-        summary: "Could not inspect changed paths",
-        hasEvidence: true,
-      },
-    });
+    assert.deepEqual(JSON.parse(output), []);
   } finally {
     await rm(projectDirectory, { recursive: true, force: true });
   }
