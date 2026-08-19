@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.7 - 2026-08-19
+
+- Invoked the packaged automatic-verification CLI by its installed path for advisor shell access.
+
 ## 0.8.6 - 2026-08-19
 
 - Required the verifier advisor to run automatic checks after every changed turn.
