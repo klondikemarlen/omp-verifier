@@ -1,7 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { changedProjectPaths, discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "./verifications.js";
+import { discoverVerificationChecks, runVerificationChecks } from "./verifications.js";
 
 const WATCHDOG_FILE = "WATCHDOG.md";
 const ROSTER_FILE = "WATCHDOG.yml";
@@ -18,6 +18,7 @@ function verifierAdvisor(guidancePath) {
   return [
     VERIFIER_ADVISOR_START,
     "  - name: verifier",
+    "    tools: [bash]",
     "    instructions: |",
     `      @${guidancePath}`,
     VERIFIER_ADVISOR_END,
@@ -212,29 +213,6 @@ async function buildVerification(cwd, ids, packageDirectory) {
   return ["Verifier verification:", ...results.flatMap(formatVerificationResult)].join("\n");
 }
 
-async function buildAutomaticVerification(cwd, packageDirectory) {
-  const changeSet = await changedProjectPaths(cwd);
-  if (changeSet.error) {
-    const { checks } = await discoverVerificationChecks({ packageDirectory });
-    if (!checks.some(check => check.pathTriggers)) return null;
-    return [
-      "Verifier automatic verification:",
-      `BLOCKED verifier:auto-selection — Could not inspect changed paths`,
-      `  evidence: ${changeSet.error}`,
-    ].join("\n");
-  }
-  if (changeSet.paths.length === 0) return null;
-
-  const results = await runAutomaticVerification({
-    cwd,
-    changedPaths: changeSet.paths,
-    packageDirectory,
-    repositoryRoot: changeSet.repositoryRoot,
-  });
-  if (results.length === 0) return null;
-  return ["Verifier automatic verification:", ...results.flatMap(formatVerificationResult)].join("\n");
-}
-
 function completeSubcommands(argumentPrefix) {
   if (argumentPrefix.includes(" ")) return null;
   return SUBCOMMANDS
@@ -251,16 +229,6 @@ export default function verifierPlugin(pi) {
     } catch (error) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
     }
-  });
-
-  pi.on("agent_end", (_event, ctx) => {
-    void buildAutomaticVerification(ctx.cwd || process.cwd(), ctx.verificationPackageDirectory)
-      .then(message => {
-        if (message) ctx.ui.notify(message, "info");
-      })
-      .catch(error => {
-        ctx.ui.notify(`Verifier automatic verification failed: ${error.message}`, "warning");
-      });
   });
 
   pi.registerCommand("verifier", {

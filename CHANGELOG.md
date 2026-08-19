@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.5 - 2026-08-19
+
+- Routed automatic verification through the verifier advisor CLI instead of agent-end notifications.
+
 ## 0.8.4 - 2026-08-18
 
 - Run verification modules with Node instead of OMP's executable.
