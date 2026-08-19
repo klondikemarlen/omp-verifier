@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.6 - 2026-08-19
+
+- Required the verifier advisor to run automatic checks after every changed turn.
+
 ## 0.8.5 - 2026-08-19
 
 - Routed automatic verification through the verifier advisor CLI instead of agent-end notifications.
