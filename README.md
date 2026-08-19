@@ -45,6 +45,7 @@ Add a project `WATCHDOG.yml` entry named `verifier` when a repository needs a re
 ```yaml
 advisors:
   - name: verifier
+    tools: [bash]
     instructions: |
       @/home/<user>/.omp/agent/verifier/WATCHDOG.md
 
