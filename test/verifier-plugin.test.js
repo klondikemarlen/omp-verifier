@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,14 +22,13 @@ const verifier = registrations.commands.get("verifier");
 assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "uninstall"]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
 assert.ok(registrations.events.has("session_start"));
-assert.ok(registrations.events.has("agent_end"));
 
 const shippedWatchdog = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
 assert.match(shippedWatchdog, /distinct verifier advisor/);
 assert.match(shippedWatchdog, /`default` advisor owns generic code quality/);
 assert.match(shippedWatchdog, /explicit verifier requirement/);
-assert.match(shippedWatchdog, /`PASS` — evidence proves the requirement/);
-assert.match(shippedWatchdog, /For `FAIL` or `BLOCKED`, cite the requirement/);
+assert.match(shippedWatchdog, /`PASS` or `SUPPRESSED` — emit no advice/);
+assert.match(shippedWatchdog, /`FAIL` or `BLOCKED` — call `advise` with severity `blocker`/);
 
 const registryRoot = await mkdtemp(join(tmpdir(), "omp-verifier-registry-"));
 const registryPackageDirectory = join(registryRoot, "node_modules");
@@ -263,52 +261,6 @@ const unknownSuppressionResults = await runAutomaticVerification({
 });
 assert.equal(unknownSuppressionResults.find(result => result.id === "publisher-missing:check").status, "BLOCKED");
 assert.equal(invalidSuppressionResults.find(result => result.id === "suppression:.omp-verifier.json").status, "BLOCKED");
-
-let notifyBlockedAutomaticVerification;
-const blockedAutomaticVerification = new Promise(resolve => {
-  notifyBlockedAutomaticVerification = resolve;
-});
-await registrations.events.get("agent_end")({}, {
-  ...ctx,
-  cwd: verificationCwd,
-  verificationPackageDirectory,
-  ui: { notify(message, level) { notifyBlockedAutomaticVerification({ message, level }); } },
-});
-assert.match((await blockedAutomaticVerification).message, /BLOCKED verifier:auto-selection/);
-
-const automaticCwd = await mkdtemp(join(tmpdir(), "omp-verifier-automatic-cwd-"));
-const automaticPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-automatic-packages-"));
-await mkdir(join(automaticCwd, "tests"), { recursive: true });
-await writeFile(join(automaticCwd, "tests", "active.test.js"), "export {};\n");
-execFileSync("git", ["init", "--quiet"], { cwd: automaticCwd });
-await writeVerificationPackage(
-  "publisher-automatic",
-  [{
-    id: "publisher-automatic:check",
-    label: "Automatic check",
-    description: "Finishes after the event handler returns",
-    entry: "./automatic.mjs",
-    pathTriggers: ["tests/**"],
-  }],
-  { "automatic.mjs": 'setTimeout(() => process.stdout.write("{\\"status\\":\\"PASS\\",\\"summary\\":\\"Automatic check passed\\"}"), 200);\n' },
-  automaticPackageDirectory,
-);
-let notifyAutomaticVerification;
-const automaticVerification = new Promise(resolve => {
-  notifyAutomaticVerification = resolve;
-});
-const startedAutomaticVerification = Date.now();
-await registrations.events.get("agent_end")({}, {
-  ...ctx,
-  cwd: automaticCwd,
-  verificationPackageDirectory: automaticPackageDirectory,
-  ui: { notify(message, level) { notifyAutomaticVerification({ message, level }); } },
-});
-assert.ok(Date.now() - startedAutomaticVerification < 100);
-const automaticNotification = await automaticVerification;
-assert.equal(automaticNotification.level, "info");
-assert.match(automaticNotification.message, /PASS publisher-automatic:check/);
-
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const checksMessage = registrations.notices.at(-1).message;
 assert.match(checksMessage, /Verifier checks:/);
@@ -344,6 +296,7 @@ await registrations.events.get("session_start")({}, { ...ctx, cwd: repo, agentDi
 assert.equal(registrations.notices.length, 0);
 let globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /^advisors:\n  - name: default\n\n# omp-verifier: advisor begin\n  - name: verifier/m);
+assert.match(globalWatchdog, /name: verifier\n    tools: \[bash\]/);
 assert.match(globalWatchdog, new RegExp(`@${guidancePath}`));
 assert.doesNotMatch(globalWatchdog, /Review completed code-change turns/);
 assert.equal(await readFile(guidancePath, "utf8"), shippedWatchdog);
@@ -427,8 +380,6 @@ await Promise.all([
   rm(emptyVerificationPackageDirectory, { recursive: true, force: true }),
   rm(verificationCwd, { recursive: true, force: true }),
   rm(registryRoot, { recursive: true, force: true }),
-  rm(automaticCwd, { recursive: true, force: true }),
-  rm(automaticPackageDirectory, { recursive: true, force: true }),
   rm(agentDir, { recursive: true, force: true }),
   rm(repo, { recursive: true, force: true }),
   rm(customAgentDir, { recursive: true, force: true }),

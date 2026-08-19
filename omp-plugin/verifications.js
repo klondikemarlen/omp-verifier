@@ -420,6 +420,23 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
   return results;
 }
 
+export async function runCurrentAutomaticVerification({ cwd, packageDirectory }) {
+  const changeSet = await changedProjectPaths(cwd);
+  if (changeSet.error) {
+    const { checks } = await discoverVerificationChecks({ packageDirectory });
+    if (!checks.some(check => check.pathTriggers)) return [];
+    return [blocked("verifier:auto-selection", "Could not inspect changed paths", changeSet.error)];
+  }
+  if (changeSet.paths.length === 0) return [];
+
+  return runAutomaticVerification({
+    cwd,
+    changedPaths: changeSet.paths,
+    packageDirectory,
+    repositoryRoot: changeSet.repositoryRoot,
+  });
+}
+
 export async function changedProjectPaths(cwd) {
   try {
     const { stdout: rootOutput } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
