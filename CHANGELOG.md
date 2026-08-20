@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.11 - 2026-08-20
+
+- Clarified that the `automatic` subcommand is the packaged verifier coordinator and successful results stay silent.
+
 ## 0.8.10 - 2026-08-20
 
 - Scoped advisor-triggered automatic checks to paths changed by the current turn instead of every uncommitted worktree path.
