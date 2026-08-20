@@ -340,11 +340,17 @@ function resultFromOutput(check, output) {
   }
 }
 
-export async function runVerificationCheck(check, cwd) {
+function verificationEnvironment(changedPaths) {
+  const { OMP_VERIFIER_CHANGED_PATHS: _automaticPaths, ...environment } = process.env;
+  return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
+}
+
+export async function runVerificationCheck(check, cwd, changedPaths) {
   try {
     await access(check.entryPath);
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
+      env: verificationEnvironment(changedPaths),
       timeout: check.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
     });
@@ -415,7 +421,7 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
       });
     }
     if (unsuppressedMatches.length === 0) continue;
-    results.push({ ...(await runVerificationCheck(check, cwd)), matches: unsuppressedMatches });
+    results.push({ ...(await runVerificationCheck(check, cwd, unsuppressedMatches.map(match => match.path))), matches: unsuppressedMatches });
   }
   return results;
 }
