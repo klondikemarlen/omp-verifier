@@ -43,7 +43,7 @@ test("when an automatic check fails, verifier setup gives the advisor correction
     let exitCode;
     let results;
     try {
-      execFileSync(process.execPath, [join(process.cwd(), "bin", "omp-verifier.js"), "automatic"], {
+      execFileSync(process.execPath, [join(process.cwd(), "bin", "omp-verifier.js"), "automatic", "src/changed.js"], {
         cwd: projectDir,
         encoding: "utf8",
         env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },

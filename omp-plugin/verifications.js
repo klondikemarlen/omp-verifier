@@ -420,6 +420,21 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
   return results;
 }
 
+export async function runAutomaticVerificationForPaths({ cwd, changedPaths, packageDirectory }) {
+  const root = await projectRepositoryRoot(cwd);
+  if (root.error) {
+    const { checks } = await discoverVerificationChecks({ packageDirectory });
+    if (!checks.some(check => check.pathTriggers)) return [];
+    return [blocked("verifier:auto-selection", "Could not inspect changed paths", root.error)];
+  }
+  return runAutomaticVerification({
+    cwd,
+    changedPaths,
+    packageDirectory,
+    repositoryRoot: root.repositoryRoot,
+  });
+}
+
 export async function runCurrentAutomaticVerification({ cwd, packageDirectory }) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
@@ -437,13 +452,22 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory })
   });
 }
 
-export async function changedProjectPaths(cwd) {
+async function projectRepositoryRoot(cwd) {
   try {
-    const { stdout: rootOutput } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+    const { stdout } = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
       maxBuffer: MAX_OUTPUT_BYTES,
     });
-    const repositoryRoot = rootOutput.trim();
-    const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
+    return { repositoryRoot: stdout.trim() };
+  } catch (error) {
+    return { error: error.message };
+  }
+}
+
+export async function changedProjectPaths(cwd) {
+  const root = await projectRepositoryRoot(cwd);
+  if (root.error) return root;
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", root.repositoryRoot, "status", "--porcelain=v1", "-z", "--untracked-files=all"], {
       maxBuffer: MAX_OUTPUT_BYTES,
     });
     const entries = stdout.split("\0");
@@ -454,7 +478,7 @@ export async function changedProjectPaths(cwd) {
       paths.add(entry.slice(3));
       if (status.includes("R") || status.includes("C")) paths.add(entries[++index]);
     }
-    return { repositoryRoot, paths: [...paths].filter(Boolean) };
+    return { repositoryRoot: root.repositoryRoot, paths: [...paths].filter(Boolean) };
   } catch (error) {
     return { error: error.message };
   }

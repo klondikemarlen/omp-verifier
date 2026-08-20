@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.10 - 2026-08-20
+
+- Scoped advisor-triggered automatic checks to paths changed by the current turn instead of every uncommitted worktree path.
+
 ## 0.8.9 - 2026-08-19
 
 - Documented the standard release workflow and end-to-end advisor correction QA.

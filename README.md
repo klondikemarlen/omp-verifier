@@ -67,7 +67,7 @@ Each requirement names its trigger, Gold condition, narrow check, and PASS evide
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
 
-After a changed agent turn in a Git worktree, the verifier advisor runs the packaged `automatic` coordinator. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. The advisor emits no advice for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` become standard OMP blocker advice that resumes or steers the primary agent. Checks without `pathTriggers` and `/verifier verify` remain manual.
+After a changed agent turn in a Git worktree, the verifier advisor passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select from unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. The advisor emits no advice for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` become standard OMP blocker advice that resumes or steers the primary agent. Checks without `pathTriggers` and `/verifier verify` remain manual. `automatic --worktree` remains available only for an explicitly requested full working-tree check.
 
 With no compatible manifests installed, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. Existing advisor setup and cleanup remain independent of the optional check surface.
 
