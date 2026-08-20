@@ -62,6 +62,7 @@ test("when an automatic check fails, verifier setup gives the advisor correction
       result: results[0],
       hasBash: roster.includes("tools: [bash]"),
       hasBlockerRule: guidance.includes("call `advise` with severity `blocker`"),
+      hasCoordinatorCommand: guidance.includes("`automatic` is the packaged coordinator command"),
       hasInstalledCli: guidance.includes(join(process.cwd(), "bin", "omp-verifier.js")),
     }, {
       exitCode: 1,
@@ -75,6 +76,7 @@ test("when an automatic check fails, verifier setup gives the advisor correction
       },
       hasBash: true,
       hasBlockerRule: true,
+      hasCoordinatorCommand: true,
       hasInstalledCli: true,
     });
   } finally {
