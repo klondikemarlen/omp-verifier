@@ -64,6 +64,19 @@ await writeVerificationPackage(
   { "pass.mjs": jsonResult({ status: "PASS", summary: "The check passed", evidence: "fixture passed" }) },
 );
 await writeVerificationPackage(
+  "publisher-scoped",
+  [{
+    id: "publisher-scoped:check",
+    label: "Scoped check",
+    description: "A check that records automatic paths",
+    entry: "./scoped.mjs",
+    pathTriggers: ["tests/**"],
+  }],
+  {
+    "scoped.mjs": 'const paths = process.env.OMP_VERIFIER_CHANGED_PATHS || "manual";\nprocess.stdout.write(JSON.stringify({ status: "PASS", summary: "The scoped check passed", evidence: paths }));\n',
+  },
+);
+await writeVerificationPackage(
   "publisher-unrelated",
   [{
     id: "publisher-unrelated:check",
@@ -190,6 +203,7 @@ assert.deepEqual(
     "publisher-nonzero:check",
     "publisher-pass:check",
     "publisher-pi-only:check",
+    "publisher-scoped:check",
     "publisher-timeout:check",
     "publisher-unrelated:check",
   ],
@@ -202,6 +216,8 @@ assert.equal(discovered.blockedResults.find(result => result.id === "publisher-s
 const verificationResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-pass:check", "publisher-pass:check", "publisher-missing:check"]);
 assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);
 assert.equal(verificationResults.find(result => result.id === "publisher-pass:check").status, "PASS");
+const manualScopedResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-scoped:check"]);
+assert.equal(manualScopedResults.find(result => result.id === "publisher-scoped:check").evidence, "manual");
 
 const failureResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-fail:check"]);
 assert.equal(failureResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
@@ -216,6 +232,7 @@ const automaticPass = automaticResults.find(result => result.id === "publisher-p
 assert.deepEqual(automaticPass.matches, [{ path: "tests/active/example.test.js", trigger: "tests/**" }]);
 assert.equal(automaticResults.some(result => result.id === "publisher-unrelated:check"), false);
 assert.equal(automaticResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
+assert.equal(automaticResults.find(result => result.id === "publisher-scoped:check").evidence, JSON.stringify(["tests/active/example.test.js"]));
 
 await writeFile(
   join(verificationCwd, ".omp-verifier.json"),
@@ -265,7 +282,7 @@ assert.equal(invalidSuppressionResults.find(result => result.id === "suppression
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const checksMessage = registrations.notices.at(-1).message;
 assert.match(checksMessage, /Verifier checks:/);
-assert.match(checksMessage, /discovered: 8/);
+assert.match(checksMessage, /discovered: 9/);
 assert.match(checksMessage, /publisher-pass:check — Pass check/);
 assert.match(checksMessage, /BLOCKED publisher-duplicate:check/);
 
