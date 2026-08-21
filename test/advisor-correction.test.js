@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { installGlobalVerifier } from "#@/omp-plugin/global-verifier.js";
+import { installGlobalVerifier } from "#root/omp-plugin/global-verifier.js";
 
 test("when an automatic check fails, verifier setup gives the advisor correction evidence", async () => {
   // Arrange

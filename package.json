@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.8.13",
+  "version": "0.8.14",
   "description": "OMP verifier advisor bootstrap for evidence-first code-change review.",
   "type": "module",
   "license": "MIT",
@@ -15,7 +15,7 @@
     "url": "git+https://github.com/klondikemarlen/omp-verifier.git"
   },
   "imports": {
-    "#@/*": "./*"
+    "#root/*": "./*"
   },
   "files": [
     "AGENTS.md",
