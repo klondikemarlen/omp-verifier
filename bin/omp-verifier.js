@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { runAutomaticVerificationForPaths, runCurrentAutomaticVerification } from "../omp-plugin/verifications.js";
+import { runAutomaticVerificationForPaths, runCurrentAutomaticVerification } from "#@/omp-plugin/verifications.js";
 
 const [command, ...paths] = process.argv.slice(2);
 const useWorkingTree = paths.length === 1 && paths[0] === "--worktree";

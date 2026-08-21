@@ -3,8 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import verifierPlugin, { uninstall as uninstallHook } from "../omp-plugin/index.js";
-import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "../omp-plugin/verifications.js";
+import { uninstallGlobalVerifier } from "#@/omp-plugin/global-verifier.js";
+import verifierPlugin from "#@/omp-plugin/index.js";
+import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "#@/omp-plugin/verifications.js";
 
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
@@ -377,7 +378,7 @@ assert.match(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /name: learner/);
 assert.doesNotMatch(globalWatchdog, /name: verifier/);
 await assert.rejects(readFile(guidancePath, "utf8"), /ENOENT/);
-await uninstallHook({ agentDir });
+await uninstallGlobalVerifier({ agentDir });
 assert.doesNotMatch(await readFile(globalWatchdogPath, "utf8"), /name: verifier/);
 
 const customAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
@@ -391,7 +392,7 @@ assert.match(customWatchdog, /name: default/);
 assert.match(customWatchdog, /name: verifier/);
 assert.match(customWatchdog, /name: learner/);
 await writeFile(customGuidancePath, "custom verifier guidance\n");
-await uninstallHook({ agentDir: customAgentDir });
+await uninstallGlobalVerifier({ agentDir: customAgentDir });
 assert.equal(await readFile(customGuidancePath, "utf8"), "custom verifier guidance\n");
 await Promise.all([
   rm(verificationPackageDirectory, { recursive: true, force: true }),
