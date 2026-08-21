@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { runVerificationCheck } from "../omp-plugin/verifications.js";
+import { runVerificationCheck } from "#@/omp-plugin/verifications.js";
 
 test("when OMP has a non-Node executable, runs verification checks with Node", async () => {
   // Arrange

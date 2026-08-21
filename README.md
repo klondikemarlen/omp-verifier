@@ -2,6 +2,11 @@
 
 An OMP plugin that adds a focused `verifier` advisor after OMP's stock `default` advisor.
 
+## Documentation
+
+- [Documentation Map](docs/index.md) — product, release, and reference-guide routing.
+- [Verifier Concepts Reference](docs/references/verifier-concepts-reference.md) — advisor lifecycle and verification contracts.
+
 ## Scope
 
 The plugin does five things:

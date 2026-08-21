@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.13 - 2026-08-20
+
+- Aligned verifier documentation and global-advisor lifecycle boundaries with current project patterns.
+
 ## 0.8.12 - 2026-08-20
 
 - Pass matching automatic-check paths to verification entries so they can avoid reporting unrelated project files.
