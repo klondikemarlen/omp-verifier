@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { uninstallGlobalVerifier } from "#@/omp-plugin/global-verifier.js";
-import verifierPlugin from "#@/omp-plugin/index.js";
-import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "#@/omp-plugin/verifications.js";
+import { uninstallGlobalVerifier } from "#root/omp-plugin/global-verifier.js";
+import verifierPlugin from "#root/omp-plugin/index.js";
+import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.14 - 2026-08-20
+
+- Use Node's native `#root/…` imports without a bundler or custom loader.
+
 ## 0.8.13 - 2026-08-20
 
 - Aligned verifier documentation and global-advisor lifecycle boundaries with current project patterns.
