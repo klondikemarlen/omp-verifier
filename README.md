@@ -39,7 +39,7 @@ advisors:
   # omp-verifier: advisor end
 ```
 
-The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp`. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
+The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the shell-quoted coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp` or expand shell syntax in their paths. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier advisor runs matching automatic checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` or `BLOCKED`, it emits standard OMP `blocker` advice with evidence and the smallest next check.
 
