@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.15 - 2026-10-09
+
+- Shell-quote the installed coordinator path so automatic checks work literally in installation paths containing quotes or shell syntax.
+- Replace prompt-phrase and mirrored-template assertions with a generated-command failure/remediation regression.
+
 ## 0.8.14 - 2026-08-20
 
 - Use Node's native `#root/…` imports without a bundler or custom loader.
