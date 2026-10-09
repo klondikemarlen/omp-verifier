@@ -85,7 +85,8 @@ async function readText(path) {
 
 async function shippedGuidance() {
   const template = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
-  return template.replace("{{OMP_VERIFIER_CLI}}", JSON.stringify(cliPath));
+  const quotedCliPath = `'${cliPath.replaceAll("'", "'\"'\"'")}'`;
+  return template.replace("{{OMP_VERIFIER_CLI}}", () => quotedCliPath);
 }
 
 async function writeGuidanceFile(path) {
