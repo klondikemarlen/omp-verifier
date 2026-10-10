@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.16 - 2026-10-10
+
+- Document verifier discovery/execution inputs, evidence semantics, package ownership boundaries, and test proof sources.
+
 ## 0.8.15 - 2026-10-09
 
 - Shell-quote the installed coordinator path so automatic checks work literally in installation paths containing quotes or shell syntax.
