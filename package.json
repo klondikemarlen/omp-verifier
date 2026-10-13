@@ -1,7 +1,7 @@
 {
   "name": "omp-verifier",
-  "version": "0.8.18",
-  "description": "OMP verifier advisor bootstrap for evidence-first code-change review.",
+  "version": "0.8.19",
+  "description": "OMP advisor-triggered programmatic verification with evidence-first check results.",
   "type": "module",
   "license": "MIT",
   "homepage": "https://github.com/klondikemarlen/omp-verifier#readme",
