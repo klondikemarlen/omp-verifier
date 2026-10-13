@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.17 - 2026-10-13
+
+- Document the observed OMP-core advice-admission limitation, withdrawn prompt-only silence proposal, and named-advisor QA evidence requirements. No runtime, prompt, or model-route change; verifier noise remains unresolved upstream.
+
 ## 0.8.16 - 2026-10-10
 
 - Document verifier discovery/execution inputs, evidence semantics, package ownership boundaries, and test proof sources.

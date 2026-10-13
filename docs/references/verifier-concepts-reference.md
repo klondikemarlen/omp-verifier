@@ -37,7 +37,22 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 
 A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, Gold condition, narrow check, and PASS evidence.
 
-The verifier classifies applicable evidence as `PASS`, `FAIL`, `BLOCKED`, or scoped `SUPPRESSED`. `PASS`, `SUPPRESSED`, and no applicable results stay silent. `FAIL` and `BLOCKED` produce standard OMP blocker advice with the check id, evidence, and smallest next check.
+The verifier is instructed to classify applicable evidence as `PASS`, `FAIL`, `BLOCKED`, or scoped `SUPPRESSED`. `PASS`, `SUPPRESSED`, and no applicable results call for silence. `FAIL` and `BLOCKED` call for standard OMP blocker advice with the check id, evidence, and smallest next check. These are intended advisor behaviors, not a runtime-enforced output boundary.
+
+### Advisor Silence: Runtime Limitation and QA
+
+Live OMP 18.8.9 QA with a stricter candidate prompt, loaded generated guidance, and resolved `openai-codex/gpt-6-luna` verifier produced `advise({ note: "The read is complete.", severity: "nit" })` after a read-only primary action. The acknowledgment was `Delivered.`; no failed verification justified that note. The candidate prompt-only fix was withdrawn. The evidence is recorded in [Verifier #117](https://github.com/klondikemarlen/omp-verifier/issues/117#issuecomment-6103445226), with related runtime admission work in [OMP #8206](https://github.com/can1357/oh-my-pi/issues/8206).
+
+OMP 18.8.9 [constructs the native `AdviseTool` directly](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/session/session-advisors.ts#L1295-L1319), and its [advisor callbacks](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/session/session-advisors.ts#L1426-L1473) do not expose that native admission through the extension tool hook. The [emission guard](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/advisor/emission-guard.ts#L180-L192) filters phrases, repetition, and budget, but does not enforce failed-check provenance or a blocker-only policy per named advisor; its non-blocker budget has a minimum of one. Verifier cannot enforce silence through that hook or a zero-budget workaround. OMP core owns this admission boundary; this release adds no runtime filter and changes no model routes.
+
+For future silence QA:
+
+1. Start a fresh OMP process and verify the named verifier's resolved model and loaded generated guidance using `/advisor status` and `/advisor dump raw`.
+2. Exercise read-only/no-changed-path, empty automatic-result, `PASS`, and `SUPPRESSED` cases. Inspect the verifier's own completed transcript and the delivered primary transcript, not just an unlabelled `advisor_yielded` event or a consumer-model decision.
+3. Require no delivered verifier advice for each silent case. A delivered no-action note is `FAIL`, even if source checks and hypothetical decisions pass. Model quota/availability failures or missing named-advisor evidence are `BLOCKED`, not evidence of silence.
+4. Preserve failure delivery: exercise an applicable deterministic failure, observe the named verifier's blocker, remediate, and observe the clean follow-up result. Do not infer cross-advisor coordination from this cycle.
+
+The separate edit/no-result probe was `BLOCKED` by primary-model `usage_limit_reached`; it is not a passing case. No silent-case or noise-fix claim is made by this documentation release. Installing these docs does not require changing active advisor configuration.
 
 ## Verification Capability Direction
 

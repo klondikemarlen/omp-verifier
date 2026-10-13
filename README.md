@@ -41,7 +41,7 @@ advisors:
 
 The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the shell-quoted coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp` or expand shell syntax in their paths. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
-The empty `default` entry uses OMP's stock advisor behavior. The verifier advisor runs matching automatic checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` or `BLOCKED`, it emits standard OMP `blocker` advice with evidence and the smallest next check.
+The empty `default` entry uses OMP's stock advisor behavior. The verifier advisor is instructed to run matching automatic checks and stay silent for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` call for standard OMP `blocker` advice with evidence and the smallest next check. This is guidance, not enforced message admission: live OMP 18.8.9 QA delivered a verifier no-action `nit` despite a stricter candidate prompt. See [Advisor Silence: Runtime Limitation and QA](docs/references/verifier-concepts-reference.md#advisor-silence-runtime-limitation-and-qa). This documentation release does not fix that noise.
 
 ## Project-specific verifier requirements
 
