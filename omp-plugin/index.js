@@ -3,7 +3,7 @@ import {
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
-import { discoverVerificationChecks, runVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks, runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|uninstall]";
 const SUBCOMMANDS = [
@@ -33,15 +33,7 @@ async function buildChecks(packageDirectory) {
 }
 
 async function buildVerification(cwd, ids, packageDirectory) {
-  const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
-  const selectedBlocked = ids.length === 0 ? blockedResults : blockedResults.filter(result => ids.includes(result.id));
-  const results = [
-    ...selectedBlocked,
-    ...(await runVerificationChecks(checks, cwd, ids)),
-  ];
-  if (results.length === 0) {
-    results.push({ id: "verifier", status: "BLOCKED", summary: "No verification checks are installed" });
-  }
+  const results = await runInstalledVerificationChecks({ cwd, ids, packageDirectory });
   return ["Verifier verification:", ...results.flatMap(formatVerificationResult)].join("\n");
 }
 

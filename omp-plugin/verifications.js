@@ -376,6 +376,16 @@ export async function runVerificationChecks(checks, cwd, ids = []) {
   return [...unknown, ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd))))];
 }
 
+export async function runInstalledVerificationChecks({ cwd, ids = [], packageDirectory }) {
+  const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
+  const selectedBlocked = ids.length === 0 ? blockedResults : blockedResults.filter(result => ids.includes(result.id));
+  const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids))];
+  if (results.length === 0) {
+    results.push(blocked("verifier", "No verification checks are installed"));
+  }
+  return results;
+}
+
 export function selectAutomaticVerificationChecks(checks, changedPaths) {
   return checks.flatMap(check => {
     if (!check.pathTriggers) return [];

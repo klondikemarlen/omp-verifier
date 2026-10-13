@@ -1,6 +1,6 @@
 # OMP Verifier
 
-An OMP plugin that adds a focused `verifier` advisor after OMP's stock `default` advisor.
+An OMP plugin that uses a focused `verifier` advisor to select and execute programmatic checks after OMP's stock `default` advisor.
 
 ## Documentation
 
@@ -15,9 +15,9 @@ The plugin does five things:
 2. Adds a marked `verifier` advisor entry immediately after it.
 3. Syncs verifier-only evidence guidance into the active agent directory.
 4. Shows or removes its marked advisor block with `/verifier`.
-5. Exposes deterministic verification manifests to explicit commands and to the verifier advisor after changed turns.
+5. Exposes deterministic verification manifests to explicit commands and to the verifier model after changed turns.
 
-It does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged automatic-verification coordinator. Verification manifests are explicit package-owned checks; they are not inferred from arbitrary tools or maintainer test filenames.
+The model decides which explicit checks apply and runs them; its feedback is verification results, not general advice. The stock advisor retains code review. Verifier does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged coordinator or a project's explicit narrow check. Verification manifests are package-owned checks, not inferred from arbitrary tools or maintainer test filenames.
 
 ## Install
 
@@ -41,7 +41,7 @@ advisors:
 
 The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the shell-quoted coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp` or expand shell syntax in their paths. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
-The empty `default` entry uses OMP's stock advisor behavior. The verifier advisor is instructed to run matching automatic checks and stay silent for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` call for standard OMP `blocker` advice with evidence and the smallest next check. This silence policy belongs to Verifier and is guidance, not enforced message admission. Live OMP 18.8.9 QA delivered a verifier no-action `nit` despite a stricter candidate prompt; that is a plugin-policy failure, not proof of an OMP defect. See [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa). No noise fix is claimed by this documentation.
+The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it passes only the failing JSON result objects unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
 
 ## Project-specific verifier requirements
 
@@ -54,10 +54,10 @@ advisors:
     instructions: |
       @/home/<user>/.omp/agent/verifier/WATCHDOG.md
 
-      - When a database migration changes: run `npm run db:verify`; PASS when migration status is current.
+      - Check id project:database-migrations. When a database migration changes, run `npm run db:verify`; Gold is current migration status, evidenced by exit 0 and the command's status output.
 ```
 
-Each requirement names its trigger, Gold condition, narrow check, and PASS evidence. The verifier ignores placeholders and generic guidance.
+Each requirement names its trigger, check id, Gold condition, executable narrow check, and PASS evidence. The verifier must execute the applicable check; merely proposing a future check does not establish verification. It ignores placeholders and generic guidance. Commands without structured output are classified from the observed exit/output and the explicit Gold condition using the same result shape.
 
 ## Commands
 
@@ -72,9 +72,19 @@ Each requirement names its trigger, Gold condition, narrow check, and PASS evide
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
 
-After a changed agent turn in a Git worktree, the verifier advisor passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select from unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. The advisor emits no advice for `PASS`, `SUPPRESSED`, or no results; `FAIL` and `BLOCKED` become standard OMP blocker advice that resumes or steers the primary agent. Checks without `pathTriggers` and `/verifier verify` remain manual. `automatic --worktree` remains available only for an explicitly requested full working-tree check.
+After a changed agent turn in a Git worktree, the verifier model passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. `PASS`, `SUPPRESSED`, and no results stay silent; only actual `FAIL` and `BLOCKED` rows are delivered as JSON through the standard OMP blocker channel. No paraphrased advice or successful rows are appended. Checks without `pathTriggers` remain manual; the model selects them only for an explicit applicable requirement. `automatic --worktree` is only for an explicitly requested full working-tree check.
 
 With no compatible manifests installed, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. Existing advisor setup and cleanup remain independent of the optional check surface.
+
+The `bash`-only advisor can discover and run named checks using the packaged CLI:
+
+```text
+omp-verifier checks
+omp-verifier verify <check-id...>
+omp-verifier automatic <changed-path...>
+```
+
+`checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify` writes the same JSON result array as `automatic` and supports all checks when explicitly invoked without ids. Both execution commands exit `1` for any `FAIL`/`BLOCKED`, otherwise `0`; invalid usage exits `2`. Named verification shares its runner with `/verifier verify`. The generated prompt uses the installed CLI's absolute path rather than requiring the executable on `PATH`.
 
 ## Verification manifests
 
@@ -138,7 +148,7 @@ For advisor-correction releases, QA with a temporary deterministic failing manif
 
 1. Check `/advisor status`; the `verifier` advisor must be enabled with a resolved model. `[no model]` blocks correction claims.
 2. Trigger a changed path and run the coordinator from the packed or remotely installed artifact. Observe structured `FAIL` or `BLOCKED` JSON and exit `1`.
-3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">` with the check id, evidence, and next check.
+3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">`; parse its note as a JSON array and compare its FAIL/BLOCKED objects with the actual coordinator output. No successful rows, invented fields, or extra commentary may appear.
 4. Verify the primary agent resumes or is steered, applies remediation, and the next coordinator run returns `PASS` or no applicable results.
 5. Verify `PASS`, `SUPPRESSED`, and no results inject no advice.
 6. If remediation remains incomplete, wait through `advisor.immuneTurns` and verify the repeated failure eventually re-enters the correction loop.

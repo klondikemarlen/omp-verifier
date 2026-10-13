@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.19 - 2026-10-13
+
+- Specialize the verifier model as a check selector/executor, not a second reviewer. Failure feedback relays the actual JSON check results through native advisor transport without added advice.
+- Expose JSON `checks` discovery and `verify [<check-id>...]` execution to the advisor's packaged CLI, sharing manual execution semantics with `/verifier verify`.
+- Require executed evidence for explicit project checks. Keep successful/no-action automatic results silent; this remains a prompt contract, not a runtime admission guarantee.
+
 ## 0.8.18 - 2026-10-13
 
 - Correct silence-policy ownership: the observed no-action note violates Verifier guidance, not an evidenced OMP runtime contract. Withdraw the misattributed upstream report and keep the unresolved failure in Verifier #117. No runtime, prompt, or model-route change.
