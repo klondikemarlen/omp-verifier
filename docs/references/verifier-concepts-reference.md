@@ -2,7 +2,7 @@
 
 ## Product Shape
 
-OMP Verifier is a second advisor, not a replacement for OMP's default advisor.
+OMP Verifier uses a second advisor as the model-driven selector/executor of programmatic checks, not as another general reviewer or a replacement for OMP's default advisor.
 
 ```mermaid
 sequenceDiagram
@@ -14,7 +14,7 @@ sequenceDiagram
   Verifier->>CLI: run packaged coordinator
   CLI-->>Verifier: structured results
   alt FAIL or BLOCKED
-    Verifier-->>Main: advise blocker with evidence and next check
+    Verifier-->>Main: relay failing JSON results via blocker transport
     Main-->>Verifier: remediated turn
   else PASS, SUPPRESSED, or no result
     Verifier-->>Verifier: stay silent
@@ -23,7 +23,7 @@ sequenceDiagram
 
 The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts and owns only its marked `verifier` block immediately after `default`; independent advisors remain untouched.
 
-`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md`, substitutes the coordinator path derived from the installed package, and imports that generated file. The generated verifier advisor receives `bash`; generic quality, scope, strategy, and direct-risk concerns remain with `default`.
+`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md`, substitutes the coordinator path derived from the installed package, and imports that generated file. The verifier model receives `bash` to select and execute applicable checks. Generic quality, scope, strategy, style, and workflow review remain with `default`; they are not verification results.
 
 ## Lifecycle
 
@@ -35,9 +35,9 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 
 ## Requirement Contract
 
-A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, Gold condition, narrow check, and PASS evidence.
+A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, check id, Gold condition, executable narrow check, and PASS evidence. The verifier runs the applicable command; specifying an unexecuted future check does not establish a result.
 
-The verifier is instructed to classify applicable evidence as `PASS`, `FAIL`, `BLOCKED`, or scoped `SUPPRESSED`. `PASS`, `SUPPRESSED`, and no applicable results call for silence. `FAIL` and `BLOCKED` call for standard OMP blocker advice with the check id, evidence, and smallest next check. These are intended advisor behaviors, not a runtime-enforced output boundary.
+Automatic and manifest verification output is already structured. The verifier relays only actual `FAIL`/`BLOCKED` result objects, unchanged, as a JSON array in native `advise` with severity `blocker`. No paraphrase, advice, successful rows, or invented next check is added. Commands without structured output are classified against their explicit Gold condition using observed command/exit/output evidence and the same result shape. `PASS`, `SUPPRESSED`, and no applicable results call for silence. These are prompt contracts, not runtime-enforced output admission; the native UI channel remains “Advisor.”
 
 ### Advisor Silence: Plugin Policy and QA
 
@@ -52,11 +52,11 @@ For future silence QA:
 3. Require no delivered verifier advice for each silent case. A delivered no-action note is `FAIL`, even if source checks and hypothetical decisions pass. Model quota/availability failures or missing named-advisor evidence are `BLOCKED`, not evidence of silence.
 4. Preserve failure delivery: exercise an applicable deterministic failure, observe the named verifier's blocker, remediate, and observe the clean follow-up result. Do not infer cross-advisor coordination from this cycle.
 
-The separate edit/no-result probe was `BLOCKED` by primary-model `usage_limit_reached`; it is not a passing case. No silent-case or noise-fix claim is made by this documentation release. Installing these docs does not require changing active advisor configuration.
+The historical edit/no-result probe was `BLOCKED` by primary-model `usage_limit_reached`; it is not a passing case. Releases 0.8.17 and 0.8.18 documented and corrected the evidence without changing the prompt. The result-only specialization introduced later must be judged by its own live QA; historical failure and availability limits are not converted into a passing claim.
 
 ## Verification Capability Direction
 
-The plugin remains an independent advisor and does not require an OMP-core API. Installed OMP plugins opt into deterministic verification through package metadata. The package-local `automatic` coordinator handles selection and execution; the advisor owns interpretation and corrective delivery. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
+Installed OMP plugins opt into deterministic verification through package metadata. The package-local coordinator handles discovery, selection, and execution; the verifier model chooses applicable inputs and returns the resulting evidence through native transport. It does not own a second general review lane or configure model routes. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
 
 ## Manifest Contract
 
@@ -102,6 +102,8 @@ The public commands are:
 
 With no compatible manifests installed, `/verifier checks` reports `none installed` and `/verifier verify` returns `BLOCKED`. Existing `/verifier`, `/verifier status`, `/verifier uninstall`, advisor setup, and guidance ownership remain independent of this optional capability.
 
+The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
+
 ## Discovery and Execution Inputs
 
 The plugin's command adapter takes the active project directory and OMP's verification-package directory from the session context. The coordinator derives its default installed-package directory from the installed Verifier package or `PI_CODING_AGENT_DIR`.
@@ -127,21 +129,21 @@ Each result is normalized with an `id`, `status`, and `summary`, plus optional `
 | Outcome | Meaning and Verifier behavior |
 | --- | --- |
 | `PASS` | The declared check reported its Gold condition met. Verifier validates and relays that result; it does not independently prove the condition or certify overall code quality. |
-| `FAIL` | The declared check reported a violation. Automatic advisor guidance turns it into standard `blocker` advice with the check ID, evidence, and smallest next check. |
-| `BLOCKED` | The check could not establish PASS/FAIL, or discovery/execution/result validation failed. Automatic advisor guidance treats it as a blocker with the available evidence and next check. |
+| `FAIL` | The declared check reported a violation. The verifier relays the actual failing result unchanged through native `blocker` transport. |
+| `BLOCKED` | The check could not establish PASS/FAIL, or discovery/execution/result validation failed. The verifier relays the available structured result unchanged, without inventing evidence or remediation. |
 | `SUPPRESSED` | Verifier matched a valid bounded suppression and did not run the check for that path. This is not a PASS; automatic guidance stays silent. |
 | No result | No automatic check applied (or there were no changed paths). This is not a PASS; automatic guidance stays silent. |
 
-Automatic CLI output is a JSON result array and exits `1` if any result is `FAIL` or `BLOCKED`, otherwise `0`; invalid CLI usage exits `2`. `/verifier checks` and `/verifier verify` display human-readable notifications instead of that CLI JSON/exit contract.
+Automatic and manual CLI execution outputs a JSON result array and exits `1` if any result is `FAIL` or `BLOCKED`, otherwise `0`; invalid CLI usage exits `2`. CLI discovery outputs a JSON inventory and exits `1` for discovery blocks, otherwise `0`. `/verifier checks` and `/verifier verify` display human-readable notifications instead of CLI JSON.
 
 **Interpretation limit:** PASS from a narrow manifest check proves only that the check entry returned a valid PASS result for its declared contract. It is not a code-quality certification, an approval of unrelated behavior, or proof that generic review concerns were checked.
 
 ## Ownership Boundaries
 
-- **OMP Verifier** owns the adapter and runtime contract: its marked advisor setup/cleanup, commands, manifest discovery and validation, path-trigger selection, bounded suppression, trusted entry execution, evidence normalization, and verifier-advisor correction guidance.
+- **OMP Verifier** owns the adapter and runtime contract: its marked advisor setup/cleanup, commands, manifest discovery and validation, path-trigger selection, bounded suppression, trusted entry execution, evidence normalization, and model check-selection/result-relay guidance.
 - **A policy/check-owning package** owns the check's Gold condition and implementation. [Marlens Skills, Rules, and Tools (MSSRT)](https://github.com/klondikemarlen/marlens-skills-rules-and-tools) owns reusable Marlen coding guidance and its generic deterministic checks; an installed manifest opts a specific package-owned `.mjs` check into Verifier. Verifier does not invent generic policy or infer checks from prose, filenames, or tool names.
 - **A project** owns its explicit local verifier requirement in project `WATCHDOG.yml` and any project-specific check package. Requirements name a trigger, Gold condition, narrow check, and PASS evidence.
-- **OMP's default advisor** retains generic code quality, robustness, strategy, scope, and direct-risk review. Verifier is a distinct evidence/check advisor and must not duplicate that broad review.
+- **OMP's default advisor** retains generic code quality, robustness, strategy, scope, style, and workflow review. Verifier's model runs applicable checks and returns their evidence, not general advice.
 - **OMP advisor runtime and configuration** own model resolution, scheduling, and actual advisor interaction with the primary agent. Verifier does not choose or rewrite model/provider routes; live correction claims require the verifier model to resolve and an observed blocker/remediation cycle.
 - **OMP Learner** (the [OMP Learner repository](https://github.com/klondikemarlen/omp-learner)) owns high-confidence feedback classification and the human-reviewed proposal route for accepted lessons. Learning an observation does not silently create or activate verifier policy.
 
@@ -154,8 +156,8 @@ The collaboration path is therefore: OMP Learner may surface a reviewable lesson
 | Advisor command registration, completion, human-readable command output, and session setup entry | [`omp-plugin/index.js`](../../omp-plugin/index.js#L55) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L18) covers registered commands, completion, handlers, and setup. |
 | Marked global roster block and generated guidance lifecycle | [`omp-plugin/global-verifier.js`](../../omp-plugin/global-verifier.js#L149) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L300) covers setup, preserving independent advisors, status, cleanup, and customized guidance. |
 | Registry/fallback discovery, manifest validation, execution and result normalization, path triggers, and suppressions | [`omp-plugin/verifications.js`](../../omp-plugin/verifications.js#L161) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L27) exercises declared-registry discovery, malformed/duplicate/unsafe manifests and results, path selection, suppressions, and slash-command output. |
-| Automatic coordinator arguments, JSON output, and process exit status | [`bin/omp-verifier.js`](../../bin/omp-verifier.js#L4) | [`test/verifications-runtime.test.js`](../../test/verifications-runtime.test.js#L44) exercises empty output, explicit current-turn paths versus stale worktree paths, and Node execution. |
-| Current-turn advisor input, silence/blocker policy, and evidence passed to correction guidance | [`WATCHDOG.md`](../../WATCHDOG.md#L5) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js#L9) executes refreshed generated guidance through a real shell under a path with shell-sensitive characters and observes structured FAIL then PASS. |
+| Packaged coordinator discovery, named execution, automatic arguments, JSON output, and process exit status | [`bin/omp-verifier.js`](../../bin/omp-verifier.js) | [`test/verifications-runtime.test.js`](../../test/verifications-runtime.test.js) exercises empty output, current-turn versus stale paths, and Node execution; [`test/verification-cli.test.js`](../../test/verification-cli.test.js) covers selected-check isolation and unavailable named checks. |
+| Current-turn model input and check-result-only output policy | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) executes refreshed generated guidance through a real shell under a shell-sensitive path and observes structured FAIL then PASS. Live QA must additionally inspect named-advisor execution and delivery; source-text assertions cannot prove this policy. |
 
 These tests prove only the cases they exercise. The advisor-correction test does not run a live OMP advisor, prove model resolution, or observe primary-agent remediation. The release smoke in the [README](../../README.md#L137) requires those live observations before claiming correction behavior; `/advisor status` is the runtime-state authority.
 
@@ -173,7 +175,7 @@ user correction or repeated feedback
   -> verifier evidence
 ```
 
-Deterministic checks belong in manifests when a rule has a bounded, reproducible signal. Subjective readability, architecture, and concept checks remain agentic guidance and require changed-file evidence plus a concrete local rule or example.
+Deterministic checks belong in manifests when a rule has a bounded, reproducible signal. Subjective readability, architecture, and concept review remain with the default advisor or their guidance owner; they do not become verifier failures without an explicit Gold condition and executed narrow check.
 
 ## Related Feature Tickets
 
