@@ -54,6 +54,8 @@ For future silence QA:
 
 The historical edit/no-result probe was `BLOCKED` by primary-model `usage_limit_reached`; it is not a passing case. Releases 0.8.17 and 0.8.18 documented and corrected the evidence without changing the prompt. The result-only specialization introduced later must be judged by its own live QA; historical failure and availability limits are not converted into a passing claim.
 
+The 0.8.19 result-only candidate passed targeted native OMP 18.10.3 QA with the configured `openai-codex/gpt-6.1-sol` verifier: read-only, empty results, PASS, and SUPPRESSED produced no delivered notes; an explicit manual requirement executed its named check; mixed FAIL/PASS delivered only the exact FAIL object; primary remediation was followed by actual PASS; and BLOCKED delivered the exact blocked result. The completed named transcript contained only two `advise` calls, both blocker/result arrays. See [PR #122's native QA record](https://github.com/klondikemarlen/omp-verifier/pull/122#issuecomment-6151394004). This proves those exercised decisions, not a hard admission gate or model-independent silence.
+
 ## Verification Capability Direction
 
 Installed OMP plugins opt into deterministic verification through package metadata. The package-local coordinator handles discovery, selection, and execution; the verifier model chooses applicable inputs and returns the resulting evidence through native transport. It does not own a second general review lane or configure model routes. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
