@@ -1,8 +1,12 @@
 # Changelog
 
+## 0.8.18 - 2026-10-13
+
+- Correct silence-policy ownership: the observed no-action note violates Verifier guidance, not an evidenced OMP runtime contract. Withdraw the misattributed upstream report and keep the unresolved failure in Verifier #117. No runtime, prompt, or model-route change.
+
 ## 0.8.17 - 2026-10-13
 
-- Document the observed OMP-core advice-admission limitation, withdrawn prompt-only silence proposal, and named-advisor QA evidence requirements. No runtime, prompt, or model-route change; verifier noise remains unresolved upstream.
+- Document the withdrawn prompt-only silence proposal, versioned advice-admission capability limits, and named-advisor QA evidence requirements. The original upstream-defect attribution was incorrect; corrected in 0.8.18. No runtime, prompt, or model-route change; verifier noise remains tracked in Verifier #117.
 
 ## 0.8.16 - 2026-10-10
 
