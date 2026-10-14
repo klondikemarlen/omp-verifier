@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0 - 2026-10-14
+
+- Add a shared human-readable text reporter for CLI and slash-command results, preserving multiline evidence and next checks without dumping path-selection metadata.
+- Keep JSON output as the CLI default and expose explicit `--reporter json|text` selection plus failure-only execution reporting.
+- Have the verifier advisor request and relay failure-only text instead of raw JSON. Successful, suppressed, and empty results remain silent.
+
 ## 0.8.19 - 2026-10-13
 
 - Specialize the verifier model as a check selector/executor, not a second reviewer. Failure feedback relays the actual JSON check results through native advisor transport without added advice.

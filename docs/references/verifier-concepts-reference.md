@@ -14,7 +14,7 @@ sequenceDiagram
   Verifier->>CLI: run packaged coordinator
   CLI-->>Verifier: structured results
   alt FAIL or BLOCKED
-    Verifier-->>Main: relay failing JSON results via blocker transport
+    Verifier-->>Main: relay failure-only text via blocker transport
     Main-->>Verifier: remediated turn
   else PASS, SUPPRESSED, or no result
     Verifier-->>Verifier: stay silent
@@ -37,7 +37,7 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 
 A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, check id, Gold condition, executable narrow check, and PASS evidence. The verifier runs the applicable command; specifying an unexecuted future check does not establish a result.
 
-Automatic and manifest verification output is already structured. The verifier relays only actual `FAIL`/`BLOCKED` result objects, unchanged, as a JSON array in native `advise` with severity `blocker`. No paraphrase, advice, successful rows, or invented next check is added. Commands without structured output are classified against their explicit Gold condition using observed command/exit/output evidence and the same result shape. `PASS`, `SUPPRESSED`, and no applicable results call for silence. These are prompt contracts, not runtime-enforced output admission; the native UI channel remains “Advisor.”
+Automatic and manifest verification output is already structured. The coordinator's text reporter renders actual `FAIL`/`BLOCKED` results as status/check ID, summary, optional evidence, and next check. The verifier requests `--reporter text --failures-only` and relays that output unchanged in native `advise` with severity `blocker`. No paraphrase, advice, successful rows, selection metadata, or invented next check is added. JSON remains available for machines. Commands without structured output are classified against their explicit Gold condition using observed command/exit/output evidence and the same readable layout. `PASS`, `SUPPRESSED`, and no applicable results call for silence. These are prompt contracts, not runtime-enforced output admission; the native UI channel remains “Advisor.”
 
 ### Advisor Silence: Plugin Policy and QA
 
@@ -104,7 +104,7 @@ The public commands are:
 
 With no compatible manifests installed, `/verifier checks` reports `none installed` and `/verifier verify` returns `BLOCKED`. Existing `/verifier`, `/verifier status`, `/verifier uninstall`, advisor setup, and guidance ownership remain independent of this optional capability.
 
-The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
+The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. By default, `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. Both commands also support `--reporter text`. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
 
 ## Discovery and Execution Inputs
 
@@ -131,12 +131,12 @@ Each result is normalized with an `id`, `status`, and `summary`, plus optional `
 | Outcome | Meaning and Verifier behavior |
 | --- | --- |
 | `PASS` | The declared check reported its Gold condition met. Verifier validates and relays that result; it does not independently prove the condition or certify overall code quality. |
-| `FAIL` | The declared check reported a violation. The verifier relays the actual failing result unchanged through native `blocker` transport. |
-| `BLOCKED` | The check could not establish PASS/FAIL, or discovery/execution/result validation failed. The verifier relays the available structured result unchanged, without inventing evidence or remediation. |
+| `FAIL` | The declared check reported a violation. The verifier relays the text reporter's actual failing result through native `blocker` transport. |
+| `BLOCKED` | The check could not establish PASS/FAIL, or discovery/execution/result validation failed. The verifier relays the text reporter's available result, without inventing evidence or remediation. |
 | `SUPPRESSED` | Verifier matched a valid bounded suppression and did not run the check for that path. This is not a PASS; automatic guidance stays silent. |
 | No result | No automatic check applied (or there were no changed paths). This is not a PASS; automatic guidance stays silent. |
 
-Automatic and manual CLI execution outputs a JSON result array and exits `1` if any result is `FAIL` or `BLOCKED`, otherwise `0`; invalid CLI usage exits `2`. CLI discovery outputs a JSON inventory and exits `1` for discovery blocks, otherwise `0`. `/verifier checks` and `/verifier verify` display human-readable notifications instead of CLI JSON.
+Automatic and manual CLI execution defaults to a JSON result array; `--reporter json` is explicit, and `--reporter text` renders readable results. `--failures-only` filters execution output to `FAIL`/`BLOCKED`, producing empty text or JSON `[]` when none remain. Text omits `matches` selection metadata, preserves multiline evidence, and shares its formatter with slash commands. Execution exits `1` if any result is `FAIL` or `BLOCKED`, otherwise `0`; invalid CLI usage exits `2`. Discovery defaults to a JSON inventory, supports the text reporter, and exits `1` for discovery blocks, otherwise `0`.
 
 **Interpretation limit:** PASS from a narrow manifest check proves only that the check entry returned a valid PASS result for its declared contract. It is not a code-quality certification, an approval of unrelated behavior, or proof that generic review concerns were checked.
 
@@ -159,7 +159,8 @@ The collaboration path is therefore: OMP Learner may surface a reviewable lesson
 | Marked global roster block and generated guidance lifecycle | [`omp-plugin/global-verifier.js`](../../omp-plugin/global-verifier.js#L149) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L300) covers setup, preserving independent advisors, status, cleanup, and customized guidance. |
 | Registry/fallback discovery, manifest validation, execution and result normalization, path triggers, and suppressions | [`omp-plugin/verifications.js`](../../omp-plugin/verifications.js#L161) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L27) exercises declared-registry discovery, malformed/duplicate/unsafe manifests and results, path selection, suppressions, and slash-command output. |
 | Packaged coordinator discovery, named execution, automatic arguments, JSON output, and process exit status | [`bin/omp-verifier.js`](../../bin/omp-verifier.js) | [`test/verifications-runtime.test.js`](../../test/verifications-runtime.test.js) exercises empty output, current-turn versus stale paths, and Node execution; [`test/verification-cli.test.js`](../../test/verification-cli.test.js) covers selected-check isolation and unavailable named checks. |
-| Current-turn model input and check-result-only output policy | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) executes refreshed generated guidance through a real shell under a shell-sensitive path and observes structured FAIL then PASS. Live QA must additionally inspect named-advisor execution and delivery; source-text assertions cannot prove this policy. |
+| Human-readable status, evidence, next check, and inventory reporting | [`omp-plugin/reporters.js`](../../omp-plugin/reporters.js) | [`test/reporters.test.js`](../../test/reporters.test.js) and [`test/reporter-cli.test.js`](../../test/reporter-cli.test.js) cover multiline evidence, mixed-result filtering, JSON metadata, successful silence, unavailable checks, and invalid reporter selection. |
+| Current-turn model input and check-result-only output policy | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) executes refreshed generated guidance through a real shell under a shell-sensitive path and observes readable FAIL then silent PASS. Live QA must additionally inspect named-advisor execution and delivery; source-text assertions cannot prove this policy. |
 
 These tests prove only the cases they exercise. The advisor-correction test does not run a live OMP advisor, prove model resolution, or observe primary-agent remediation. The release smoke in the [README](../../README.md#L137) requires those live observations before claiming correction behavior; `/advisor status` is the runtime-state authority.
 
