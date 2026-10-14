@@ -3,6 +3,7 @@ import {
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
+import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { discoverVerificationChecks, runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|uninstall]";
@@ -13,28 +14,13 @@ const SUBCOMMANDS = [
   { name: "uninstall", description: "Remove the verifier advisor" },
 ];
 
-function formatVerificationResult(result) {
-  const lines = [`${result.status} ${result.id} — ${result.summary}`];
-  if (result.matches) {
-    for (const match of result.matches) lines.push(`  trigger: ${match.path} matched ${match.trigger}`);
-  }
-  if (result.evidence) lines.push(`  evidence: ${result.evidence}`);
-  if (result.nextCheck) lines.push(`  next check: ${result.nextCheck}`);
-  return lines;
-}
-
 async function buildChecks(packageDirectory) {
-  const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
-  const lines = ["Verifier checks:", `discovered: ${checks.length}`];
-  for (const check of checks) lines.push(`${check.id} — ${check.label}: ${check.description}`);
-  for (const result of blockedResults) lines.push(...formatVerificationResult(result));
-  if (checks.length === 0 && blockedResults.length === 0) lines.push("none installed");
-  return lines.join("\n");
+  return formatVerificationInventory(await discoverVerificationChecks({ packageDirectory }));
 }
 
 async function buildVerification(cwd, ids, packageDirectory) {
   const results = await runInstalledVerificationChecks({ cwd, ids, packageDirectory });
-  return ["Verifier verification:", ...results.flatMap(formatVerificationResult)].join("\n");
+  return `Verifier verification:\n${formatVerificationResults(results)}`;
 }
 
 function completeSubcommands(argumentPrefix) {

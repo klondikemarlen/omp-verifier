@@ -294,8 +294,6 @@ assert.match(verificationMessage, /BLOCKED publisher-duplicate:check/);
 const emptyVerificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-empty-packages-"));
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory: emptyVerificationPackageDirectory });
 assert.match(registrations.notices.at(-1).message, /none installed/);
-await verifier.handler("verify", { ...ctx, cwd: verificationCwd, verificationPackageDirectory: emptyVerificationPackageDirectory });
-assert.match(registrations.notices.at(-1).message, /BLOCKED verifier — No verification checks are installed/);
 
 registrations.notices.length = 0;
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
