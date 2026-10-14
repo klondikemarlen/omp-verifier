@@ -57,14 +57,14 @@ process.exitCode = failed ? 1 : 0;
     await writeFile(join(agentDir, "verifier", "WATCHDOG.md"), "replaced generated guidance\n");
     await installGlobalVerifier({ agentDir });
     const guidance = await readFile(join(agentDir, "verifier", "WATCHDOG.md"), "utf8");
-    const command = guidance.match(/`(node .+?) automatic <changed-path\.\.\.>`/)[1];
+    const [, command, options] = guidance.match(/`(node .+? automatic )<changed-path\.\.\.>(.*?)`/);
     const runGeneratedCommand = () => {
-      const result = spawnSync("/bin/sh", ["-c", `${command} automatic src/changed.js`], {
+      const result = spawnSync("/bin/sh", ["-c", `${command}src/changed.js${options}`], {
         cwd: projectDir,
         encoding: "utf8",
         env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, VERIFIER_PATH: "expanded-variable" },
       });
-      return { exitCode: result.status, results: JSON.parse(result.stdout) };
+      return result;
     };
 
     const failure = runGeneratedCommand();
@@ -72,27 +72,14 @@ process.exitCode = failed ? 1 : 0;
     const repaired = runGeneratedCommand();
 
     // Assert
-    assert.deepEqual(failure, {
-      exitCode: 1,
-      results: [{
-        id: "publisher:fail",
-        status: "FAIL",
-        summary: "Fixture failed",
-        evidence: "src/changed.js contains BROKEN",
-        nextCheck: "remove BROKEN",
-        matches: [{ path: "src/changed.js", trigger: "src/**" }],
-      }],
-    });
-    assert.deepEqual(repaired, {
-      exitCode: 0,
-      results: [{
-        id: "publisher:fail",
-        status: "PASS",
-        summary: "Fixture repaired",
-        evidence: "src/changed.js has no BROKEN marker",
-        matches: [{ path: "src/changed.js", trigger: "src/**" }],
-      }],
-    });
+    assert.equal(failure.status, 1);
+    assert.equal(failure.stdout, `FAIL publisher:fail
+  Fixture failed
+  Evidence: src/changed.js contains BROKEN
+  Next check: remove BROKEN
+`);
+    assert.equal(repaired.status, 0);
+    assert.equal(repaired.stdout, "");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

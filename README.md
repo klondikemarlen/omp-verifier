@@ -41,7 +41,7 @@ advisors:
 
 The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on every setup. During that copy it substitutes the shell-quoted coordinator path derived from the installed package, so profiles and non-default install roots do not depend on `~/.omp` or expand shell syntax in their paths. The roster imports that agent-owned generated file. Reinstall refreshes the copy; put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
-The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it passes only the failing JSON result objects unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
+The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it requests the coordinator's failure-only text reporter and passes that readable output unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
 
 ## Project-specific verifier requirements
 
@@ -72,7 +72,7 @@ Each requirement names its trigger, check id, Gold condition, executable narrow 
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
 
-After a changed agent turn in a Git worktree, the verifier model passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern returns its changed path and matched trigger in structured JSON. `PASS`, `SUPPRESSED`, and no results stay silent; only actual `FAIL` and `BLOCKED` rows are delivered as JSON through the standard OMP blocker channel. No paraphrased advice or successful rows are appended. Checks without `pathTriggers` remain manual; the model selects them only for an explicit applicable requirement. `automatic --worktree` is only for an explicitly requested full working-tree check.
+After a changed agent turn in a Git worktree, the verifier model passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern records its changed path and matched trigger in structured JSON. The text reporter omits this selection metadata and displays status, check ID, summary, evidence, and next check. `PASS`, `SUPPRESSED`, and no results stay silent in failure-only mode; only actual `FAIL` and `BLOCKED` rows reach the standard OMP blocker channel as readable text. No paraphrased advice or successful rows are appended. Checks without `pathTriggers` remain manual; the model selects them only for an explicit applicable requirement. `automatic --worktree` is only for an explicitly requested full working-tree check.
 
 With no compatible manifests installed, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. Existing advisor setup and cleanup remain independent of the optional check surface.
 
@@ -84,7 +84,24 @@ omp-verifier verify <check-id...>
 omp-verifier automatic <changed-path...>
 ```
 
-`checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify` writes the same JSON result array as `automatic` and supports all checks when explicitly invoked without ids. Both execution commands exit `1` for any `FAIL`/`BLOCKED`, otherwise `0`; invalid usage exits `2`. Named verification shares its runner with `/verifier verify`. The generated prompt uses the installed CLI's absolute path rather than requiring the executable on `PATH`.
+JSON remains the default reporter; `--reporter json` selects it explicitly. `checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify` writes the same JSON result array as `automatic` and supports all checks when explicitly invoked without ids. Add `--reporter text` to any command for readable output, shared with `/verifier checks` and `/verifier verify`. On execution commands, `--failures-only` filters either reporter to `FAIL`/`BLOCKED`; text writes nothing when no failures remain, while JSON writes `[]`. Both execution commands exit `1` for any `FAIL`/`BLOCKED`, otherwise `0`; invalid usage exits `2`. Named verification shares its runner with `/verifier verify`. The generated prompt uses the installed CLI's absolute path rather than requiring the executable on `PATH`.
+
+The advisor runs, for example:
+
+```text
+omp-verifier automatic api/tests/downloads.test.ts --reporter text --failures-only
+```
+
+Its blocker note contains the reporter output, without JSON or a code fence:
+
+```text
+FAIL marlens-rules:test-alignment
+  1 test-alignment violation found.
+  Evidence: api/tests/downloads.test.ts:169: missing ordered Arrange, Act, Assert comments.
+  Next check: Add ordered comments to the test.
+```
+
+Evidence and next-check text come from the check, not a model rewrite. Multiline fields retain line breaks and indentation. Selection metadata remains available through JSON.
 
 ## Verification manifests
 
@@ -148,7 +165,7 @@ For advisor-correction releases, QA with a temporary deterministic failing manif
 
 1. Check `/advisor status`; the `verifier` advisor must be enabled with a resolved model. `[no model]` blocks correction claims.
 2. Trigger a changed path and run the coordinator from the packed or remotely installed artifact. Observe structured `FAIL` or `BLOCKED` JSON and exit `1`.
-3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">`; parse its note as a JSON array and compare its FAIL/BLOCKED objects with the actual coordinator output. No successful rows, invented fields, or extra commentary may appear.
+3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">`; compare its note with the coordinator's `--reporter text --failures-only` output. Status, check ID, summary, evidence, and next check must be preserved, with no JSON, successful rows, selection metadata, or extra commentary.
 4. Verify the primary agent resumes or is steered, applies remediation, and the next coordinator run returns `PASS` or no applicable results.
 5. Verify `PASS`, `SUPPRESSED`, and no results inject no advice.
 6. If remediation remains incomplete, wait through `advisor.immuneTurns` and verify the repeated failure eventually re-enters the correction loop.
