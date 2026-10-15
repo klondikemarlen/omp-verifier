@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2 - 2026-10-15
+
+- Treat completed empty failure-only output, including `(no output)`, as the silent branch rather than an unreadable check result.
+- Require an observed execution diagnostic before synthesizing a verifier-execution blocker; missing rendered exit metadata alone is not a failure.
+- Run an explicit project's supplied check command directly instead of treating its result label as an installed manifest id.
+
 ## 0.9.1 - 2026-10-15
 
 - Require complete observed failure results in advisor guidance; use actual FAIL/BLOCKED classifications instead of a status-format placeholder.
