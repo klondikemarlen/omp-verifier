@@ -127,7 +127,7 @@ await writeVerificationPackage(
 await writeVerificationPackage(
   "publisher-invalid",
   [{ id: "publisher-invalid:check", label: "Invalid check", description: "Invalid output", entry: "./invalid.mjs" }],
-  { "invalid.mjs": 'process.stdout.write("not json");\n' },
+  { "invalid.mjs": 'process.stdout.write("STATUS");\n' },
 );
 await writeVerificationPackage(
   "publisher-timeout",
@@ -214,6 +214,12 @@ assert.equal(manualScopedResults.find(result => result.id === "publisher-scoped:
 
 const failureResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-fail:check"]);
 assert.equal(failureResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
+
+const malformedResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-invalid:check"]);
+assert.deepEqual(
+  malformedResults.map(({ id, status, evidence }) => ({ id, status, evidence })),
+  [{ id: "publisher-invalid:check", status: "BLOCKED", evidence: "STATUS" }],
+);
 
 const automaticResults = await runAutomaticVerification({
   cwd: verificationCwd,
