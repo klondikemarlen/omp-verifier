@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1 - 2026-10-15
+
+- Require complete observed failure results in advisor guidance; use actual FAIL/BLOCKED classifications instead of a status-format placeholder.
+- Distinguish inapplicable automatic verification from blocked execution so missing changed paths and skipped checks do not become invented blockers.
+- Preserve bounded malformed-check output as evidence and supply a next check in the coordinator's BLOCKED result. Advisor output admission remains model-mediated.
+
 ## 0.9.0 - 2026-10-14
 
 - Add a shared human-readable text reporter for CLI and slash-command results, preserving multiline evidence and next checks without dumping path-selection metadata.
