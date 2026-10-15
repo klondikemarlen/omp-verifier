@@ -325,7 +325,10 @@ function resultFromOutput(check, output) {
   try {
     result = JSON.parse(output);
   } catch {
-    return blocked(check.id, "Verification did not return one JSON result");
+    return {
+      ...blocked(check.id, "Verification did not return one JSON result", output.slice(0, MAX_FIELD_LENGTH) || "Check stdout was empty."),
+      nextCheck: `Fix ${check.id} to write one JSON object with status and summary, then rerun that check.`,
+    };
   }
 
   try {
