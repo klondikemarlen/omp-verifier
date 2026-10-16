@@ -30,12 +30,13 @@ function completeSubcommands(argumentPrefix) {
     .map(command => ({ value: `${command.name} `, label: command.name, description: command.description }));
 }
 
-export default function verifierPlugin(pi) {
+export default async function verifierPlugin(pi) {
   pi.setLabel("Verifier");
+  await installGlobalVerifier({ agentDir: pi.pi.getAgentDir() });
 
   pi.on("session_start", async (_event, ctx) => {
     try {
-      await installGlobalVerifier(ctx);
+      await installGlobalVerifier({ agentDir: ctx.agentDir || pi.pi.getAgentDir() });
     } catch (error) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
     }
@@ -47,18 +48,25 @@ export default function verifierPlugin(pi) {
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const cwd = ctx.cwd || process.cwd();
+
       if (action === "status" && rest.length === 0) {
-        return ctx.ui.notify(await buildGlobalVerifierStatus(cwd, ctx), "info");
+        const agentDir = ctx.agentDir || pi.pi.getAgentDir();
+        return ctx.ui.notify(await buildGlobalVerifierStatus(cwd, { agentDir }), "info");
       }
+
       if (action === "uninstall" && rest.length === 0) {
-        return ctx.ui.notify(`Verifier cleanup: ${(await uninstallGlobalVerifier(ctx)).join("; ")}`, "info");
+        const agentDir = ctx.agentDir || pi.pi.getAgentDir();
+        return ctx.ui.notify(`Verifier cleanup: ${(await uninstallGlobalVerifier({ agentDir })).join("; ")}`, "info");
       }
+
       if (action === "checks" && rest.length === 0) {
         return ctx.ui.notify(await buildChecks(ctx.verificationPackageDirectory), "info");
       }
+
       if (action === "verify") {
         return ctx.ui.notify(await buildVerification(cwd, rest, ctx.verificationPackageDirectory), "info");
       }
+
       return ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
     },
   });

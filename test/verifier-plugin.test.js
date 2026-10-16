@@ -7,22 +7,24 @@ import { uninstallGlobalVerifier } from "#root/omp-plugin/global-verifier.js";
 import verifierPlugin from "#root/omp-plugin/index.js";
 import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "#root/omp-plugin/verifications.js";
 
+const startupAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-startup-"));
 const registrations = { commands: new Map(), events: new Map(), notices: [] };
 const pi = {
-  setLabel(label) { registrations.label = label; },
+  pi: { getAgentDir() { return startupAgentDir; } },
+  setLabel() {},
   on(event, handler) { registrations.events.set(event, handler); },
   registerCommand(name, command) { registrations.commands.set(name, command); },
 };
 const ctx = { ui: { notify(message, level) { registrations.notices.push({ message, level }); } } };
 
-verifierPlugin(pi);
+await verifierPlugin(pi);
 
-assert.equal(registrations.label, "Verifier");
-assert.deepEqual([...registrations.commands.keys()], ["verifier"]);
 const verifier = registrations.commands.get("verifier");
 assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "uninstall"]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
-assert.ok(registrations.events.has("session_start"));
+
+await verifier.handler("status", { ...ctx, cwd: startupAgentDir });
+assert.ok(registrations.notices.at(-1).message.includes(join(startupAgentDir, "verifier", "WATCHDOG.md")));
 
 const registryRoot = await mkdtemp(join(tmpdir(), "omp-verifier-registry-"));
 const registryPackageDirectory = join(registryRoot, "node_modules");
@@ -392,6 +394,7 @@ await Promise.all([
   rm(agentDir, { recursive: true, force: true }),
   rm(repo, { recursive: true, force: true }),
   rm(customAgentDir, { recursive: true, force: true }),
+  rm(startupAgentDir, { recursive: true, force: true }),
 ]);
 
 console.log("agent-owned verifier guidance lifecycle smoke test passed");

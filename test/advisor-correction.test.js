@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-test("when the install path contains shell syntax, generated guidance runs the literal coordinator after refresh", async () => {
+test("when startup finds stale guidance in a shell-sensitive install, first-session checks use the installed coordinator", async () => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-advisor-spec-"));
   const agentDir = join(root, "agent");
@@ -14,13 +14,22 @@ test("when the install path contains shell syntax, generated guidance runs the l
   const projectDir = join(root, "project");
   const checkPath = join(packageDir, "fail.mjs");
   const installedPackage = join(root, "verifier 'quoted' \"double\" $VERIFIER_PATH $(printf expanded) $& $$ $'replacement'");
+  const guidancePath = join(agentDir, "verifier", "WATCHDOG.md");
+  const previousCliPath = join(root, "previous-coordinator.mjs");
 
   try {
     for (const entry of ["package.json", "WATCHDOG.md", "bin", "omp-plugin"]) {
       await cp(new URL(`../${entry}`, import.meta.url), join(installedPackage, entry), { recursive: true });
     }
 
-    const { installGlobalVerifier } = await import(pathToFileURL(join(installedPackage, "omp-plugin", "global-verifier.js")));
+    const { default: verifierPlugin } = await import(pathToFileURL(join(installedPackage, "omp-plugin", "index.js")));
+    const pi = {
+      pi: { getAgentDir() { return agentDir; } },
+      setLabel() {},
+      on() {},
+      registerCommand() {},
+    };
+
     await mkdir(join(projectDir, "src"), { recursive: true });
     await mkdir(packageDir, { recursive: true });
     await writeFile(join(projectDir, "src", "changed.js"), "BROKEN\n");
@@ -51,12 +60,13 @@ process.stdout.write(JSON.stringify(failed
 process.exitCode = failed ? 1 : 0;
 `);
     execFileSync("git", ["init", "--quiet"], { cwd: projectDir });
+    await mkdir(join(agentDir, "verifier"), { recursive: true });
+    await writeFile(previousCliPath, "process.stdout.write('');\n");
+    await writeFile(guidancePath, `Run \`node '${previousCliPath}' automatic <changed-path...> --reporter text --failures-only\`.\n`);
 
     // Act
-    await installGlobalVerifier({ agentDir });
-    await writeFile(join(agentDir, "verifier", "WATCHDOG.md"), "replaced generated guidance\n");
-    await installGlobalVerifier({ agentDir });
-    const guidance = await readFile(join(agentDir, "verifier", "WATCHDOG.md"), "utf8");
+    await verifierPlugin(pi);
+    const guidance = await readFile(guidancePath, "utf8");
     const [, command, options] = guidance.match(/`(node .+? automatic )<changed-path\.\.\.>(.*?)`/);
     const runGeneratedCommand = () => {
       const result = spawnSync("/bin/sh", ["-c", `${command}src/changed.js${options}`], {
