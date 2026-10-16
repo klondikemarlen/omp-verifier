@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.1 - 2026-10-16
+
+- Label captured project source with original one-based line numbers so semantic citations do not require counting JSON array entries.
+- Preserve strict request and citation validation; clarify correction of rejected assessment input from current review evidence before declaring a check unavailable.
+
 ## 0.10.0 - 2026-10-16
 
 - Consume explicit `mode: agentic` standards contracts alongside existing deterministic verification entries, using the existing verifier model rather than a second review lane or metric proxy.

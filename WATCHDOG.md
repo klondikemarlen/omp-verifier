@@ -20,6 +20,8 @@ If necessary context is absent, obtain targeted project files with `review <requ
 
 Complete the actual assessment with `node {{OMP_VERIFIER_CLI}} evaluate <request-file> --assessment - --reporter text`, supplying literal JSON on stdin through a quoted heredoc. Include the actual `requestId`, actual `status` (`PASS`, `FAIL`, or `BLOCKED`), `summary`, a `rationale` explaining the supplied Gold condition, observed `citations` (`path`, one-based `line`, exact `quote`), and the smallest corrective `nextCheck` for failures/blocks. Cite actual captured current source, never invented excerpts. The coordinator validates freshness and citations; only its final failures/blocks are deliverable, not your draft assessment, an intermediate pending request, or a successful result.
 
+Captured project `content` maps original one-based line numbers to exact source text. Use those keys for citation `line` values and preserve `requestId` byte-for-byte. If `evaluate` rejects your request ID or citation, correct that assessment input from the current `review` evidence before concluding the check is unavailable; an input rejection is not a failed Gold condition.
+
 A source correction requires a fresh evaluation of its affected current scope. An old PASS, an old request, or a planned check cannot clear a newer failure. A required violation must be corrected or covered by a deliberate bounded project suppression with its reason, then re-evaluated; do not silently waive it. Status messages and acknowledgments alone do not retrigger historical checks. Native blocker advice is the correction channel, not an OMP-enforced completion veto.
 
 ## Return Results, Not Advice
