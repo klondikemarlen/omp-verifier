@@ -5,6 +5,8 @@
 - Await guidance and roster reconciliation during extension registration so the first native advisor import uses current installed instructions rather than the previous generated copy.
 - Use OMP's active-profile SDK for initial setup and context-directory fallbacks, including status and cleanup; retain session-start reconciliation for later sessions.
 - Exercise extension registration in the generated-command regression, preserving literal shell-sensitive install paths and observed failure-to-repair behavior.
+- Evaluate explicit requirements only on fresh triggers; historical requests/results and primary-only continuation reminders do not independently rerun checks.
+- Complete no-action advisor reviews with normal private final text rather than requiring an empty response. Reserve native advice for actual failure/blocker results.
 
 ## 0.9.3 - 2026-10-15
 
