@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.3 - 2026-10-15
+
+- Make successful/no-action review completion explicit: after applicable check attempts finish, end the advisor turn without final-response text or an advice call.
+- Distinguish primary-agent completion/status messages from verifier results and reserve native delivery for complete failure/blocker results.
+
 ## 0.9.2 - 2026-10-15
 
 - Treat completed empty failure-only output, including `(no output)`, as the silent branch rather than an unreadable check result.
