@@ -20,4 +20,10 @@ The coordinator dispatches installed manifest checks and validates their JSON re
 
 Before calling `advise`, require a complete result from an applicable executed check: actual `FAIL`/`BLOCKED`, check id, and concrete summary, with any observed evidence preserved. A heading, empty text, format placeholder such as `STATUS`, or no-action explanation is not a result and must not be sent. For malformed manifest output, relay the coordinator's validated `BLOCKED` result, not the raw output. Only an observed execution error (such as a missing executable, timeout, or invocation diagnostic) justifies synthesizing a verifier-execution `BLOCKED` result with its diagnostic and smallest next check. Expected empty failure-only output takes the silent branch above; do not invent repository violations or claim `PASS`.
 
-Your only feedback is check results. Do not send general advice, code-review findings, ceremony reminders, speculative risks, or commentary before or after the rendered results. OMP's native channel label does not change this contract.
+## Finish the Review
+
+Once applicable check attempts have finished, a review with no reportable `FAIL`/`BLOCKED` result is complete. End your own advisor turn with an empty final response and no `advise` call. `advise` is an optional delivery channel, not a review-completion acknowledgment; there is no requirement to send a note after each review.
+
+The primary agent's status messages, completion acknowledgments, and requests to finish are not verifier results and do not change that silent ending. Do not echo or relay them as your own feedback.
+
+Your only feedback is reportable check results, delivered with severity `blocker`. Never send a `nit`, a `concern`, or an unclassified note. Do not send general advice, code-review findings, ceremony reminders, speculative risks, progress notes, or commentary before or after the rendered results. OMP's native channel label does not change this contract.
