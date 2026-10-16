@@ -2,7 +2,7 @@
 
 ## Product Shape
 
-OMP Verifier uses a second advisor as the model-driven selector/executor of programmatic checks, not as another general reviewer or a replacement for OMP's default advisor.
+OMP Verifier uses a second advisor as the model-driven selector/executor of declared checks and evaluator of explicit supplied standards contracts. It is not another general reviewer or a replacement for OMP's default advisor.
 
 ```mermaid
 sequenceDiagram
@@ -12,7 +12,11 @@ sequenceDiagram
 
   Main-->>Verifier: completed changed turn
   Verifier->>CLI: run packaged coordinator
-  CLI-->>Verifier: structured results
+  CLI-->>Verifier: structured results or semantic request
+  opt supported agentic contract
+    Verifier->>CLI: inspect captured evidence; complete assessment
+    CLI-->>Verifier: validated final result
+  end
   alt FAIL or BLOCKED
     Verifier-->>Main: relay failure-only text via blocker transport
     Main-->>Verifier: remediated turn
@@ -69,7 +73,7 @@ The 0.8.19 result-only candidate passed targeted native OMP 18.10.3 QA with the 
 
 ## Verification Capability Direction
 
-Installed OMP plugins opt into deterministic verification through package metadata. The package-local coordinator handles discovery, selection, and execution; the verifier model chooses applicable inputs and returns the resulting evidence through native transport. It does not own a second general review lane or configure model routes. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; verification declarations live under `omp.verifications`.
+Installed OMP plugins opt into verification through package metadata. The package-local coordinator handles discovery, selection, trusted executable checks, and semantic-request validation; the existing verifier model evaluates only explicitly supplied agentic contracts and returns final evidence through native transport. It does not own a second general review lane or configure model routes. Packages are eligible when they expose either `omp.extensions` or `pi.extensions`; declarations live under `omp.verifications`.
 
 ## Manifest Contract
 
@@ -90,7 +94,7 @@ An installed plugin package may declare:
 }
 ```
 
-Each verification entry is a package-relative `.mjs` module. The verifier executes it with the active project as its working directory and expects one JSON result:
+An entry without `mode` is a package-relative `.mjs` module. The verifier executes it with the active project as its working directory and expects one JSON result:
 
 ```json
 {
@@ -117,45 +121,87 @@ With no compatible manifests installed, `/verifier checks` reports `none install
 
 The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. By default, `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. Both commands also support `--reporter text`. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
 
+## Agentic Standards Contract
+
+An entry may instead declare `mode: "agentic"` and a package-relative JSON `contract`, with no dummy executable. The [README declaration](../../README.md#supplied-standards-verification) shows the manifest shape. Contract version 1 requires:
+
+```json
+{
+  "version": 1,
+  "standardId": "publisher:check-id",
+  "source": "./docs/standard.md#boundary",
+  "gold": "Each changed boundary owns a meaningful invariant or independently changing responsibility.",
+  "requiredContext": ["changed-code", "callers", "siblings", "project-guidance"],
+  "rubric": [{
+    "id": "boundary-ownership",
+    "question": "Which current source demonstrates the boundary's meaningful ownership?"
+  }]
+}
+```
+
+`standardId` must match the manifest ID. `source` identifies a maintained file and optional Markdown heading fragment inside the installed package. Contract and source paths are checked after realpath resolution; unsupported modes, versions, context types, missing sources, or invalid fragments are BLOCKED with the actual check ID. The provider owns policy and its Gold/rubric; the runtime does not derive semantic policy from arbitrary prose or metrics.
+
+The protocol uses the same coordinator and named verifier advisor:
+
+1. `automatic` or `verify` prepares a fresh request and returns `BLOCKED` with `reviewRequest`. This means assessment is pending, not that the source violated the standard. The advisor must finish supported requests before delivering a final blocker.
+2. `review <request-file>` returns current captured evidence, scope, provider source, Gold, and rubric. Its JSON is pretty-printed, with source `text` and project-record `content` represented as arrays of original lines for tool inspection. `review ... --context <project-relative-path>` captures targeted additional files and supersedes the earlier request ID.
+3. The existing model assesses the supplied rubric using actual changed code and relevant project context. Project-local architecture takes precedence. A small meaningful invariant may pass; a trivial extraction is not justified by naming or file size alone.
+4. `evaluate <request-file> --assessment -` reads an assessment from stdin. It requires the actual current `requestId`, `status` (`PASS`, `FAIL`, or `BLOCKED`), non-empty `summary` and `rationale`, and `citations` containing project-relative `path`, original one-based `line`, and exact source `quote`. PASS/FAIL require a matching citation in the changed scope; BLOCKED may explain unavailable evidence without a source citation. Supply the smallest corrective `nextCheck` for failures or blocks.
+5. The runtime checks the current request, provider/standard hashes, project context, and citations, then consumes the request. Final results preserve the standard ID/source and Gold. Only final FAIL/BLOCKED results are delivered through native blocker transport; PASS stays private. Correct the source or apply an allowed bounded reasoned exception, then prepare a fresh evaluation. A planned check, consumed request, superseded assessment, or earlier PASS cannot clear a later change.
+
+Capture includes current changed source, caller/sibling evidence, recognized project guidance including README files, and a bounded source inventory. Confirmed deletions retain their prior captured or Git source, including a previously observed untracked helper removed during correction. Missing required guidance or source prevents PASS. Retrieval limits are operational bounds, not semantic failure criteria: up to 1,200 inventory files, 8 MB of inventory reads, 40 evidence records/128 KB of evidence, and 16 KB per changed or explicitly requested file. Use targeted context where it can establish missing evidence; otherwise report BLOCKED rather than guessing.
+
+Requests are private, atomically written, per-project operational cache, not a knowledge store or reusable PASS cache. Per-check locks serialize overlapping preparation/completion. A busy or abandoned lock is BLOCKED; it is not automatically stolen. Only remove a reported abandoned lock after confirming the owner PID recorded in it has exited.
+
+## Completion Boundary
+
+This integration requires evidence-backed correction through the existing advisor path; it does not implement an atomic completion gate. The plugin does not register a `session_stop` veto or bind main-session settlement to completion of the named verifier's current assessment.
+
+OMP does expose a native [`session_stop` decision](https://github.com/can1357/oh-my-pi/blob/v18.11.1/packages/coding-agent/src/session/agent-session.ts#L5148-L5184): ordinary continuation is capped, while an explicit `decision: "block"` is exempt from that cap. The missing integration is not a claim that OMP has no veto primitive. A genuine hard gate also needs reliable current-turn advisor completion/outcome and an actual stop decision that waits for that evidence. [OMP #15422](https://github.com/can1357/oh-my-pi/issues/15422) tracks the extension-observable advisor-finished/outcome handoff.
+
+OMP 18.11.1 deliberately [captures advisor-triggered repair continuations without scheduling another review](https://github.com/can1357/oh-my-pi/blob/v18.11.1/packages/coding-agent/src/session/session-advisors.ts#L573-L582) to prevent advisor→primary→advisor cascades. A fresh independently triggered run, such as an explicit scoped recheck request, is needed to schedule the next peer assessment. Waiting alone cannot turn that repair into a verified PASS. Recheck the actual corrected scope, including a newly created helper that was removed; do not substitute unrelated working-tree paths or claim alignment before the fresh result.
+
+Native blocker delivery followed by primary correction and a fresh PASS proves the exercised correction cycle, not that every unverified primary completion is prevented. Advisor scheduling, model availability, and settlement remain OMP-owned. This release adds neither a second stop loop nor a custom model runner.
+
 ## Discovery and Execution Inputs
 
 The plugin's command adapter takes the active project directory and OMP's verification-package directory from the session context. The coordinator derives its default installed-package directory from the installed Verifier package or `PI_CODING_AGENT_DIR`.
 
 Discovery prefers the plugin manager registry at the parent `package.json` when it is named `omp-plugins` and has an object-valued `dependencies` field; otherwise it scans direct and scoped package directories. A candidate must expose an `omp.extensions` or `pi.extensions` entry and declare `omp.verifications`. Verifier does not scan remote repositories, project source trees, arbitrary `verify-*` scripts, or undeclared package entries.
 
-Each manifest entry has a namespaced lowercase `id`, `label`, `description`, package-relative `.mjs` `entry`, and optional non-empty `pathTriggers` and bounded `timeoutMs` (30 seconds by default, at most 120 seconds). The entry must remain inside its package, including after resolving symlinks. The runner executes the trusted installed entry with `node`, no shell, and the active project as its working directory.
+Each manifest entry has a namespaced lowercase `id`, `label`, `description`, and optional non-empty `pathTriggers`. Executable entries have a package-relative `.mjs` `entry` and optional bounded `timeoutMs` (30 seconds by default, at most 120 seconds); the runner invokes trusted installed code with `node` and no shell. Agentic entries have explicit `mode` and `contract` instead. Declared assets must remain inside their package after resolving symlinks.
 
 Selection differs by interface:
 
 - `/verifier checks` lists valid installed checks and any manifest discovery blocks.
 - `/verifier verify` runs every discovered check; `/verifier verify <id...>` runs only those exact IDs. `pathTriggers` do not restrict explicit runs. With no checks installed, `verify` reports `BLOCKED`.
-- The automatic coordinator receives only the paths changed by the current agent turn, as project-relative arguments. It runs only checks with a matching `pathTriggers` pattern and records each selected changed path plus its matched trigger. Checks without triggers are manual-only. `automatic --worktree` is a separate explicit mode that derives all current Git-worktree changes.
+- The automatic coordinator receives only paths changed by the current completed run, as project-relative arguments. Matching manifest `pathTriggers` or bounded project `requirements` select installed checks and record each selected path and trigger. Checks selected by neither remain manual-only. `automatic --worktree` is a separate explicit mode that derives all current Git-worktree changes.
 
-Automatic entries receive their matching paths as the `OMP_VERIFIER_CHANGED_PATHS` JSON-array environment variable. The runner removes any inherited value first; manual checks do not receive the variable. Other environment variables are inherited. The coordinator applies bounded suppressions from `.omp-verifier.json` at the repository root or an affected path's ancestor. A suppression names an installed check, a path relative to its config file, and a reason; an optional `expires` date must be valid and not expired. Invalid or expired suppressions and references to unknown check IDs produce `BLOCKED`, not silent suppression.
+Automatic executable entries receive matching paths as the `OMP_VERIFIER_CHANGED_PATHS` JSON-array environment variable. The runner removes any inherited value first; manual executable checks do not receive it. Other environment variables are inherited. Agentic entries capture matching current source instead. The coordinator applies `.omp-verifier.json` from the repository root and affected ancestors: bounded `requirements` select named checks and make missing providers observable, while bounded `suppressions` preserve an explicit reason and optional valid expiry. A suppression may name an installed check or an explicitly required absent provider. Invalid/expired configuration and other unknown IDs produce BLOCKED; an exception is SUPPRESSED, never PASS.
 
 ## Result and Evidence Semantics
 
 An entry writes one JSON object to stdout with a required `status` (`PASS`, `FAIL`, or `BLOCKED`) and non-empty `summary`; `evidence` and `nextCheck` are optional. The runner bounds output and text fields, validates the shape, and enforces the manifest timeout. Malformed output, stderr, timeout, missing entry, invalid manifest, or other unsuccessful execution cannot become `PASS`. A structured `FAIL` is retained when the result is valid and stderr is empty, including on a non-zero process exit; other non-zero exits are `BLOCKED`.
 
-Each result is normalized with an `id`, `status`, and `summary`, plus optional `evidence` and `nextCheck`; automatic selected or suppressed results include `matches` objects carrying changed `path` and matched `trigger` fields.
+Each result has an `id`, `status`, and `summary`, plus optional `evidence` and `nextCheck`; automatic selected or suppressed results include `matches` carrying changed `path` and matched `trigger`. Completed semantic results also carry `standard` (ID/source/Gold) and `evaluation` (mode/request ID). Pending semantic results carry `reviewRequest` instead.
 
 | Outcome | Meaning and Verifier behavior |
 | --- | --- |
-| `PASS` | The declared check reported its Gold condition met. Verifier validates and relays that result; it does not independently prove the condition or certify overall code quality. |
+| `PASS` | The executable reported its Gold condition met, or a current semantic assessment was admitted against validated evidence. This is not independent proof of overall code quality. |
 | `FAIL` | The declared check reported a violation. The verifier relays the text reporter's actual failing result through native `blocker` transport. |
 | `BLOCKED` | The check could not establish PASS/FAIL, or discovery/execution/result validation failed. The verifier relays the text reporter's available result, without inventing evidence or remediation. |
 | `SUPPRESSED` | Verifier matched a valid bounded suppression and did not run the check for that path. This is not a PASS; automatic guidance stays silent. |
 | No result | No automatic check applied (or there were no changed paths). This is not a PASS; automatic guidance stays silent. |
 
-Automatic and manual CLI execution defaults to a JSON result array; `--reporter json` is explicit, and `--reporter text` renders readable results. `--failures-only` filters execution output to `FAIL`/`BLOCKED`, producing empty text or JSON `[]` when none remain. Text omits `matches` selection metadata, preserves multiline evidence, and shares its formatter with slash commands. Execution exits `1` if any result is `FAIL` or `BLOCKED`, otherwise `0`; invalid CLI usage exits `2`. Discovery defaults to a JSON inventory, supports the text reporter, and exits `1` for discovery blocks, otherwise `0`.
+Automatic and manual CLI execution defaults to a JSON result array; `--reporter json` is explicit, and `--reporter text` renders readable results. `--failures-only` filters execution output to FAIL/BLOCKED, producing empty text or JSON `[]` when none remain. Text omits selection metadata, preserves existing multiline structure, wraps long prose at word boundaries, and shares its formatter with slash commands. Execution exits `1` for any FAIL/BLOCKED, otherwise `0`; invalid usage exits `2`. Discovery defaults to a JSON inventory and exits `1` for discovery blocks, otherwise `0`. `review` exposes the current pending request in inspection-oriented JSON; `evaluate` uses the normal result reporters.
 
 **Interpretation limit:** PASS from a narrow manifest check proves only that the check entry returned a valid PASS result for its declared contract. It is not a code-quality certification, an approval of unrelated behavior, or proof that generic review concerns were checked.
 
 ## Ownership Boundaries
 
-- **OMP Verifier** owns the adapter and runtime contract: its marked advisor setup/cleanup, commands, manifest discovery and validation, path-trigger selection, bounded suppression, trusted entry execution, evidence normalization, and model check-selection/result-relay guidance.
-- **A policy/check-owning package** owns the check's Gold condition and implementation. [Marlens Skills, Rules, and Tools (MSSRT)](https://github.com/klondikemarlen/marlens-skills-rules-and-tools) owns reusable Marlen coding guidance and its generic deterministic checks; an installed manifest opts a specific package-owned `.mjs` check into Verifier. Verifier does not invent generic policy or infer checks from prose, filenames, or tool names.
-- **A project** owns its explicit local verifier requirement in project `WATCHDOG.yml` and any project-specific check package. Requirements name a trigger, Gold condition, narrow check, and PASS evidence.
+- **OMP Verifier** owns its marked advisor setup/cleanup, commands, manifest discovery, path selection, bounded exceptions, trusted executable invocation, current semantic evidence/request validation, result reporting, and the existing model's contract-assessment guidance.
+- **A policy/check-owning package** owns the standard, Gold, applicability, and executable implementation or semantic rubric. [Marlens Skills, Rules, and Tools (MSSRT)](https://github.com/klondikemarlen/marlens-skills-rules-and-tools) supplies reusable Marlen coding guidance and declared checks/contracts. Verifier does not invent policy or infer checks from prose, filenames, or tool names.
+- **A project** owns explicit command requirements in project `WATCHDOG.yml`, bounded ID/path `requirements` and reasoned exceptions in `.omp-verifier.json`, and any project-specific check package. A supplied command names its trigger, Gold condition, narrow check, and PASS evidence.
 - **OMP's default advisor** retains generic code quality, robustness, strategy, scope, style, and workflow review. Verifier's model runs applicable checks and returns their evidence, not general advice.
 - **OMP advisor runtime and configuration** own model resolution, scheduling, and actual advisor interaction with the primary agent. Verifier does not choose or rewrite model/provider routes; live correction claims require the verifier model to resolve and an observed blocker/remediation cycle.
 - **OMP Learner** (the [OMP Learner repository](https://github.com/klondikemarlen/omp-learner)) owns high-confidence feedback classification and the human-reviewed proposal route for accepted lessons. Learning an observation does not silently create or activate verifier policy.
@@ -172,8 +218,10 @@ The collaboration path is therefore: OMP Learner may surface a reviewable lesson
 | Packaged coordinator discovery, named execution, automatic arguments, JSON output, and process exit status | [`bin/omp-verifier.js`](../../bin/omp-verifier.js) | [`test/verifications-runtime.test.js`](../../test/verifications-runtime.test.js) exercises empty output, current-turn versus stale paths, and Node execution; [`test/verification-cli.test.js`](../../test/verification-cli.test.js) covers selected-check isolation and unavailable named checks. |
 | Human-readable status, evidence, next check, and inventory reporting | [`omp-plugin/reporters.js`](../../omp-plugin/reporters.js) | [`test/reporters.test.js`](../../test/reporters.test.js) and [`test/reporter-cli.test.js`](../../test/reporter-cli.test.js) cover multiline evidence, mixed-result filtering, JSON metadata, successful silence, unavailable checks, and invalid reporter selection. |
 | Current-turn model input, check-result-only output, and first-session generated command | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) registers the extension before any session-start event, then executes current generated guidance through a real shell under a shell-sensitive path and observes readable FAIL then silent PASS. Live QA must additionally inspect first-import guidance identity and named-advisor execution/delivery; source-text assertions cannot prove this policy. |
+| Supplied semantic contract/source validation and current evidence capture | [`omp-plugin/semantic-contracts.js`](../../omp-plugin/semantic-contracts.js), [`omp-plugin/semantic-context.js`](../../omp-plugin/semantic-context.js) | [`test/semantic-evaluations.test.js`](../../test/semantic-evaluations.test.js) covers unavailable guidance/context, README and source changes, exact citations, and deleted untracked source. |
+| Private request identity, freshness, consumption, overlap, and required-provider handling | [`omp-plugin/semantic-evaluations.js`](../../omp-plugin/semantic-evaluations.js), [`omp-plugin/verifications.js`](../../omp-plugin/verifications.js) | The semantic regression suite covers tampering, replay, supersession, overlapping requests, missing providers, and bounded exceptions. Native QA separately proves actual model judgment and primary correction. |
 
-These tests prove only the cases they exercise. The advisor-correction test does not run a live OMP advisor, prove model resolution, or observe primary-agent remediation. The release smoke in the [README](../../README.md#L137) requires those live observations before claiming correction behavior; `/advisor status` is the runtime-state authority.
+These tests prove only the cases they exercise. The advisor-correction test does not run a live OMP advisor, prove model resolution, or observe primary-agent remediation. The release smoke in the [README](../../README.md#development-and-release) requires those live observations before claiming correction behavior; `/advisor status` is the runtime-state authority. A settled RPC response alone does not establish that a named advisor completed its review; inspect its completed transcript and delivered primary result.
 
 The implementation is the authority for current behavior, tests are evidence for their explicit scenarios, and project docs describe intended contracts. A passing test suite is not proof of uncovered behavior.
 
@@ -185,17 +233,18 @@ The [OMP Learner project](https://github.com/klondikemarlen/omp-learner) capture
 user correction or repeated feedback
   -> learner memory and/or reviewable ticket
   -> accepted shared rule or project rule
-  -> explicit deterministic manifest or agentic verifier guidance
+  -> explicit deterministic manifest or versioned agentic standards contract
   -> verifier evidence
 ```
 
-Deterministic checks belong in manifests when a rule has a bounded, reproducible signal. Subjective readability, architecture, and concept review remain with the default advisor or their guidance owner; they do not become verifier failures without an explicit Gold condition and executed narrow check.
+Deterministic checks belong in manifests when a rule has a bounded, reproducible signal. Qualitative standards remain with their guidance owner unless accepted as an explicit agentic contract with Gold, required context, and a rubric. A Learner guidance-coverage note proves neither that such a check exists nor that current code was evaluated; accepting a missing-verification proposal does not require adding another copy of the rule.
 
 ## Related Feature Tickets
 
 - [OMP Verifier #82](https://github.com/klondikemarlen/omp-verifier/issues/82) — consume installed plugin verification manifests.
 - [MSSRT #227](https://github.com/klondikemarlen/marlens-skills-rules-and-tools/issues/227) — expose reusable Marlen-specific checks.
 - [OMP Learner #99](https://github.com/klondikemarlen/omp-learner/issues/99) — promote accepted lessons into reviewable verifier-check proposals.
+- [OMP Verifier #130](https://github.com/klondikemarlen/omp-verifier/issues/130) and [MSSRT #513](https://github.com/klondikemarlen/marlens-skills-rules-and-tools/issues/513) — supplied semantic standards, current evidence, and correction/re-verification.
 
 ## Release
 
