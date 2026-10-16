@@ -22,7 +22,10 @@ function writeResults(results, { reporter, failuresOnly }) {
     output = formatVerificationResults(reported);
   } else if (command === "review") {
     output = JSON.stringify(reported, (key, value) => {
-      if ((key === "text" || key === "content") && typeof value === "string") {
+      if (key === "content" && typeof value === "string") {
+        return Object.fromEntries(value.split(/\r?\n/).map((line, index) => [index + 1, line]));
+      }
+      if (key === "text" && typeof value === "string") {
         return value.split(/\r?\n/);
       }
       return value;
