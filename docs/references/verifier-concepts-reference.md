@@ -27,7 +27,7 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 
 ## Lifecycle
 
-- Loading the plugin refreshes the agent-owned guidance file and reconciles the user roster to `default`, then marked `verifier`.
+- Extension registration awaits guidance and roster reconciliation through OMP's active-profile SDK before native advisors import the generated file. Session starts also reconcile the active context; independent advisors remain untouched.
 - After a changed turn, the verifier advisor invokes the packaged automatic coordinator. The plugin has no `agent_end` notification runner.
 - `/verifier status` reports global and project roster entries plus the guidance-file path.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
@@ -164,12 +164,12 @@ The collaboration path is therefore: OMP Learner may surface a reviewable lesson
 
 | Contract | Implementation source | Focused evidence |
 | --- | --- | --- |
-| Advisor command registration, completion, human-readable command output, and session setup entry | [`omp-plugin/index.js`](../../omp-plugin/index.js#L55) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L18) covers registered commands, completion, handlers, and setup. |
+| Advisor command registration, completion, human-readable command output, and pre-import/session setup | [`omp-plugin/index.js`](../../omp-plugin/index.js#L33) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L20) covers completion, handlers, and setup. |
 | Marked global roster block and generated guidance lifecycle | [`omp-plugin/global-verifier.js`](../../omp-plugin/global-verifier.js#L149) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L300) covers setup, preserving independent advisors, status, cleanup, and customized guidance. |
 | Registry/fallback discovery, manifest validation, execution and result normalization, path triggers, and suppressions | [`omp-plugin/verifications.js`](../../omp-plugin/verifications.js#L161) | [`test/verifier-plugin.test.js`](../../test/verifier-plugin.test.js#L27) exercises declared-registry discovery, malformed/duplicate/unsafe manifests and results, path selection, suppressions, and slash-command output. |
 | Packaged coordinator discovery, named execution, automatic arguments, JSON output, and process exit status | [`bin/omp-verifier.js`](../../bin/omp-verifier.js) | [`test/verifications-runtime.test.js`](../../test/verifications-runtime.test.js) exercises empty output, current-turn versus stale paths, and Node execution; [`test/verification-cli.test.js`](../../test/verification-cli.test.js) covers selected-check isolation and unavailable named checks. |
 | Human-readable status, evidence, next check, and inventory reporting | [`omp-plugin/reporters.js`](../../omp-plugin/reporters.js) | [`test/reporters.test.js`](../../test/reporters.test.js) and [`test/reporter-cli.test.js`](../../test/reporter-cli.test.js) cover multiline evidence, mixed-result filtering, JSON metadata, successful silence, unavailable checks, and invalid reporter selection. |
-| Current-turn model input and check-result-only output policy | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) executes refreshed generated guidance through a real shell under a shell-sensitive path and observes readable FAIL then silent PASS. Live QA must additionally inspect named-advisor execution and delivery; source-text assertions cannot prove this policy. |
+| Current-turn model input, check-result-only output, and first-session generated command | [`WATCHDOG.md`](../../WATCHDOG.md) | [`test/advisor-correction.test.js`](../../test/advisor-correction.test.js) registers the extension before any session-start event, then executes current generated guidance through a real shell under a shell-sensitive path and observes readable FAIL then silent PASS. Live QA must additionally inspect first-import guidance identity and named-advisor execution/delivery; source-text assertions cannot prove this policy. |
 
 These tests prove only the cases they exercise. The advisor-correction test does not run a live OMP advisor, prove model resolution, or observe primary-agent remediation. The release smoke in the [README](../../README.md#L137) requires those live observations before claiming correction behavior; `/advisor status` is the runtime-state authority.
 
