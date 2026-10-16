@@ -4,6 +4,8 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve } from 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
+import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_TIMEOUT_MS = 120_000;
@@ -36,7 +38,7 @@ function validString(value, name, required = true) {
 
 function projectPath(value, name) {
   const path = validString(value, name).replaceAll("\\", "/").replace(/^\.\//, "");
-  if (!path || path === "." || isAbsolute(path) || path.split("/").includes("..")) {
+  if (!path || path === "." || isAbsolute(path) || path.startsWith("//") || /^[a-zA-Z]:/.test(path) || path.split("/").includes("..")) {
     throw new Error(`${name} must be a project-relative path without traversal`);
   }
   return path;
@@ -109,6 +111,17 @@ function manifestSuppression(entry, configDirectory) {
   };
 }
 
+function manifestRequirement(entry, configDirectory) {
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("requirement entry must be an object");
+  const id = validString(entry.id, "requirement id");
+  if (!CHECK_ID.test(id)) throw new Error("requirement id must use namespace:name lowercase identifiers");
+  return {
+    id,
+    path: globPattern(entry.path, "requirement path", { bounded: true }),
+    configDirectory,
+  };
+}
+
 async function discoverSuppressions(root, changedPaths) {
   const directories = new Set([root]);
   for (const changedPath of changedPaths) {
@@ -120,6 +133,7 @@ async function discoverSuppressions(root, changedPaths) {
   }
 
   const suppressions = [];
+  const requirements = [];
   const blockedResults = [];
   for (const directory of [...directories].sort((left, right) => left.length - right.length)) {
     const configPath = join(directory, SUPPRESSION_FILE);
@@ -132,12 +146,18 @@ async function discoverSuppressions(root, changedPaths) {
       continue;
     }
 
-    if (!config || typeof config !== "object" || Array.isArray(config) || !Array.isArray(config.suppressions)) {
-      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification suppression configuration", "suppressions must be an array"));
+    if (!config || typeof config !== "object" || Array.isArray(config)) {
+      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification suppression configuration", "configuration must be an object"));
       continue;
     }
+    if (config.suppressions !== undefined && !Array.isArray(config.suppressions)) {
+      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification suppression configuration", "suppressions must be an array"));
+    }
+    if (config.requirements !== undefined && !Array.isArray(config.requirements)) {
+      blockedResults.push(blocked(suppressionResultId(configPath, root), "Invalid verification requirement configuration", "requirements must be an array"));
+    }
 
-    for (const entry of config.suppressions) {
+    for (const entry of Array.isArray(config.suppressions) ? config.suppressions : []) {
       try {
         suppressions.push(manifestSuppression(entry, directory));
       } catch (error) {
@@ -145,8 +165,16 @@ async function discoverSuppressions(root, changedPaths) {
         blockedResults.push(blocked(id, "Invalid verification suppression configuration", error.message));
       }
     }
+    for (const entry of Array.isArray(config.requirements) ? config.requirements : []) {
+      try {
+        requirements.push(manifestRequirement(entry, directory));
+      } catch (error) {
+        const id = typeof entry?.id === "string" ? entry.id : suppressionResultId(configPath, root);
+        blockedResults.push(blocked(id, "Invalid verification requirement configuration", error.message));
+      }
+    }
   }
-  return { suppressions, blockedResults };
+  return { suppressions, requirements, blockedResults };
 }
 
 function suppressionFor(checkId, root, changedPath, suppressions) {
@@ -211,13 +239,29 @@ async function packageDirectories(packageDirectory) {
   return { directories, errors };
 }
 
-async function manifestCheck(packageName, packagePath, entry) {
+async function manifestCheck(packageName, packagePath, manifestPath, packageVersion, entry) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("verification entry must be an object");
 
   const id = validString(entry.id, "id");
   if (!CHECK_ID.test(id)) throw new Error("id must use namespace:name lowercase identifiers");
   const label = validString(entry.label, "label");
   const description = validString(entry.description, "description");
+  const pathTriggers = verificationPathTriggers(entry);
+
+  if (entry.mode === "agentic") {
+    if (entry.entry !== undefined) throw new Error("agentic checks must not declare a deterministic entry");
+    const contract = await loadSemanticContract({
+      checkId: id,
+      packageName,
+      packageVersion,
+      packagePath,
+      contractReference: validString(entry.contract, "contract"),
+    });
+    return { id, label, description, mode: "agentic", contract, packageName, packagePath, manifestPath, pathTriggers };
+  }
+
+  if (entry.mode !== undefined) throw new Error(`unsupported verification mode: ${String(entry.mode)}`);
+
   const moduleEntry = validString(entry.entry, "entry");
   if (
     !moduleEntry.startsWith("./") ||
@@ -245,7 +289,7 @@ async function manifestCheck(packageName, packagePath, entry) {
     throw new Error(`timeoutMs must be an integer between 1 and ${MAX_TIMEOUT_MS}`);
   }
 
-  return { id, label, description, entryPath, packageName, pathTriggers: verificationPathTriggers(entry), timeoutMs };
+  return { id, label, description, entryPath, packageName, packagePath, manifestPath, pathTriggers, timeoutMs };
 }
 
 export async function discoverVerificationChecks({ packageDirectory = defaultPackageDirectory() } = {}) {
@@ -260,9 +304,10 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
   }
 
   for (const directory of directories) {
+    const manifestPath = join(directory, "package.json");
     let manifest;
     try {
-      manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+      manifest = JSON.parse(await readFile(manifestPath, "utf8"));
     } catch (error) {
       if (error?.code === "ENOENT") continue;
       blockedResults.push(blocked(`manifest:${directory}`, "Could not read plugin manifest", error.message));
@@ -285,7 +330,13 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
     for (const entry of manifest.omp.verifications) {
       let check;
       try {
-        check = await manifestCheck(packageName, directory, entry);
+        check = await manifestCheck(
+          packageName,
+          directory,
+          manifestPath,
+          typeof manifest.version === "string" ? manifest.version : undefined,
+          entry,
+        );
       } catch (error) {
         const id = typeof entry?.id === "string" ? entry.id : `manifest:${packageName}`;
         blockedResults.push(blocked(id, "Invalid plugin verification manifest", error.message));
@@ -348,7 +399,27 @@ function verificationEnvironment(changedPaths) {
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
-export async function runVerificationCheck(check, cwd, changedPaths) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot) {
+  if (check.mode === "agentic") {
+    let scopePaths = changedPaths;
+    let scopeRoot = repositoryRoot;
+    if (!scopePaths) {
+      const changeSet = await changedProjectPaths(cwd);
+      if (changeSet.error) return blocked(check.id, "Could not inspect changed paths", changeSet.error);
+      scopePaths = changeSet.paths;
+      scopeRoot = changeSet.repositoryRoot || repositoryRoot;
+    } else if (scopeRoot === cwd) {
+      const root = await projectRepositoryRoot(cwd);
+      if (!root.error) scopeRoot = root.repositoryRoot;
+    }
+    return prepareSemanticEvaluation({
+      check,
+      cwd,
+      changedPaths: scopePaths,
+      repositoryRoot: scopeRoot,
+    });
+  }
+
   try {
     await access(check.entryPath);
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
@@ -371,6 +442,9 @@ export async function runVerificationCheck(check, cwd, changedPaths) {
   }
 }
 
+export async function runVerificationCheck(check, cwd, changedPaths) {
+  return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd);
+}
 export async function runVerificationChecks(checks, cwd, ids = []) {
   const byId = new Map(checks.map(check => [check.id, check]));
   const requestedIds = [...new Set(ids)];
@@ -409,15 +483,73 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
   }
 
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
-  const { suppressions, blockedResults: suppressionBlocks } = await discoverSuppressions(repositoryRoot, paths);
+  const { suppressions, requirements, blockedResults: suppressionBlocks } = await discoverSuppressions(repositoryRoot, paths);
   const installedIds = new Set(checks.map(check => check.id));
+  const declaredRequirementIds = new Set(requirements.map(requirement => requirement.id));
+  const blockedCheckIds = new Set(blockedResults.map(result => result.id));
   const unknownSuppressionBlocks = suppressions
-    .filter(suppression => !installedIds.has(suppression.id))
-    .map(suppression => blocked(suppression.id, "Invalid verification suppression configuration", "suppression id is not installed"));
-  const selectedChecks = selectAutomaticVerificationChecks(checks, paths);
-  if (selectedChecks.length === 0) return [...blockedResults, ...suppressionBlocks, ...unknownSuppressionBlocks];
+    .filter(suppression => !installedIds.has(suppression.id) && !declaredRequirementIds.has(suppression.id))
+    .map(suppression => blocked(suppression.id, "Invalid verification suppression configuration", "suppression id is not installed or declared as a requirement"));
   const results = [...blockedResults, ...suppressionBlocks, ...unknownSuppressionBlocks];
-  for (const { check, matches } of selectedChecks) {
+  const checksById = new Map(checks.map(check => [check.id, check]));
+  const selectedById = new Map();
+  const missingProviders = new Map();
+  const seenRequirementPaths = new Set();
+  const addSelection = (check, match) => {
+    const selected = selectedById.get(check.id) || { check, matches: [] };
+    if (!selected.matches.some(existing => existing.path === match.path)) selected.matches.push(match);
+    selectedById.set(check.id, selected);
+  };
+
+  for (const selected of selectAutomaticVerificationChecks(checks, paths)) {
+    for (const match of selected.matches) addSelection(selected.check, match);
+  }
+
+  for (const requirement of requirements) {
+    for (const path of paths) {
+      const pathFromConfig = relative(requirement.configDirectory, resolve(repositoryRoot, path));
+      if (!pathFromConfig || pathFromConfig.startsWith("..") || isAbsolute(pathFromConfig)) continue;
+      const normalizedPath = pathFromConfig.replaceAll("\\", "/");
+      if (!matchesGlob(normalizedPath, requirement.path)) continue;
+
+      const dedupeKey = `${requirement.id}\\0${path}`;
+      if (seenRequirementPaths.has(dedupeKey)) continue;
+      seenRequirementPaths.add(dedupeKey);
+      const match = { path, trigger: requirement.path };
+      const check = checksById.get(requirement.id);
+      if (check) {
+        addSelection(check, match);
+        continue;
+      }
+      if (blockedCheckIds.has(requirement.id)) continue;
+
+      const suppression = suppressionFor(requirement.id, repositoryRoot, path, suppressions);
+      if (suppression) {
+        results.push({
+          id: requirement.id,
+          status: "SUPPRESSED",
+          summary: "Automatic verification suppressed",
+          evidence: `${path} matched ${suppression.path}: ${suppression.reason}`,
+          matches: [match],
+        });
+        continue;
+      }
+
+      const missing = missingProviders.get(requirement.id) || [];
+      missing.push(match);
+      missingProviders.set(requirement.id, missing);
+    }
+  }
+
+  for (const [id, matches] of missingProviders) {
+    const matchingPaths = matches.map(match => match.path).join(", ");
+    results.push({
+      ...blocked(id, "Required verification provider is not installed", `Declared requirement applies to ${matchingPaths}; no installed manifest provides ${id}.`),
+      matches,
+    });
+  }
+
+  for (const { check, matches } of selectedById.values()) {
     const unsuppressedMatches = [];
     for (const match of matches) {
       const suppression = suppressionFor(check.id, repositoryRoot, match.path, suppressions);
@@ -434,7 +566,10 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
       });
     }
     if (unsuppressedMatches.length === 0) continue;
-    results.push({ ...(await runVerificationCheck(check, cwd, unsuppressedMatches.map(match => match.path))), matches: unsuppressedMatches });
+    results.push({
+      ...(await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot)),
+      matches: unsuppressedMatches,
+    });
   }
   return results;
 }

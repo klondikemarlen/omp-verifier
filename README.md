@@ -1,6 +1,6 @@
 # OMP Verifier
 
-An OMP plugin that uses a focused `verifier` advisor to select and execute programmatic checks after OMP's stock `default` advisor.
+An OMP plugin that uses a focused `verifier` advisor to execute declared checks and supplied standards contracts after OMP's stock `default` advisor.
 
 ## Documentation
 
@@ -15,9 +15,9 @@ The plugin does five things:
 2. Adds a marked `verifier` advisor entry immediately after it.
 3. Syncs verifier-only evidence guidance into the active agent directory.
 4. Shows or removes its marked advisor block with `/verifier`.
-5. Exposes deterministic verification manifests to explicit commands and to the verifier model after changed turns.
+5. Exposes deterministic checks and explicit agentic standards contracts to commands and the existing verifier advisor.
 
-The model decides which explicit checks apply and runs them; its feedback is verification results, not general advice. The stock advisor retains code review. Verifier does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged coordinator or a project's explicit narrow check. Verification manifests are package-owned checks, not inferred from arbitrary tools or maintainer test filenames.
+The model selects applicable checks and evaluates supported supplied rubrics; its feedback is verification results, not general advice. The stock advisor retains generic code review. Verifier does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged coordinator or a project's explicit narrow check. Verification contracts are package-owned, not inferred from arbitrary prose, tools, or maintainer test filenames.
 
 ## Install
 
@@ -70,11 +70,11 @@ Each requirement names its trigger, check id, Gold condition, executable narrow 
 /verifier uninstall
 ```
 
-`/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Results are reported as `PASS`, `FAIL`, or `BLOCKED`.
+`/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Deterministic results are `PASS`, `FAIL`, or `BLOCKED`. An agentic entry initially returns a `BLOCKED` review request, not a completed semantic verdict; the verifier advisor completes its assessment through the CLI below.
 
-After a changed agent turn in a Git worktree, the verifier model passes only the project-relative paths changed by that turn to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier turns. Every installed check with a matching `pathTriggers` pattern records its changed path and matched trigger in structured JSON. The text reporter omits this selection metadata and displays status, check ID, summary, evidence, and next check. `PASS`, `SUPPRESSED`, and no results stay silent in failure-only mode; only actual `FAIL` and `BLOCKED` rows reach the standard OMP blocker channel as readable text. No paraphrased advice or successful rows are appended. Checks without `pathTriggers` remain manual; the model selects them only for an explicit applicable requirement. `automatic --worktree` is only for an explicitly requested full working-tree check.
+After a completed changed run in a Git worktree, the verifier model passes only that run's project-relative changed paths to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier runs. Matching `pathTriggers` and applicable project `requirements` select installed checks; JSON records the changed paths and matching triggers. The advisor finishes supported agentic requests before delivering their final results. The text reporter omits selection metadata and preserves status, check ID, standard/Gold when supplied, evidence, and next check. `PASS`, `SUPPRESSED`, and no results stay silent; only final `FAIL`/`BLOCKED` results reach OMP's native blocker channel. Checks without triggers or applicable requirements remain manual. `automatic --worktree` is only for an explicitly requested full working-tree check.
 
-With no compatible manifests installed, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. Existing advisor setup and cleanup remain independent of the optional check surface.
+With no compatible manifests or applicable project requirements, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
 
 The `bash`-only advisor can discover and run named checks using the packaged CLI:
 
@@ -82,9 +82,11 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...>
 omp-verifier automatic <changed-path...>
+omp-verifier review <request-file> [--context <project-relative-path>...]
+omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
 
-JSON remains the default reporter; `--reporter json` selects it explicitly. `checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify` writes the same JSON result array as `automatic` and supports all checks when explicitly invoked without ids. Add `--reporter text` to any command for readable output, shared with `/verifier checks` and `/verifier verify`. On execution commands, `--failures-only` filters either reporter to `FAIL`/`BLOCKED`; text writes nothing when no failures remain, while JSON writes `[]`. Both execution commands exit `1` for any `FAIL`/`BLOCKED`, otherwise `0`; invalid usage exits `2`. Named verification shares its runner with `/verifier verify`. The generated prompt uses the installed CLI's absolute path rather than requiring the executable on `PATH`.
+JSON remains the default reporter; `--reporter json` selects it explicitly. `checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify`, `automatic`, and `evaluate` write result arrays and support `--reporter text` and `--failures-only`. Failure-only text is empty when no failures remain; failure-only JSON is `[]`. Execution exits `1` for any `FAIL`/`BLOCKED`, otherwise `0`; invalid usage exits `2`. `review` returns a JSON result array containing the current request and therefore exits `1` while assessment is pending. `evaluate --assessment -` reads literal JSON from stdin. Named verification shares its runner with `/verifier verify`; the generated prompt uses the installed CLI's absolute path rather than requiring it on `PATH`.
 
 The advisor runs, for example:
 
@@ -123,16 +125,42 @@ An installed OMP plugin can opt in through `package.json`:
 }
 ```
 
-Each entry must be a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. A `FAIL` result may exit with code `1`; the verifier preserves that reported failure. Automatic entries receive `OMP_VERIFIER_CHANGED_PATHS` as a JSON array of their matching project-relative paths; manual `/verifier verify` removes it. The package must expose an `omp.extensions` or `pi.extensions` entry; the verifier invokes entries without a shell in the active project directory. `pathTriggers` is an optional non-empty array of project-relative glob patterns; only declared matching checks run automatically. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and other non-zero exits fail closed as `BLOCKED`; model-supplied commands are never accepted.
+Without `mode`, an entry is a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. A `FAIL` result may exit with code `1`; the verifier preserves that reported failure. Automatic executable entries receive `OMP_VERIFIER_CHANGED_PATHS` as a JSON array of their matching project-relative paths; manual `/verifier verify` removes it. The package must expose an `omp.extensions` or `pi.extensions` entry; executable checks run without a shell in the active project directory. `pathTriggers` is an optional non-empty array of project-relative glob patterns. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and other non-zero exits fail closed as `BLOCKED`; model-supplied executable paths are never accepted.
 
 `/verifier verify` does not scan remote repositories or execute arbitrary `verify-*` files. Installed plugin code remains trusted; the manifest is a discovery convention, not a sandbox.
 
-### Scoped automatic-check suppression
+### Supplied standards verification
+
+OMP Verifier 0.10.0 also accepts an explicit semantic contract instead of an executable entry:
+
+```json
+{
+  "id": "marlens-rules:module-boundary-alignment",
+  "label": "Module Boundary Alignment",
+  "description": "Evaluates changed modules against the accepted module-boundary standard.",
+  "mode": "agentic",
+  "contract": "./verifications/module-boundary-alignment.json",
+  "pathTriggers": ["**/*.js", "**/*.ts"]
+}
+```
+
+The provider supplies the versioned standard/source, Gold, required context, and rubric. The existing verifier model judges that declared contract against captured changed code, caller/sibling context, and project guidance; it does not substitute file-size metrics or generic review. See the [semantic contract and assessment protocol](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for the schema and evidence limits.
+
+Preparation returns a private current review request. `review` exposes it; `--context` captures additional project files and renews its request ID. `evaluate` validates the assessment's current ID, source citations, and unchanged provider/project context before returning a final result. Missing evidence, unsupported contracts, tampering, reused requests, and stale assessments are `BLOCKED`. Correction requires a fresh evaluation, or a deliberate bounded exception with its reason; an old PASS cannot clear a newer failure.
+
+Native blocker delivery initiates correction but is not a hard completion gate. This plugin does not register a `session_stop` veto or atomically wait for the current named-advisor result before settlement. See the [completion boundary](docs/references/verifier-concepts-reference.md#completion-boundary) for the native OMP dependency and supported stop-hook distinction.
+
+
+### Scoped requirements and automatic-check suppression
 
 Use `.omp-verifier.json` at the Git root or beneath the affected subtree. Its `path` is relative to that file and must not match the entire project:
 
 ```json
 {
+  "requirements": [{
+    "id": "marlens-rules:module-boundary-alignment",
+    "path": "src/**"
+  }],
   "suppressions": [{
     "id": "publisher:check-id",
     "path": "legacy-tests/**",
@@ -142,7 +170,7 @@ Use `.omp-verifier.json` at the Git root or beneath the affected subtree. Its `p
 }
 ```
 
-Each suppression requires a verification id, bounded path, and non-empty reason. `expires` is optional, but an invalid or expired entry is `BLOCKED` rather than silently disabling a check. A missing `.omp-verifier.json` has no effect.
+A requirement names a check ID and bounded path. It selects that check for matching current changes even without a manifest trigger; a missing required provider is observable `BLOCKED`. A valid bounded suppression may cover an installed or explicitly required ID, including an absent required provider; its reason remains visible as `SUPPRESSED`, never PASS. Suppressions require a non-empty reason; `expires` is optional, but invalid/expired entries and undeclared unknown IDs are `BLOCKED`. Paths are relative to the configuration file. A missing `.omp-verifier.json` has no effect.
 
 `/verifier uninstall` removes only the marked verifier block. It leaves `default` and independent advisors such as `learner` in place.
 

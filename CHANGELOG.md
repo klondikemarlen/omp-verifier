@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0 - 2026-10-16
+
+- Consume explicit `mode: agentic` standards contracts alongside existing deterministic verification entries, using the existing verifier model rather than a second review lane or metric proxy.
+- Capture current changed code, callers, siblings, and project guidance; complete semantic assessments with validated source citations and fresh request identity. Missing evidence, stale/reused requests, and changed provider or project context remain BLOCKED.
+- Add bounded project `requirements` so missing required providers are observable, while preserving reasoned exceptions as SUPPRESSED.
+- Expose `review` and `evaluate` CLI commands and readable standard/Gold evidence. Complete supported semantic requests before blocker delivery; successful and no-action reviews remain silent.
+- Preserve literal shell-sensitive install paths across every generated coordinator command. Document correction behavior separately from a hard completion veto, which this advisor integration does not implement.
+- Keep semantic source inspection readable as structured line arrays and wrap long result prose, so the bash-only advisor can relay complete evidence without retrieving a truncated output artifact.
+
 ## 0.9.4 - 2026-10-15
 
 - Await guidance and roster reconciliation during extension registration so the first native advisor import uses current installed instructions rather than the previous generated copy.
