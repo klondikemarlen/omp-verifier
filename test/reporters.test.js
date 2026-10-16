@@ -53,3 +53,30 @@ SUPPRESSED publisher:legacy
   Automatic verification suppressed
   Evidence: legacy/test.ts matched legacy/**: vendor-owned fixture`);
 });
+
+test("when semantic verification fails, text identifies its governing standard and failed Gold", () => {
+  // Arrange
+  const results = [{
+    id: "publisher:module-boundary",
+    status: "FAIL",
+    summary: "The extracted accessor owns no independent boundary.",
+    standard: {
+      id: "publisher:module-boundary",
+      source: "publisher/docs/organization.md#module-boundaries",
+      gold: "An extraction owns a meaningful invariant or independently changing behavior.",
+    },
+    evidence: "src/account-name.js:2: return account.name;",
+    nextCheck: "Inline the field selection and evaluate the corrected scope.",
+  }];
+
+  // Act
+  const output = formatVerificationResults(results);
+
+  // Assert
+  assert.equal(output, `FAIL publisher:module-boundary
+  The extracted accessor owns no independent boundary.
+  Standard: publisher/docs/organization.md#module-boundaries
+  Gold: An extraction owns a meaningful invariant or independently changing behavior.
+  Evidence: src/account-name.js:2: return account.name;
+  Next check: Inline the field selection and evaluate the corrected scope.`);
+});
