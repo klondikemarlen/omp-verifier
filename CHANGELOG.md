@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.4 - 2026-10-19
+
+- Label semantic regression scenarios with accurate Arrange, Act, and Assert phases to satisfy the supplied test-alignment standard; runtime behavior is unchanged.
+
 ## 0.10.3 - 2026-10-19
 
 - Prioritize changed and targeted semantic context, owning/ancestor guidance, and nearby source before optional broad evidence; unrelated subtree guides no longer make the assessed boundary require repository-wide guidance capture.
