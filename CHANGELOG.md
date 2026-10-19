@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.5 - 2026-10-19
+
+- Recover oversized required changed-code evidence through complete bounded source chunks without increasing retrieval ceilings; partial coverage remains BLOCKED and original citation locations and full-source freshness remain enforced.
+
 ## 0.10.4 - 2026-10-19
 
 - Label semantic regression scenarios with accurate Arrange, Act, and Assert phases to satisfy the supplied test-alignment standard; runtime behavior is unchanged.

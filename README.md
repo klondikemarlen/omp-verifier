@@ -152,6 +152,8 @@ Preparation returns a private current review request. `review` exposes it; `--co
 
 Context recovery prioritizes changed code, explicit files/ranges, and owning/ancestor guidance before optional broad evidence. Oversized relevant guides expose a bounded initial excerpt with omitted ranges; recover a material section with, for example, `review <request-file> --context 'api/tests/README.md#L130-L150'`. Repeat `--context` for separate chunks and use the renewed request ID. Excerpts preserve original line numbers and hash the full bounded source so edits outside the excerpt invalidate the request. Partial capture and incomplete inventories remain explicit, not proof of complete guidance or caller coverage; unavailable material context stays BLOCKED.
 
+Required changed code above the 16 KB record limit can be recovered with the same ranged selectors. Cover every original line within the existing source, selector, and total-evidence budgets; `changedCodeCoverage` reports covered and omitted ranges. A partial excerpt remains BLOCKED even when it contains a valid citation. Sources outside the supported bounds remain BLOCKED rather than being split or judged by size.
+
 Native blocker delivery initiates correction but is not a hard completion gate. This plugin does not register a `session_stop` veto or atomically wait for the current named-advisor result before settlement. See the [completion boundary](docs/references/verifier-concepts-reference.md#completion-boundary) for the native OMP dependency and supported stop-hook distinction.
 
 
