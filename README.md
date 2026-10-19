@@ -19,6 +19,8 @@ The plugin does five things:
 
 The model selects applicable checks and evaluates supported supplied rubrics; its feedback is verification results, not general advice. The stock advisor retains generic code review. Verifier does not configure advisor models, task agents, GitHub workflows, browser checks, or generic code review. The generated verifier advisor receives only `bash`, which it uses to run the packaged coordinator or a project's explicit narrow check. Verification contracts are package-owned, not inferred from arbitrary prose, tools, or maintainer test filenames.
 
+Verifier checks code adherence, not whether a human correction has been recorded. Learner owns that coverage decision; the policy owner maintains the tracked rule and its supplied verification contract. See [ownership boundaries](docs/references/verifier-concepts-reference.md#ownership-boundaries) for the distinction and a correction/recheck example.
+
 ## Install
 
 ```bash

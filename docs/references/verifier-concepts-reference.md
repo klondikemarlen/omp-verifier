@@ -199,14 +199,27 @@ Automatic and manual CLI execution defaults to a JSON result array; `--reporter 
 
 ## Ownership Boundaries
 
-- **OMP Verifier** owns its marked advisor setup/cleanup, commands, manifest discovery, path selection, bounded exceptions, trusted executable invocation, current semantic evidence/request validation, result reporting, and the existing model's contract-assessment guidance.
+- **OMP Verifier** checks applicable current changed code against declared verification contracts. It owns its marked advisor setup/cleanup, commands, manifest discovery, path selection, bounded exceptions, trusted executable invocation, current semantic evidence/request validation, result reporting, and the existing model's contract-assessment guidance.
 - **A policy/check-owning package** owns the standard, Gold, applicability, and executable implementation or semantic rubric. [Marlens Skills, Rules, and Tools (MSSRT)](https://github.com/klondikemarlen/marlens-skills-rules-and-tools) supplies reusable Marlen coding guidance and declared checks/contracts. Verifier does not invent policy or infer checks from prose, filenames, or tool names.
 - **A project** owns explicit command requirements in project `WATCHDOG.yml`, bounded ID/path `requirements` and reasoned exceptions in `.omp-verifier.json`, and any project-specific check package. A supplied command names its trigger, Gold condition, narrow check, and PASS evidence.
 - **OMP's default advisor** retains generic code quality, robustness, strategy, scope, style, and workflow review. Verifier's model runs applicable checks and returns their evidence, not general advice.
 - **OMP advisor runtime and configuration** own model resolution, scheduling, and actual advisor interaction with the primary agent. Verifier does not choose or rewrite model/provider routes; live correction claims require the verifier model to resolve and an observed blocker/remediation cycle.
-- **OMP Learner** (the [OMP Learner repository](https://github.com/klondikemarlen/omp-learner)) owns high-confidence feedback classification and the human-reviewed proposal route for accepted lessons. Learning an observation does not silently create or activate verifier policy.
+- **OMP Learner** (the [OMP Learner repository](https://github.com/klondikemarlen/omp-learner)) identifies human corrections, checks whether equivalent guidance at the same scope is already tracked, and routes genuinely missing learning to its owner through reviewable proposals. It does not verify code adherence. An ordinary already-covered correction completes this coverage responsibility; a code violation alone does not establish a Learner defect.
 
-The collaboration path is therefore: OMP Learner may surface a reviewable lesson; its intended policy owner (for reusable Marlen guidance, MSSRT) accepts and implements a rule/check; the package declares its check; Verifier selects and executes it and presents evidence; OMP's advisor runtime delivers the correction interaction.
+Tracked guidance, a supplied verification contract, and an observed current verification result are distinct facts. Neither Learner's `covered` result nor a ticket or memory acknowledgment establishes code compliance, activates a check, or replaces Verifier's current result. A new Learner ticket or live handoff is not required for each verification run.
+
+The policy owner supplies the accepted rule and explicit check or rubric; Verifier selects applicable checks from current changed paths and project requirements, respecting bounded exceptions. Supported checks establish evidence-backed PASS/FAIL; an unavailable required provider, unsupported required mode, or insufficient required context is BLOCKED. Mere prose does not become executable policy. Successful, suppressed, and no-action results remain silent.
+
+### Tracked Rule Versus Verified Code
+
+Consider an account-summary presenter whose only new extraction is an `accountName(account)` helper returning `account.name`, with no separate formatting policy or meaningful responsibility:
+
+1. A human correction says to keep that direct field selection in the presenter. Learner finds the equivalent module-boundary rule already tracked in MSSRT and reports covered guidance. Its ordinary coverage responsibility is complete.
+2. Verifier independently evaluates the changed presenter and helper against the installed module-boundary contract, with caller, sibling, and project context. A needless boundary yields FAIL with the actual standard/source, changed location, failed Gold condition, and evidence—not a claim that the rule is missing.
+3. The primary agent restores direct selection and deletes the helper. A fresh explicit scoped recheck must assess that corrected source and the removed helper; the earlier failure or an older PASS cannot establish the new result.
+4. An observed fresh PASS establishes only that the current scoped contract passed and stays private. Missing required evidence remains BLOCKED rather than being replaced by Learner's coverage result.
+
+This is an intended-behavior example, not additional observed release evidence. [Issue #130](https://github.com/klondikemarlen/omp-verifier/issues/130) tracks the remaining post-install native correction-cycle QA. Native blocker advice requests correction but is not an atomic completion veto; see [Completion Boundary](#completion-boundary) for the OMP-owned handoff dependency and required fresh recheck.
 
 ## Implementation and Proof Map
 
