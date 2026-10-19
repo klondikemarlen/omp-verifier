@@ -21,9 +21,10 @@ function writeResults(results, { reporter, failuresOnly }) {
   if (reporter === "text") {
     output = formatVerificationResults(reported);
   } else if (command === "review") {
-    output = JSON.stringify(reported, (key, value) => {
+    output = JSON.stringify(reported, function (key, value) {
       if (key === "content" && typeof value === "string") {
-        return Object.fromEntries(value.split(/\r?\n/).map((line, index) => [index + 1, line]));
+        const startLine = this.startLine ?? 1;
+        return Object.fromEntries(value.split(/\r?\n/).map((line, index) => [startLine + index, line]));
       }
       if (key === "text" && typeof value === "string") {
         return value.split(/\r?\n/);
@@ -102,6 +103,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path>...] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
