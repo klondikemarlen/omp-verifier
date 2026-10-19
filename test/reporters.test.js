@@ -54,7 +54,7 @@ SUPPRESSED publisher:legacy
   Evidence: legacy/test.ts matched legacy/**: vendor-owned fixture`);
 });
 
-test("when semantic verification fails, text identifies its governing standard and failed Gold", () => {
+test("when semantic verification fails, text identifies its governing standard and failed quality standard", () => {
   // Arrange
   const results = [{
     id: "publisher:module-boundary",
@@ -76,7 +76,7 @@ test("when semantic verification fails, text identifies its governing standard a
   assert.equal(output, `FAIL publisher:module-boundary
   The extracted accessor owns no independent boundary.
   Standard: publisher/docs/organization.md#module-boundaries
-  Gold: An extraction owns a meaningful invariant or independently changing behavior.
+  Quality standard: An extraction owns a meaningful invariant or independently changing behavior.
   Evidence: src/account-name.js:2: return account.name;
   Next check: Inline the field selection and evaluate the corrected scope.`);
 });

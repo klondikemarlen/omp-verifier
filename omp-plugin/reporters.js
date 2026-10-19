@@ -19,7 +19,7 @@ function formatVerificationResult(result) {
 
   if (result.standard) {
     lines.push(`  Standard: ${indented(result.standard.source)}`);
-    lines.push(`  Gold: ${indented(result.standard.gold)}`);
+    lines.push(`  Quality standard: ${indented(result.standard.gold)}`);
   }
 
   if (result.reviewRequest) {

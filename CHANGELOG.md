@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.7 - 2026-10-19
+
+- Use quality standard in verifier guidance, readable result labels, and current documentation while preserving the version-1 `gold` wire field and all verification semantics.
+- Document the coordinated version-2 `qualityStandard` cutover plan; no one-sided provider schema rename or model-route change is activated.
+
 ## 0.10.6 - 2026-10-19
 
 - Scope native release-QA proof to each current named-advisor review, actual selected paths, and correction/recheck cycle; distinguish setup failures, later errors, and authorized task-local model coverage without changing runtime behavior.
