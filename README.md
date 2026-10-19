@@ -195,13 +195,17 @@ Every release uses the same workflow:
 7. Fetch and prune, return to synchronized `main`, and delete only the merged agent-owned branch.
 8. Run `npm run reinstall`, verify the installed version in a fresh OMP process, and exercise `/verifier` completion and the changed behavior.
 
-For advisor-correction releases, QA with a temporary deterministic failing manifest:
+For advisor-correction releases, use a disposable declared failing check or supplied semantic contract:
 
-1. Check `/advisor status`; the `verifier` advisor must be enabled with a resolved model. `[no model]` blocks correction claims.
-2. Trigger a changed path and run the coordinator from the packed or remotely installed artifact. Observe structured `FAIL` or `BLOCKED` JSON and exit `1`.
-3. Let the primary agent finish. Observe `<advisory advisor="verifier" severity="blocker">`; compare its note with the coordinator's `--reporter text --failures-only` output. Status, check ID, summary, evidence, and next check must be preserved, with no JSON, successful rows, selection metadata, or extra commentary.
-4. Verify the primary agent resumes or is steered, applies remediation, and the next coordinator run returns `PASS` or no applicable results.
-5. Verify `PASS`, `SUPPRESSED`, and no results inject no advice.
-6. If remediation remains incomplete, wait through `advisor.immuneTurns` and verify the repeated failure eventually re-enters the correction loop.
+1. Record installed OMP, Verifier, and provider versions. Check `/advisor status` for an enabled, resolved `verifier` model; `[no model]` or a current runtime error blocks that model's correction claim. Freeze synthetic inputs and provider artifacts before the live cycle.
+2. Wait for actual RPC readiness or the terminal's initialized editor, not just a version banner or elapsed delay. Answer terminal queries, including cursor-position requests, when using a raw PTY. Confirm successful prompt admission; a primary still processing cannot accept an ordinary new prompt.
+3. Save named-verifier transcript and primary/event baselines for this scenario. Trigger the intended changed paths using the packed or remotely installed coordinator and confirm those paths were actually selected. For committed code, use the provider's supported comparison-base input; a no-applicable-work PASS is not inspected-code evidence.
+4. Correlate the current check, scope, semantic request identity when applicable, final coordinator result, and completed named-advisor review. A settled primary RPC prompt, an earlier private final, or an unrelated result cannot prove this review. Observe `<advisory advisor="verifier" severity="blocker">` and compare its note with current `--reporter text --failures-only` output; preserve status, check ID, summary, evidence, and next check without extra commentary.
+5. Observe actual primary remediation, then request a fresh independently triggered assessment of the corrected scope, including deletions. Require a current evaluated-code PASS, not the old result or a planned check. Before submitting another ordinary RPC prompt, also confirm the primary's previous prompt has settled.
+6. For `PASS`, `SUPPRESSED`, and no results, require the current named review to complete without delivered verifier advice. Preserve earlier completed scenarios when a later continuation fails; retain each error in its actual scenario window. A current error without a completed current result remains FAIL/BLOCKED.
+7. Record any explicitly authorized task-local model override separately from normal-selector coverage; leave default models, provider configuration, credentials, and fallback chains unchanged. Setup/version assertions, startup-only timeouts, and incomplete terminal protocol support are harness failures, not coding-standard verdicts or evidence of a general provider outage.
+8. If remediation remains incomplete, exercise a fresh applicable trigger after `advisor.immuneTurns` and observe repeated failure delivery; waiting alone does not prove a new assessment.
+
+See [Native QA Evidence Attribution](docs/references/verifier-concepts-reference.md#native-qa-evidence-attribution) for completion boundaries and evidence ownership. Keep diagnostics bounded to the plugin outcome; this recipe does not introduce advisor scheduling, model selection, or a permanent QA runner.
 
 Do not claim publish, install, or advisor correction without observed evidence.

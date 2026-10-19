@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.10.6 - 2026-10-19
+
+- Scope native release-QA proof to each current named-advisor review, actual selected paths, and correction/recheck cycle; distinguish setup failures, later errors, and authorized task-local model coverage without changing runtime behavior.
+
 ## 0.10.5 - 2026-10-19
 
 - Recover oversized required changed-code evidence through complete bounded source chunks without increasing retrieval ceilings; partial coverage remains BLOCKED and original citation locations and full-source freshness remain enforced.
