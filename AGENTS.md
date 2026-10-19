@@ -21,7 +21,7 @@ Less is more. Do not add task agents, planning tools, PR checkout, app booting, 
 
 Verifier output must be evidence-first:
 
-- Start from Gold.
+- Start from the quality standard.
 - Run or specify targeted checks.
 - Report `PASS`, `FAIL`, or `BLOCKED`.
 - Do not call a verification successful without observed evidence.

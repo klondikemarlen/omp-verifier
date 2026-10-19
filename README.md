@@ -56,10 +56,10 @@ advisors:
     instructions: |
       @/home/<user>/.omp/agent/verifier/WATCHDOG.md
 
-      - Check id project:database-migrations. When a database migration changes, run `npm run db:verify`; Gold is current migration status, evidenced by exit 0 and the command's status output.
+      - Check id project:database-migrations. When a database migration changes, run `npm run db:verify`; the quality standard is current migration status, evidenced by exit 0 and the command's status output.
 ```
 
-Each requirement names its trigger, check id, Gold condition, executable narrow check, and PASS evidence. The verifier must execute the applicable check; merely proposing a future check does not establish verification. It ignores placeholders and generic guidance. Commands without structured output are classified from the observed exit/output and the explicit Gold condition using the same result shape.
+Each requirement names its trigger, check id, quality standard, executable narrow check, and PASS evidence. The verifier must execute the applicable check; merely proposing a future check does not establish verification. It ignores placeholders and generic guidance. Commands without structured output are classified from the observed exit/output and the explicit quality standard using the same result shape.
 
 ## Commands
 
@@ -74,7 +74,7 @@ Each requirement names its trigger, check id, Gold condition, executable narrow 
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Deterministic results are `PASS`, `FAIL`, or `BLOCKED`. An agentic entry initially returns a `BLOCKED` review request, not a completed semantic verdict; the verifier advisor completes its assessment through the CLI below.
 
-After a completed changed run in a Git worktree, the verifier model passes only that run's project-relative changed paths to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier runs. Matching `pathTriggers` and applicable project `requirements` select installed checks; JSON records the changed paths and matching triggers. The advisor finishes supported agentic requests before delivering their final results. The text reporter omits selection metadata and preserves status, check ID, standard/Gold when supplied, evidence, and next check. `PASS`, `SUPPRESSED`, and no results stay silent; only final `FAIL`/`BLOCKED` results reach OMP's native blocker channel. Checks without triggers or applicable requirements remain manual. `automatic --worktree` is only for an explicitly requested full working-tree check.
+After a completed changed run in a Git worktree, the verifier model passes only that run's project-relative changed paths to the packaged `automatic` coordinator. It does not select unrelated uncommitted paths from earlier runs. Matching `pathTriggers` and applicable project `requirements` select installed checks; JSON records the changed paths and matching triggers. The advisor finishes supported agentic requests before delivering their final results. The text reporter omits selection metadata and preserves status, check ID, supplied standard/source and quality standard, evidence, and next check. `PASS`, `SUPPRESSED`, and no results stay silent; only final `FAIL`/`BLOCKED` results reach OMP's native blocker channel. Checks without triggers or applicable requirements remain manual. `automatic --worktree` is only for an explicitly requested full working-tree check.
 
 With no compatible manifests or applicable project requirements, `checks` reports `none installed`, `verify` reports `BLOCKED`, and the automatic coordinator returns an empty array. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
 
@@ -146,7 +146,7 @@ OMP Verifier 0.10.0 also accepts an explicit semantic contract instead of an exe
 }
 ```
 
-The provider supplies the versioned standard/source, Gold, required context, and rubric. The existing verifier model judges that declared contract against captured changed code, caller/sibling context, and project guidance; it does not substitute file-size metrics or generic review. See the [semantic contract and assessment protocol](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for the schema and evidence limits.
+The provider supplies the versioned standard/source, quality standard, required context, and rubric. The existing verifier model judges that declared contract against captured changed code, caller/sibling context, and project guidance; it does not substitute file-size metrics or generic review. See the [semantic contract and assessment protocol](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for the schema, evidence limits, and planned versioned field migration. Version 1 still requires the `gold` wire field; visible terminology does not rename installed contracts.
 
 Preparation returns a private current review request. `review` exposes it; `--context` captures additional project files and renews its request ID. `evaluate` validates the assessment's current ID, source citations, and unchanged provider/project context before returning a final result. Missing evidence, unsupported contracts, tampering, reused requests, and stale assessments are `BLOCKED`. Correction requires a fresh evaluation, or a deliberate bounded exception with its reason; an old PASS cannot clear a newer failure.
 
