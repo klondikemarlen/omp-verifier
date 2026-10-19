@@ -84,7 +84,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...>
 omp-verifier automatic <changed-path...>
-omp-verifier review <request-file> [--context <project-relative-path>...]
+omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
 
@@ -149,6 +149,8 @@ OMP Verifier 0.10.0 also accepts an explicit semantic contract instead of an exe
 The provider supplies the versioned standard/source, Gold, required context, and rubric. The existing verifier model judges that declared contract against captured changed code, caller/sibling context, and project guidance; it does not substitute file-size metrics or generic review. See the [semantic contract and assessment protocol](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for the schema and evidence limits.
 
 Preparation returns a private current review request. `review` exposes it; `--context` captures additional project files and renews its request ID. `evaluate` validates the assessment's current ID, source citations, and unchanged provider/project context before returning a final result. Missing evidence, unsupported contracts, tampering, reused requests, and stale assessments are `BLOCKED`. Correction requires a fresh evaluation, or a deliberate bounded exception with its reason; an old PASS cannot clear a newer failure.
+
+Context recovery prioritizes changed code, explicit files/ranges, and owning/ancestor guidance before optional broad evidence. Oversized relevant guides expose a bounded initial excerpt with omitted ranges; recover a material section with, for example, `review <request-file> --context 'api/tests/README.md#L130-L150'`. Repeat `--context` for separate chunks and use the renewed request ID. Excerpts preserve original line numbers and hash the full bounded source so edits outside the excerpt invalidate the request. Partial capture and incomplete inventories remain explicit, not proof of complete guidance or caller coverage; unavailable material context stays BLOCKED.
 
 Native blocker delivery initiates correction but is not a hard completion gate. This plugin does not register a `session_stop` veto or atomically wait for the current named-advisor result before settlement. See the [completion boundary](docs/references/verifier-concepts-reference.md#completion-boundary) for the native OMP dependency and supported stop-hook distinction.
 

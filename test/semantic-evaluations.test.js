@@ -158,6 +158,135 @@ test("when README architecture guidance changes, an earlier assessment cannot re
   }
 });
 
+test("when a relevant guide exceeds the capture limit in a large repository, ranged CLI recovery preserves source identity", async () => {
+  const fixture = await createSemanticFixture();
+
+  try {
+    const guideLines = Array.from({ length: 500 }, (_, index) =>
+      `Guidance line ${index + 1}: a module should own meaningful behavior.`,
+    );
+    await writeFile(join(fixture.root, "README.md"), `${guideLines.join("\n")}\n`);
+    await mkdir(join(fixture.root, "noise"));
+    for (let index = 0; index < 1_205; index += 1) {
+      await writeFile(join(fixture.root, "noise", `unrelated-${index}.js`), "export const unrelated = true;\n");
+    }
+    for (let index = 0; index < 80; index += 1) {
+      await writeFile(join(fixture.root, "src", `sibling-${index}.js`), "export const sibling = true;\n");
+    }
+    for (let index = 0; index < 45; index += 1) {
+      const unrelatedDirectory = join(fixture.root, "unrelated", String(index));
+      await mkdir(unrelatedDirectory, { recursive: true });
+      await writeFile(join(unrelatedDirectory, "README.md"), "Only this unrelated subtree uses this guidance.\n".repeat(300));
+    }
+
+    const check = await discoverSemanticCheck(fixture);
+    const prepared = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    let output;
+    try {
+      output = execFileSync(process.execPath, [
+        join(process.cwd(), "bin/omp-verifier.js"),
+        "review",
+        prepared.reviewRequest.path,
+        "--context",
+        "README.md#L130-L150",
+      ], { cwd: fixture.root, encoding: "utf8" });
+    } catch (error) {
+      assert.equal(error.status, 1);
+      output = error.stdout;
+    }
+    const reviewed = JSON.parse(output)[0].reviewRequest;
+    const guide = reviewed.context.targetedContext.find(record => record.path === "README.md");
+
+    assert.ok(guide);
+    assert.equal(guide.startLine, 130);
+    assert.equal(guide.lineCount, 501);
+    assert.equal(guide.partial, true);
+    assert.equal(guide.content["130"], "Guidance line 130: a module should own meaningful behavior.");
+    assert.equal(reviewed.context.sourceInventory.complete, false);
+    assert.deepEqual(reviewed.missingContext, []);
+    assert.equal(reviewed.context.evidenceTruncated.siblings, true);
+    assert.ok(!reviewed.context.projectGuidance.some(record => record.path.startsWith("unrelated/")));
+    await writeFile(join(fixture.root, "README.md"), `${guideLines[0]}\n${guideLines.slice(1).join("\n")}\nChanged outside the recovered range.\n`);
+    const staleReview = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: JSON.parse(output)[0].reviewRequest.path,
+    });
+    assert.equal(staleReview.status, "BLOCKED");
+    assert.match(staleReview.evidence, /source or project context changed/);
+    assert.ok(reviewed.context.notes.some(note => note.includes("callers or siblings may be omitted")));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when guidance is recovered in separate chunks, citations retain both original locations", async () => {
+  const fixture = await createSemanticFixture();
+
+  try {
+    const guideLines = Array.from({ length: 500 }, (_, index) => `Boundary guidance at original line ${index + 1}.`);
+    await writeFile(join(fixture.root, "README.md"), guideLines.join("\n"));
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+      contextPaths: ["README.md#L130-L140", "README.md#L300-L310"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: {
+        ...passAssessment(prepared.reviewRequest.requestId),
+        status: "FAIL",
+        summary: "The helper only forwards its input.",
+        rationale: "The captured helper owns no invariant; the recovered guidance locations remain source citations.",
+        citations: [
+          CITATION,
+          { path: "README.md", line: 130, quote: "Boundary guidance at original line 130." },
+          { path: "README.md", line: 300, quote: "Boundary guidance at original line 300." },
+        ],
+      },
+    });
+    assert.equal(completed.status, "FAIL");
+    assert.match(completed.evidence, /README\.md:130: "Boundary guidance at original line 130\."/);
+    assert.match(completed.evidence, /README\.md:300: "Boundary guidance at original line 300\."/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a citation names a real line outside the recovered chunks, the assessment remains BLOCKED", async () => {
+  const fixture = await createSemanticFixture();
+
+  try {
+    const guideLines = Array.from({ length: 500 }, (_, index) => `Boundary guidance at original line ${index + 1}.`);
+    await writeFile(join(fixture.root, "README.md"), guideLines.join("\n"));
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+      contextPaths: ["README.md#L130-L140"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: {
+        ...passAssessment(prepared.reviewRequest.requestId),
+        citations: [CITATION, { path: "README.md", line: 450, quote: "Boundary guidance at original line 450." }],
+      },
+    });
+    assert.equal(completed.status, "BLOCKED");
+    assert.match(completed.evidence, /citation README\.md:450 does not match the captured source excerpt/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("when architecture guidance cannot be captured, semantic completion cannot report PASS", async () => {
   // Arrange
   const fixture = await createSemanticFixture();

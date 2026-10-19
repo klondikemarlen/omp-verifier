@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3 - 2026-10-19
+
+- Prioritize changed and targeted semantic context, owning/ancestor guidance, and nearby source before optional broad evidence; unrelated subtree guides no longer make the assessed boundary require repository-wide guidance capture.
+- Recover bounded guide chunks with `review --context 'path#Lstart-Lend'`, preserving original citation lines, explicit omitted ranges, full bounded-source freshness hashes, and fail-closed missing-source checks.
+
 ## 0.10.2 - 2026-10-19
 
 - Clarify Learner's human-correction coverage, the provider's rule/contract ownership, and Verifier's independent code-adherence verification responsibility.
