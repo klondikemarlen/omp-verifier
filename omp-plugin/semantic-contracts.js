@@ -84,7 +84,7 @@ function validateContract(contract, checkId) {
   if (contract.version !== 1) throw new Error("agentic contract version must be 1");
   const standardId = requiredText(contract.standardId, "standardId");
   if (standardId !== checkId) throw new Error("standardId must match the verification id");
-  const gold = requiredText(contract.gold, "gold");
+  const gold = requiredText(contract.gold, "quality standard (version-1 gold field)");
 
   if (!Array.isArray(contract.requiredContext) || contract.requiredContext.length === 0) {
     throw new Error("requiredContext must be a non-empty array");
