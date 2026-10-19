@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.2 - 2026-10-19
+
+- Clarify Learner's human-correction coverage, the provider's rule/contract ownership, and Verifier's independent code-adherence verification responsibility.
+- Document the tracked-rule versus current-result distinction and a scoped correction/recheck example without changing runtime behavior or claiming outstanding native acceptance QA passed.
+
 ## 0.10.1 - 2026-10-16
 
 - Label captured project source with original one-based line numbers so semantic citations do not require counting JSON array entries.
