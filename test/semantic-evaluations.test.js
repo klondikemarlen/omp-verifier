@@ -159,6 +159,7 @@ test("when README architecture guidance changes, an earlier assessment cannot re
 });
 
 test("when a relevant guide exceeds the capture limit in a large repository, ranged CLI recovery preserves source identity", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -187,6 +188,7 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
       changedPaths: ["src/helper.js"],
     });
 
+    // Act
     let output;
     try {
       output = execFileSync(process.execPath, [
@@ -200,6 +202,7 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
       assert.equal(error.status, 1);
       output = error.stdout;
     }
+    // Assert
     const reviewed = JSON.parse(output)[0].reviewRequest;
     const guide = reviewed.context.targetedContext.find(record => record.path === "README.md");
 
@@ -212,11 +215,14 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
     assert.deepEqual(reviewed.missingContext, []);
     assert.equal(reviewed.context.evidenceTruncated.siblings, true);
     assert.ok(!reviewed.context.projectGuidance.some(record => record.path.startsWith("unrelated/")));
+
+    // Act
     await writeFile(join(fixture.root, "README.md"), `${guideLines[0]}\n${guideLines.slice(1).join("\n")}\nChanged outside the recovered range.\n`);
     const staleReview = await readSemanticEvaluation({
       cwd: fixture.root,
       requestPath: JSON.parse(output)[0].reviewRequest.path,
     });
+    // Assert
     assert.equal(staleReview.status, "BLOCKED");
     assert.match(staleReview.evidence, /source or project context changed/);
     assert.ok(reviewed.context.notes.some(note => note.includes("callers or siblings may be omitted")));
@@ -226,6 +232,7 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
 });
 
 test("when guidance is recovered in separate chunks, citations retain both original locations", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -237,6 +244,8 @@ test("when guidance is recovered in separate chunks, citations retain both origi
       changedPaths: ["src/helper.js"],
       contextPaths: ["README.md#L130-L140", "README.md#L300-L310"],
     });
+
+    // Act
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
@@ -252,6 +261,7 @@ test("when guidance is recovered in separate chunks, citations retain both origi
         ],
       },
     });
+    // Assert
     assert.equal(completed.status, "FAIL");
     assert.match(completed.evidence, /README\.md:130: "Boundary guidance at original line 130\."/);
     assert.match(completed.evidence, /README\.md:300: "Boundary guidance at original line 300\."/);
@@ -261,6 +271,7 @@ test("when guidance is recovered in separate chunks, citations retain both origi
 });
 
 test("when a citation names a real line outside the recovered chunks, the assessment remains BLOCKED", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -272,6 +283,8 @@ test("when a citation names a real line outside the recovered chunks, the assess
       changedPaths: ["src/helper.js"],
       contextPaths: ["README.md#L130-L140"],
     });
+
+    // Act
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
@@ -280,6 +293,7 @@ test("when a citation names a real line outside the recovered chunks, the assess
         citations: [CITATION, { path: "README.md", line: 450, quote: "Boundary guidance at original line 450." }],
       },
     });
+    // Assert
     assert.equal(completed.status, "BLOCKED");
     assert.match(completed.evidence, /citation README\.md:450 does not match the captured source excerpt/);
   } finally {
@@ -345,6 +359,7 @@ test("when semantic requests overlap, only the current assessment can report PAS
 });
 
 test("when additional context is requested, the refreshed request renews its nonce and supersedes the previous one", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -355,30 +370,37 @@ test("when additional context is requested, the refreshed request renews its non
       repositoryRoot: fixture.root,
       changedPaths: ["src/helper.js", "src/caller.js"],
     });
+
+    // Act
     const refreshed = await readSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       contextPaths: ["src/caller.js"],
     });
 
+    // Assert
     assert.notEqual(refreshed.reviewRequest.requestId, prepared.reviewRequest.requestId);
     assert.notEqual(refreshed.reviewRequest.nonce, prepared.reviewRequest.nonce);
     assert.deepEqual(refreshed.reviewRequest.scope.contextPaths, ["src/caller.js"]);
     assert.equal(refreshed.reviewRequest.context.targetedContext[0].content, CALLER_SOURCE);
 
+    // Act
     const oldAssessment = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment: passAssessment(prepared.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(oldAssessment.status, "BLOCKED");
     assert.match(oldAssessment.evidence, /superseded/);
 
+    // Act
     const newAssessment = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: refreshed.reviewRequest.path,
       assessment: passAssessment(refreshed.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(newAssessment.status, "PASS");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -386,10 +408,12 @@ test("when additional context is requested, the refreshed request renews its non
 });
 
 test("when requested context is unavailable, semantic completion cannot report PASS", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
     const check = await discoverSemanticCheck(fixture);
+    // Act
     const prepared = await prepareSemanticEvaluation({
       check,
       cwd: fixture.root,
@@ -397,14 +421,17 @@ test("when requested context is unavailable, semantic completion cannot report P
       changedPaths: ["src/helper.js", "src/caller.js"],
       contextPaths: ["src/missing-caller.js"],
     });
+    // Assert
     assert.equal(prepared.status, "BLOCKED");
     assert.equal(prepared.reviewRequest.missingContext.some(reason => reason.includes("src/missing-caller.js")), true);
 
+    // Act
     const result = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment: passAssessment(prepared.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(result.status, "BLOCKED");
     assert.match(result.evidence, /required context is unavailable/);
   } finally {
@@ -413,6 +440,7 @@ test("when requested context is unavailable, semantic completion cannot report P
 });
 
 test("when changed source becomes stale, an earlier assessment cannot complete", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -425,16 +453,20 @@ test("when changed source becomes stale, an earlier assessment cannot complete",
     });
     await writeFile(join(fixture.root, "src", "helper.js"), "export function helper(value) { return value + 1; }\n");
 
+    // Act
     const staleRead = await readSemanticEvaluation({ cwd: fixture.root, requestPath: prepared.reviewRequest.path });
+    // Assert
     assert.equal(staleRead.status, "BLOCKED");
     assert.equal(staleRead.reviewRequest, undefined);
     assert.match(staleRead.evidence, /source or project context changed/);
 
+    // Act
     const staleAssessment = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment: passAssessment(prepared.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(staleAssessment.status, "BLOCKED");
     assert.match(staleAssessment.evidence, /source or project context changed/);
   } finally {
@@ -443,6 +475,7 @@ test("when changed source becomes stale, an earlier assessment cannot complete",
 });
 
 test("when a request file is tampered with, completion fails closed", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -457,11 +490,13 @@ test("when a request file is tampered with, completion fails closed", async () =
     storedRequest.payload.standard.gold = "Changed after the verifier captured the supplied standard.";
     await writeFile(prepared.reviewRequest.path, JSON.stringify(storedRequest));
 
+    // Act
     const result = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment: passAssessment(prepared.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(result.status, "BLOCKED");
     assert.match(result.evidence, /tampered with/);
   } finally {
@@ -470,6 +505,7 @@ test("when a request file is tampered with, completion fails closed", async () =
 });
 
 test("when an assessment has already been consumed, it cannot complete the request again", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -482,18 +518,22 @@ test("when an assessment has already been consumed, it cannot complete the reque
     });
     const assessment = passAssessment(prepared.reviewRequest.requestId);
 
+    // Act
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment,
     });
+    // Assert
     assert.equal(completed.status, "PASS");
 
+    // Act
     const repeated = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
       assessment,
     });
+    // Assert
     assert.equal(repeated.status, "BLOCKED");
     assert.match(repeated.evidence, /already been consumed/);
   } finally {
@@ -502,6 +542,7 @@ test("when an assessment has already been consumed, it cannot complete the reque
 });
 
 test("when a newer request supersedes an older one, only the current assessment can complete", async () => {
+  // Arrange
   const fixture = await createSemanticFixture();
 
   try {
@@ -512,22 +553,28 @@ test("when a newer request supersedes an older one, only the current assessment 
       repositoryRoot: fixture.root,
       changedPaths: ["src/helper.js", "src/caller.js"],
     });
+
+    // Act
     const second = await prepareSemanticEvaluation({
       check,
       cwd: fixture.root,
       repositoryRoot: fixture.root,
       changedPaths: ["src/helper.js", "src/caller.js"],
     });
+    // Assert
     assert.notEqual(first.reviewRequest.requestId, second.reviewRequest.requestId);
 
+    // Act
     const supersededAssessment = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: first.reviewRequest.path,
       assessment: passAssessment(first.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(supersededAssessment.status, "BLOCKED");
     assert.match(supersededAssessment.evidence, /superseded/);
 
+    // Act
     const currentAssessment = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: second.reviewRequest.path,
@@ -539,6 +586,7 @@ test("when a newer request supersedes an older one, only the current assessment 
         citations: [CITATION],
       },
     });
+    // Assert
     assert.equal(currentAssessment.status, "FAIL");
     assert.equal(currentAssessment.evaluation.requestId, second.reviewRequest.requestId);
   } finally {
@@ -547,6 +595,7 @@ test("when a newer request supersedes an older one, only the current assessment 
 });
 
 test("when a corrected change deletes an untracked helper, the fresh request retains its prior source as deletion evidence", async () => {
+  // Arrange
   const fixture = await createSemanticFixture({ untrackedHelper: true });
 
   try {
@@ -557,6 +606,8 @@ test("when a corrected change deletes an untracked helper, the fresh request ret
       repositoryRoot: fixture.root,
       changedPaths: ["src/helper.js", "src/caller.js"],
     });
+
+    // Act
     const initialFailure = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: first.reviewRequest.path,
@@ -568,8 +619,10 @@ test("when a corrected change deletes an untracked helper, the fresh request ret
         citations: [CITATION],
       },
     });
+    // Assert
     assert.equal(initialFailure.status, "FAIL");
 
+    // Act
     await writeFile(join(fixture.root, "src", "caller.js"), "export const result = 1;\n");
     await rm(join(fixture.root, "src", "helper.js"));
     const corrected = await prepareSemanticEvaluation({
@@ -578,16 +631,19 @@ test("when a corrected change deletes an untracked helper, the fresh request ret
       repositoryRoot: fixture.root,
       changedPaths: ["src/helper.js", "src/caller.js"],
     });
+    // Assert
     const deletedHelper = corrected.reviewRequest.context.changedCode.find(record => record.path === "src/helper.js");
     assert.equal(deletedHelper.state, "deleted");
     assert.equal(deletedHelper.content, HELPER_SOURCE);
     assert.deepEqual(corrected.reviewRequest.missingContext, []);
 
+    // Act
     const correctedPass = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: corrected.reviewRequest.path,
       assessment: passAssessment(corrected.reviewRequest.requestId),
     });
+    // Assert
     assert.equal(correctedPass.status, "PASS");
     assert.match(correctedPass.evidence, /src\/helper\.js:1 \(deleted\)/);
   } finally {
@@ -596,6 +652,7 @@ test("when a corrected change deletes an untracked helper, the fresh request ret
 });
 
 test("when a project requirement has no provider, it blocks unless a reasoned bounded suppression applies", async () => {
+  // Arrange
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-requirement-"));
   const packageDirectory = join(root, "plugins");
   await mkdir(join(root, "src"), { recursive: true });
@@ -606,15 +663,19 @@ test("when a project requirement has no provider, it blocks unless a reasoned bo
     const projectConfigPath = join(root, ".omp-verifier.json");
     const requirements = [{ id: "publisher:required", path: "src/**" }];
     await writeFile(projectConfigPath, JSON.stringify({ requirements }));
+
+    // Act
     const missingProvider = await runAutomaticVerification({
       cwd: root,
       repositoryRoot: root,
       changedPaths: ["src/example.js"],
       packageDirectory,
     });
+    // Assert
     assert.equal(missingProvider.find(result => result.id === "publisher:required").status, "BLOCKED");
     assert.match(missingProvider.find(result => result.id === "publisher:required").summary, /provider is not installed/);
 
+    // Arrange
     await writeFile(projectConfigPath, JSON.stringify({
       requirements,
       suppressions: [
@@ -622,16 +683,19 @@ test("when a project requirement has no provider, it blocks unless a reasoned bo
         { id: "publisher:undeclared", path: "src/**", reason: "This id is not declared as a project requirement." },
       ],
     }));
+    // Act
     const suppressedProvider = await runAutomaticVerification({
       cwd: root,
       repositoryRoot: root,
       changedPaths: ["src/example.js"],
       packageDirectory,
     });
+    // Assert
     assert.equal(suppressedProvider.find(result => result.id === "publisher:required").status, "SUPPRESSED");
     assert.match(suppressedProvider.find(result => result.id === "publisher:required").evidence, /owner approved/);
     assert.equal(suppressedProvider.find(result => result.id === "publisher:undeclared").status, "BLOCKED");
 
+    // Arrange
     const packagePath = join(packageDirectory, "publisher");
     await mkdir(packagePath, { recursive: true });
     await writeFile(join(packagePath, "package.json"), JSON.stringify({
@@ -649,12 +713,14 @@ test("when a project requirement has no provider, it blocks unless a reasoned bo
     await writeFile(join(packagePath, "required.mjs"), 'process.stdout.write(JSON.stringify({ status: "PASS", summary: "Required provider ran" }));\n');
     await writeFile(projectConfigPath, JSON.stringify({ requirements }));
 
+    // Act
     const installedProvider = await runAutomaticVerification({
       cwd: root,
       repositoryRoot: root,
       changedPaths: ["src/example.js"],
       packageDirectory,
     });
+    // Assert
     assert.equal(installedProvider.find(result => result.id === "publisher:required").status, "PASS");
     assert.deepEqual(installedProvider.find(result => result.id === "publisher:required").matches, [
       { path: "src/example.js", trigger: "src/**" },
@@ -665,6 +731,7 @@ test("when a project requirement has no provider, it blocks unless a reasoned bo
 });
 
 test("when a manifest declares unsupported semantic modes or context, discovery blocks the actual check id", async () => {
+  // Arrange
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-unsupported-mode-"));
   const packageDirectory = join(root, "plugins");
   const packagePath = join(packageDirectory, "publisher");
@@ -696,7 +763,9 @@ test("when a manifest declares unsupported semantic modes or context, discovery 
   );
 
   try {
+    // Act
     const discovery = await discoverVerificationChecks({ packageDirectory });
+    // Assert
     assert.deepEqual(discovery.checks, []);
     assert.equal(discovery.blockedResults.find(result => result.id === "publisher:unknown-mode").status, "BLOCKED");
     assert.match(discovery.blockedResults.find(result => result.id === "publisher:unknown-mode").evidence, /unsupported verification mode/);
