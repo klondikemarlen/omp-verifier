@@ -197,7 +197,45 @@ function recordFor(path, result, source) {
 }
 
 function previousSource(previousContext, path) {
-  return previousContext?.changedCode?.find(record => record.path === path && typeof record.content === "string")?.content;
+  const records = previousContext?.changedCode?.filter(record => record.path === path && typeof record.content === "string") ?? [];
+  const coverage = previousContext?.changedCodeCoverage?.find(record => record.path === path);
+  if (records.length !== 1 || coverage || records[0].partial || records[0].startLine > 1) return undefined;
+  return records[0].content;
+}
+
+function disjointLineRanges(selectors) {
+  const ranges = selectors
+    .map(({ startLine, endLine }) => [startLine, endLine])
+    .sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+  const chunks = [];
+  let coveredEnd = 0;
+  for (const [start, end] of ranges) {
+    if (end <= coveredEnd) continue;
+
+    chunks.push([Math.max(start, coveredEnd + 1), end]);
+    coveredEnd = end;
+  }
+  return chunks;
+}
+
+function lineCoverage(ranges, lineCount) {
+  const coveredRanges = [];
+  for (const [start, end] of ranges) {
+    const previous = coveredRanges[coveredRanges.length - 1];
+    if (previous && start <= previous[1] + 1) {
+      previous[1] = Math.max(previous[1], Math.min(end, lineCount));
+    } else {
+      coveredRanges.push([start, Math.min(end, lineCount)]);
+    }
+  }
+  const omittedRanges = [];
+  let nextLine = 1;
+  for (const [start, end] of coveredRanges) {
+    if (start > nextLine) omittedRanges.push([nextLine, start - 1]);
+    nextLine = Math.max(nextLine, end + 1);
+  }
+  if (nextLine <= lineCount) omittedRanges.push([nextLine, lineCount]);
+  return { coveredRanges, omittedRanges, complete: omittedRanges.length === 0 };
 }
 
 async function deletedProjectSource(root, path) {
@@ -243,6 +281,7 @@ function contextFingerprint(context) {
   return sha256(JSON.stringify({
     changedPaths: context.changedPaths,
     changedCode: context.changedCode,
+    changedCodeCoverage: context.changedCodeCoverage,
     callers: context.callers,
     siblings: context.siblings,
     projectGuidance: context.projectGuidance,
@@ -295,6 +334,8 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const budget = { used: 0, paths: new Set(), truncated: false };
   const changedCode = [];
   const missingChangedPaths = [];
+  const changedCodeCoverage = [];
+  const changedSelectors = new Map();
   for (const path of normalizedChangedPaths) {
     const result = await readProjectText(root, path);
     if (result.missing) {
@@ -310,6 +351,66 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
         content: priorContent,
         previousSha256: sha256(priorContent),
       });
+      continue;
+    }
+    if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
+      const selectorsForPath = requestedContext.filter(selector => selector.path === path && selector.startLine);
+      if (selectorsForPath.length) changedSelectors.set(path, true);
+      if (!selectorsForPath.length) {
+        changedCode.push({ path, state: "unavailable", reason: result.error });
+        missingChangedPaths.push(path);
+        continue;
+      }
+      const chunks = [];
+      let failed = false;
+      let failureReason;
+      let identity;
+      for (const [startLine, endLine] of disjointLineRanges(selectorsForPath)) {
+        const chunk = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine, endLine });
+        if (chunk.error || chunk.missing) {
+          failed = true;
+          failureReason = chunk.error ?? "source disappeared while selected ranges were being captured";
+          break;
+        }
+        if (identity && (identity.sha256 !== chunk.sha256 || identity.size !== chunk.size || identity.lineCount !== chunk.lineCount)) {
+          failed = true;
+          failureReason = "full-source identity changed between selected ranges";
+          break;
+        }
+        identity ??= { sha256: chunk.sha256, size: chunk.size, lineCount: chunk.lineCount };
+        chunks.push({ chunk, startLine, endLine });
+      }
+      if (failed || !identity) {
+        changedCode.push({ path, state: "unavailable", reason: failureReason ?? "selected changed source ranges could not be captured consistently" });
+        missingChangedPaths.push(path);
+        changedCodeCoverage.push({ path, lineCount: identity?.lineCount ?? null, coveredRanges: [], omittedRanges: identity?.lineCount ? [[1, identity.lineCount]] : [], complete: false });
+        continue;
+      }
+      const records = chunks.map(({ chunk }) => recordFor(path, {
+        ...chunk,
+        lineCount: identity.lineCount,
+        partial: true,
+      }, "changed-code"));
+      const admittedRanges = [];
+      let admissionFailed = false;
+      for (let index = 0; index < records.length; index += 1) {
+        if (!addRecord(changedCode, records[index], budget)) {
+          admissionFailed = true;
+          break;
+        }
+        admittedRanges.push([chunks[index].startLine, chunks[index].endLine]);
+      }
+      const coverage = lineCoverage(admittedRanges, identity.lineCount);
+      changedCodeCoverage.push({ path, lineCount: identity.lineCount, ...coverage });
+      if (admissionFailed || !coverage.complete) {
+        changedCode.push({
+          path,
+          state: "unavailable",
+          reason: admissionFailed ? "context evidence limit reached" : "selected ranges do not cover the complete changed source",
+        });
+        missingChangedPaths.push(path);
+      }
+      changedSelectors.set(path, true);
       continue;
     }
     if (result.error) {
@@ -329,6 +430,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const missingContextPaths = [];
   for (const selector of requestedContext) {
     const { path } = selector;
+    if (changedSelectors.has(path)) continue;
     const result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, selector.startLine ? selector : undefined);
     if (result.missing || result.error) {
       targetedContext.push({ path, state: "unavailable", reason: result.error ?? "path is absent" });
@@ -394,6 +496,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const context = {
     changedPaths: normalizedChangedPaths,
     changedCode,
+    ...(changedCodeCoverage.length ? { changedCodeCoverage } : {}),
     callers: callers.length ? callers : { status: "none-found", explanation: "No current project source file referenced the changed file names in the inspected inventory." },
     siblings: siblings.length ? siblings : { status: "none-found", explanation: "No sibling source files were found in the changed files' directories." },
     projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },

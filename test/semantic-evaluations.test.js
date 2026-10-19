@@ -21,6 +21,34 @@ const CITATION = {
   quote: HELPER_SOURCE.trim(),
 };
 
+function oversizedHelperSource(ruleCount = 800) {
+  const rules = Array.from({ length: ruleCount }, (_, index) => {
+    const identifier = `event-${String(index + 1).padStart(4, "0")}`;
+    return `  ["${identifier}", { owner: "team-${index % 17}", retryable: ${index % 2 === 0} }],`;
+  });
+
+  return [
+    "const eventRules = new Map([",
+    ...rules,
+    "]);",
+    "",
+    "export function eventPolicy(identifier) {",
+    "  const policy = eventRules.get(identifier);",
+    "  if (!policy) throw new Error(`Unsupported event: ${identifier}`);",
+    "  return policy;",
+    "}",
+    "",
+  ].join("\n");
+}
+
+function citationFor(path, source, line) {
+  return {
+    path,
+    line,
+    quote: source.split(/\r?\n/)[line - 1],
+  };
+}
+
 function semanticManifest(contract = "./verifications/alignment.json") {
   return {
     name: "publisher",
@@ -63,7 +91,7 @@ async function initializeGit(root, { untrackedHelper = false } = {}) {
   execFileSync("git", ["commit", "--quiet", "-m", "fixture baseline"], { cwd: root });
 }
 
-async function createSemanticFixture({ untrackedHelper = false } = {}) {
+async function createSemanticFixture({ untrackedHelper = false, helperSource = HELPER_SOURCE } = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-semantic-"));
   const packagePath = join(root, "plugins", "publisher");
   await mkdir(join(packagePath, "verifications"), { recursive: true });
@@ -76,7 +104,7 @@ async function createSemanticFixture({ untrackedHelper = false } = {}) {
     "# Supplied standard\n\n## Module Boundary Alignment\n\nA module owns an invariant or reusable behavior. Forwarding alone is not enough.\n",
   );
   await writeFile(join(root, "AGENTS.md"), "Keep project modules aligned with their owned invariants.\n");
-  await writeFile(join(root, "src", "helper.js"), HELPER_SOURCE);
+  await writeFile(join(root, "src", "helper.js"), helperSource);
   await writeFile(join(root, "src", "caller.js"), CALLER_SOURCE);
   await initializeGit(root, { untrackedHelper });
   return { root, packageDirectory: join(root, "plugins"), packagePath };
@@ -99,6 +127,352 @@ function passAssessment(requestId, citation = CITATION) {
     citations: [citation],
   };
 }
+
+function sourceRangeSelectors(path, lineCount, chunkSize = 180) {
+  const selectors = [];
+  for (let startLine = 1; startLine <= lineCount; startLine += chunkSize) {
+    const endLine = Math.min(lineCount, startLine + chunkSize - 1);
+    selectors.push(`${path}#L${startLine}-L${endLine}`);
+  }
+  return selectors;
+}
+
+test("when changed source exceeds the per-record limit, an unrequested assessment remains BLOCKED", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const changedSource = prepared.reviewRequest.context.changedCode.find(record => record.path === "src/helper.js");
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.ok(Buffer.byteLength(source) > 16_000);
+    assert.equal(changedSource.state, "unavailable");
+    assert.ok(prepared.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when only part of oversized changed source is recovered, a cited assessment remains BLOCKED", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L12"],
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    const coverage = recovered.reviewRequest.context.changedCodeCoverage.find(record => record.path === "src/helper.js");
+    assert.deepEqual(coverage.coveredRanges, [[1, 12]]);
+    assert.ok(coverage.omittedRanges.length > 0);
+    assert.equal(coverage.complete, false);
+    assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when bounded changed-source chunks cover the whole file, citations retain original source lines", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const sourceLines = source.split(/\r?\n/);
+  const lineCount = sourceLines.length;
+  const chunkSize = 180;
+  const selectors = sourceRangeSelectors("src/helper.js", lineCount, chunkSize);
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: selectors,
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: {
+        ...passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 2)),
+        status: "PASS",
+        summary: "The classifier uses a meaningful event-policy table.",
+        rationale: "It owns supported-event lookup and rejects unknown identifiers.",
+        citations: [
+          citationFor("src/helper.js", source, 2),
+          citationFor("src/helper.js", source, lineCount - 2),
+        ],
+      },
+    });
+
+    // Assert
+    const coverage = recovered.reviewRequest.context.changedCodeCoverage.find(record => record.path === "src/helper.js");
+    assert.equal(coverage.complete, true);
+    assert.equal(coverage.coveredRanges[0][0], 1);
+    assert.equal(coverage.coveredRanges.at(-1)[1], lineCount);
+    assert.deepEqual(coverage.omittedRanges, []);
+    assert.deepEqual(recovered.reviewRequest.context.missingChangedPaths, []);
+    assert.equal(
+      recovered.reviewRequest.context.targetedContext.some(record => record.path === "src/helper.js"),
+      false,
+    );
+    assert.equal(completed.status, "PASS");
+    assert.match(completed.evidence, new RegExp(`src/helper\\.js:2:`));
+    assert.match(completed.evidence, new RegExp(`src/helper\\.js:${lineCount - 2}:`));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when recovery supersedes an oversized-source request, the older request cannot complete", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L12"],
+    });
+    const superseded = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.notEqual(recovered.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.equal(superseded.status, "BLOCKED");
+    assert.match(superseded.evidence, /superseded/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when source changes outside the recovered excerpt, the captured request is stale", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L12"],
+    });
+    const changedSource = source.replace(
+      '["event-0500", { owner: "team-6", retryable: false }]',
+      '["event-0500", { owner: "team-6", retryable: true }]',
+    );
+    await writeFile(join(fixture.root, "src", "helper.js"), changedSource);
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.notEqual(changedSource, source);
+    assert.equal(completed.status, "BLOCKED");
+    assert.match(completed.evidence, /source or project context changed/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when changed source exceeds the source-size limit, requested excerpts cannot establish completeness", async () => {
+  // Arrange
+  const source = oversizedHelperSource(5_000);
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L10", "src/helper.js#L4-L20"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.ok(Buffer.byteLength(source) > 256_000);
+    assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when recovered changed-source evidence exceeds the total budget, completion stays BLOCKED", async () => {
+  // Arrange
+  const source = oversizedHelperSource(2_300);
+  const lineCount = source.split(/\r?\n/).length;
+  const fixture = await createSemanticFixture({ helperSource: source });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: sourceRangeSelectors("src/helper.js", lineCount, 80),
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.ok(Buffer.byteLength(source) > 128_000);
+    assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when an oversized recovered file is deleted, a partial excerpt is not treated as complete prior source", async () => {
+  // Arrange
+  const source = oversizedHelperSource();
+  const fixture = await createSemanticFixture({ untrackedHelper: true, helperSource: source });
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const prepared = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L12"],
+    });
+    await rm(join(fixture.root, "src", "helper.js"));
+
+    // Act
+    const deleted = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: deleted.reviewRequest.path,
+      assessment: passAssessment(deleted.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
+    });
+
+    // Assert
+    assert.notEqual(recovered.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.ok(deleted.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
+    assert.equal(deleted.reviewRequest.context.changedCode.some(record => record.path === "src/helper.js" && record.state === "deleted"), false);
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a changed source path is absent and unproven, an assessment cannot report PASS", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture();
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      repositoryRoot: fixture.root,
+      changedPaths: ["src/missing.js"],
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.ok(prepared.reviewRequest.context.missingChangedPaths.includes("src/missing.js"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test("when an assessment cites unobserved source, completion is BLOCKED", async () => {
   // Arrange
