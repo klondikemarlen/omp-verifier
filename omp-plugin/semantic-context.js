@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
@@ -92,6 +92,42 @@ async function inventoryPaths(root, changedPaths) {
   ])]
     .filter(path => path && sourceFile(path))
     .sort();
+}
+
+async function siblingDirectoryInventory(root, changedPaths) {
+  const directories = [...new Set(changedPaths.map(path => dirname(path)))].sort();
+  const inventories = [];
+  let inspectedEntries = 0;
+  for (const path of directories) {
+    const inventory = { path, files: [], complete: false };
+    inventories.push(inventory);
+    try {
+      const directory = await realpath(resolve(root, path));
+      if (!insideRoot(root, directory)) throw new Error("directory resolves outside the project");
+      if (inspectedEntries >= MAX_INVENTORY_FILES) throw new Error("sibling directory entry limit reached");
+
+      const entries = await opendir(directory);
+      let truncated = false;
+      for await (const entry of entries) {
+        if (inspectedEntries >= MAX_INVENTORY_FILES) {
+          truncated = true;
+          break;
+        }
+        inspectedEntries += 1;
+        const filePath = path === "." ? entry.name : `${path}/${entry.name}`;
+        if (codeFile(filePath) && !changedPaths.includes(filePath)
+          && (entry.isFile() || entry.isSymbolicLink())) {
+          inventory.files.push(filePath);
+        }
+      }
+      inventory.complete = !truncated;
+      if (truncated) inventory.reason = "sibling directory entry limit reached";
+    } catch (error) {
+      inventory.reason = error.message;
+    }
+    inventory.files.sort();
+  }
+  return inventories;
 }
 
 function relevantGuidance(path, changedPaths) {
@@ -284,6 +320,7 @@ function contextFingerprint(context) {
     changedCodeCoverage: context.changedCodeCoverage,
     callers: context.callers,
     siblings: context.siblings,
+    siblingInventory: context.siblingInventory,
     projectGuidance: context.projectGuidance,
     targetedContext: context.targetedContext,
     sourceInventory: context.sourceInventory,
@@ -304,7 +341,11 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     context.startLine || !selectors.some(other => other.path === context.path && other.startLine));
   const normalizedContextPaths = [...new Set(requestedContext.map(context => context.path))].sort();
 
-  const paths = await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]);
+  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths);
+  const paths = [...new Set([
+    ...await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]),
+    ...siblingInventory.flatMap(inventory => inventory.files),
+  ])].sort();
   const inventoryWasTruncated = paths.length > MAX_INVENTORY_FILES;
   const orderedInventoryPaths = prioritizedInventory(paths, normalizedChangedPaths, normalizedContextPaths);
   const selectedInventoryPaths = orderedInventoryPaths.slice(0, MAX_INVENTORY_FILES);
@@ -499,6 +540,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     ...(changedCodeCoverage.length ? { changedCodeCoverage } : {}),
     callers: callers.length ? callers : { status: "none-found", explanation: "No current project source file referenced the changed file names in the inspected inventory." },
     siblings: siblings.length ? siblings : { status: "none-found", explanation: "No sibling source files were found in the changed files' directories." },
+    siblingInventory,
     projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },
     targetedContext: targetedContext.length ? targetedContext : [],
     sourceInventory,
@@ -536,15 +578,18 @@ export function semanticContextMissing(requiredContext, captured) {
       const stem = basename(changedPath).replace(/\.[^.]+$/, "");
       return stem && record.content.includes(stem);
     }));
-  const hasSiblingEvidence = (Array.isArray(context.siblings) && context.siblings.length > 0)
-    || targetedRecords.some(record => codeFile(record.path)
-      && context.changedPaths.some(changedPath => dirname(changedPath) === dirname(record.path)));
+  const siblingRecords = [
+    ...(Array.isArray(context.siblings) ? context.siblings : []),
+    ...targetedRecords.filter(record => codeFile(record.path) && !context.changedPaths.includes(record.path)),
+  ];
+  const hasCompleteSiblingBoundaries = context.siblingInventory.every(inventory =>
+    inventory.complete && (inventory.files.length === 0
+      || siblingRecords.some(record => dirname(record.path) === inventory.path)));
   if (requiredContext.includes("callers") && !hasCallerEvidence
     && (!context.sourceInventory.complete || context.evidenceTruncated?.callers)) {
     missing.push("caller retrieval is incomplete within the bounded project evidence");
   }
-  if (requiredContext.includes("siblings") && !hasSiblingEvidence
-    && (!context.sourceInventory.complete || context.evidenceTruncated?.siblings)) {
+  if (requiredContext.includes("siblings") && !hasCompleteSiblingBoundaries) {
     missing.push("sibling retrieval is incomplete within the bounded project evidence");
   }
   if (requiredContext.includes("project-guidance")) {
