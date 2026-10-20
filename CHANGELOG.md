@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.9 - 2026-10-20
+
+- Preserve validated structured BLOCKED results from nonzero deterministic check exits, including the original summary, prerequisite evidence, and next check.
+- Keep contradictory PASS/nonzero exits and malformed or unavailable execution fail-closed; advisor routing, cadence, and completion policy are unchanged.
+
 ## 0.10.8 - 2026-10-19
 
 - Document the existing coordinator's explicit pre-cleanup source handoff for transient scripts, without an earlier model assessment or a second capture runtime.

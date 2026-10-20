@@ -107,7 +107,7 @@ An entry without `mode` is a package-relative `.mjs` module. The verifier execut
 }
 ```
 
-`PASS`, `FAIL`, and `BLOCKED` are the only valid statuses. Invalid manifests, duplicate IDs, path traversal, missing entries, timeouts, non-zero exits, oversized output, malformed JSON, and missing prerequisites fail closed as `BLOCKED`; none may become `PASS`.
+`PASS`, `FAIL`, and `BLOCKED` are the only valid statuses. Valid structured `FAIL` and `BLOCKED` results survive nonzero exits when stderr is empty. Invalid manifests, duplicate IDs, path traversal, missing entries, timeouts, other non-zero exits, oversized output, malformed JSON, and missing prerequisites fail closed as `BLOCKED`; none may become `PASS`.
 
 “All checks” means all valid checks explicitly declared by installed plugin manifests. It does not mean scanning remote repositories, guessing from tool names, or running package-maintainer `scripts/verify-*.mjs` files. Verification entries are trusted installed code, not a sandbox; the verifier accepts no model-supplied command or executable path.
 
@@ -209,7 +209,7 @@ Automatic executable entries receive matching paths as the `OMP_VERIFIER_CHANGED
 
 ## Result and Evidence Semantics
 
-An entry writes one JSON object to stdout with a required `status` (`PASS`, `FAIL`, or `BLOCKED`) and non-empty `summary`; `evidence` and `nextCheck` are optional. The runner bounds output and text fields, validates the shape, and enforces the manifest timeout. Malformed output, stderr, timeout, missing entry, invalid manifest, or other unsuccessful execution cannot become `PASS`. A structured `FAIL` is retained when the result is valid and stderr is empty, including on a non-zero process exit; other non-zero exits are `BLOCKED`.
+An entry writes one JSON object to stdout with a required `status` (`PASS`, `FAIL`, or `BLOCKED`) and non-empty `summary`; `evidence` and `nextCheck` are optional. The runner bounds output and text fields, validates the shape, and enforces the manifest timeout. Malformed output, stderr, timeout, missing entry, invalid manifest, or other unsuccessful execution cannot become `PASS`. Structured `FAIL` and `BLOCKED` results retain their summary, evidence, and next check when valid and stderr is empty, including on a non-zero process exit. A structured `PASS` with a nonzero exit remains `BLOCKED`.
 
 Each result has an `id`, `status`, and `summary`, plus optional `evidence` and `nextCheck`; automatic selected or suppressed results include `matches` carrying changed `path` and matched `trigger`. Completed semantic results also carry `standard` (ID/source/quality standard, with the version-1 `gold` field) and `evaluation` (mode/request ID). Pending semantic results carry `reviewRequest` instead.
 
