@@ -433,7 +433,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
   } catch (error) {
     if (typeof error?.code === "number" && !error.stderr) {
       const result = resultFromOutput(check, String(error.stdout || "").trim());
-      if (result.status === "FAIL") return result;
+      if (result.status === "FAIL" || result.status === "BLOCKED") return result;
     }
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return blocked(check.id, "Verification output exceeded the limit");
     if (error?.killed || error?.signal === "SIGTERM") return blocked(check.id, "Verification timed out");
