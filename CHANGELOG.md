@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.10 - 2026-10-20
+
+- Keep supported semantic assessments pending across policy interruptions; follow the policy, then resume with current evidence or prepare a fresh same-scope request when necessary.
+- Reserve silent completion for completed applicable checks; unavailable execution prerequisites report concrete BLOCKED diagnostics instead of silently abandoning assessment.
+
 ## 0.10.9 - 2026-10-20
 
 - Preserve validated structured BLOCKED results from nonzero deterministic check exits, including the original summary, prerequisite evidence, and next check.
