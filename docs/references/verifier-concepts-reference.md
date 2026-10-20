@@ -167,6 +167,20 @@ An oversized required changed file initially remains unavailable. Recover it wit
 
 Requests are private, atomically written, per-project operational cache, not a knowledge store or reusable PASS cache. Per-check locks serialize overlapping preparation/completion. A busy or abandoned lock is BLOCKED; it is not automatically stolen. Only remove a reported abandoned lock after confirming the owner PID recorded in it has exited.
 
+### Transient Source Handoff
+
+A temporary smoke script can be executed and cleaned up before the first model assessment. Set `coordinator` to the installed `bin/omp-verifier.js` path shown in the generated `<agent-dir>/verifier/WATCHDOG.md`; the package's CLI name need not be on the shell's PATH. Before deleting the script, explicitly prepare its source:
+
+```bash
+node "$coordinator" automatic 'api/.review-smoke.ts' --reporter json
+```
+
+Run this after the script's final edit and execution, immediately before cleanup. Inspect the semantic result's `reviewRequest.context.changedCode`: it must contain that exact path's complete whole-file source record, not an unavailable or partial record. This existing handoff requires a single whole-file record within the 16 KB bound; recovered ranges are not a deletion snapshot. A `BLOCKED` result with a `reviewRequest` means assessment is pending; it is not a semantic failure or a PASS. Preserve any actual deterministic FAIL/BLOCKED results returned alongside it. Do not clean up source that has not been captured completely within the existing bounds.
+
+Remove the disposable file using the project's normal cleanup, then let the final changed-turn check run `automatic` for that same path. For an explicit recheck, run the same command again. It prepares a new request, retaining the authenticated prior source as `state: "deleted"` with its `previousSha256`. Inspect and assess this new request, using original source-line citations; do not evaluate the superseded pre-cleanup request. No earlier model review, source restoration, broader path selection, or advisor-cadence change is required.
+
+This handoff uses the existing private per-project, per-check request slot, not a durable source archive. Capture all transient paths needed by that check together and do not interleave another preparation that drops them before the final capture. Re-capture after any source edit while the file still exists. Missing, tampered, superseded, incomplete, or pruned prior evidence cannot establish deletion provenance; an absent path without trusted prior or Git source remains BLOCKED. Execution success and a clean Git diff never replace the final semantic assessment.
+
 ## Completion Boundary
 
 This integration requires evidence-backed correction through the existing advisor path; it does not implement an atomic completion gate. The plugin does not register a `session_stop` veto or bind main-session settlement to completion of the named verifier's current assessment.
