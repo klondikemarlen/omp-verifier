@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.11 - 2026-10-20
+
+- Capture bounded per-directory sibling inventories so complete absence remains valid evidence when unrelated repository-wide source coverage is truncated.
+- Keep unreadable, uninspected, and over-budget sibling boundaries BLOCKED; retain independent caller coverage, source citations, and stale/tampered-request checks.
+
 ## 0.10.10 - 2026-10-20
 
 - Keep supported semantic assessments pending across policy interruptions; follow the policy, then resume with current evidence or prepare a fresh same-scope request when necessary.
