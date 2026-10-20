@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.8 - 2026-10-19
+
+- Document the existing coordinator's explicit pre-cleanup source handoff for transient scripts, without an earlier model assessment or a second capture runtime.
+- Keep uncaptured absent paths BLOCKED; explain the bounded current-request lifetime, original-source identity, and required fresh assessment after cleanup.
+
 ## 0.10.7 - 2026-10-19
 
 - Use quality standard in verifier guidance, readable result labels, and current documentation while preserving the version-1 `gold` wire field and all verification semantics.
