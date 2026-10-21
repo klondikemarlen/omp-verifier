@@ -241,12 +241,13 @@ async function currentDefinition(check) {
 }
 
 
-async function captureRequest({ check, repositoryRoot, changedPaths, contextPaths, previousContext }) {
+async function captureRequest({ check, repositoryRoot, changedPaths, contextPaths, callerContextPaths = [], previousContext }) {
   const definition = await currentDefinition(check);
   const captured = await captureSemanticContext({
     repositoryRoot,
     changedPaths,
     contextPaths,
+    callerContextPaths,
     previousContext,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
@@ -272,6 +273,7 @@ async function captureRequest({ check, repositoryRoot, changedPaths, contextPath
       repositoryRoot,
       changedPaths: captured.context.changedPaths,
       contextPaths: [...contextPaths],
+      callerContextPaths: [...callerContextPaths],
     },
     context: captured.context,
     missingContext,
@@ -346,6 +348,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     repositoryRoot,
     changedPaths: payload.scope.changedPaths,
     contextPaths: payload.scope.contextPaths,
+    callerContextPaths: payload.scope.callerContextPaths,
     previousContext: payload.context,
   });
   if (captured.fingerprint !== runtime.contextFingerprint || captured.fingerprint !== payload.context.fingerprint) {
@@ -383,7 +386,7 @@ export async function prepareSemanticEvaluation({ check, cwd, changedPaths = [],
   }
 }
 
-export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [] }) {
+export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [] }) {
   let target;
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
@@ -397,8 +400,12 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
       await validateFreshness({ checkId: target.checkId, repositoryRoot: target.repositoryRoot, stored });
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
+      if (!Array.isArray(callerContextPaths)) throw new Error("callerContextPaths must be an array of project-relative paths");
       const additionalContextPaths = [...new Set([...stored.payload.scope.contextPaths, ...contextPaths])];
-      const hasAdditionalContext = additionalContextPaths.length !== stored.payload.scope.contextPaths.length;
+      const previousCallerContext = stored.payload.scope.callerContextPaths ?? [];
+      const additionalCallerContext = [...new Set([...previousCallerContext, ...callerContextPaths])];
+      const hasAdditionalContext = additionalContextPaths.length !== stored.payload.scope.contextPaths.length
+        || additionalCallerContext.length !== previousCallerContext.length;
       if (!hasAdditionalContext) return requestEnvelope(stored.payload, target.absoluteRequestPath);
 
       const check = {
@@ -413,6 +420,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         repositoryRoot: target.repositoryRoot,
         changedPaths: stored.payload.scope.changedPaths,
         contextPaths: additionalContextPaths,
+        callerContextPaths: additionalCallerContext,
         previousContext: stored.payload.context,
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));
@@ -441,6 +449,10 @@ function normalizedAssessment(assessment, payload) {
     const validatedCitations = validateSemanticCitations(citations, payload.context);
     if (!validatedCitations.some(citation => payload.scope.changedPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL citations must include a path in the current changed scope");
+    }
+    if (payload.context.callerContextPaths.length
+      && !validatedCitations.some(citation => payload.context.callerContextPaths.includes(citation.path))) {
+      throw new Error("PASS and FAIL assessments using explicit caller context must cite its captured caller or runtime source");
     }
     return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations };
   }
