@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.12 - 2026-10-21
+
+- Recover committed deleted-source evidence from authenticated local Git history before any semantic capture, including deletions followed by unrelated commits or merged through a first-parent boundary.
+- Preserve deleted scope, source hashes, original-line citations, and fail-closed handling of unavailable history and bounded source.
+
 ## 0.10.11 - 2026-10-20
 
 - Capture bounded per-directory sibling inventories so complete absence remains valid evidence when unrelated repository-wide source coverage is truncated.

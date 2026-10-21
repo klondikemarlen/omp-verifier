@@ -154,6 +154,8 @@ Context recovery prioritizes changed code, explicit files/ranges, and owning/anc
 
 Required changed code above the 16 KB record limit can be recovered with the same ranged selectors. Cover every original line within the existing source, selector, and total-evidence budgets; `changedCodeCoverage` reports covered and omitted ranges. A partial excerpt remains BLOCKED even when it contains a valid citation. Sources outside the supported bounds remain BLOCKED rather than being split or judged by size.
 
+Committed deletions can recover their prior source directly from local Git history, even before the first semantic capture. Keep the deleted path in the changed scope; unavailable history or source outside the bounded capture limits stays BLOCKED.
+
 For a disposable source file that will be removed before final-yield review, use the [pre-cleanup source handoff](docs/references/verifier-concepts-reference.md#transient-source-handoff) while its final contents still exist. This uses the existing coordinator without an earlier model review; it cannot recover never-captured source retroactively.
 
 Native blocker delivery initiates correction but is not a hard completion gate. This plugin does not register a `session_stop` veto or atomically wait for the current named-advisor result before settlement. See the [completion boundary](docs/references/verifier-concepts-reference.md#completion-boundary) for the native OMP dependency and supported stop-hook distinction.
