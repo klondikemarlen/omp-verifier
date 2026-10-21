@@ -274,20 +274,40 @@ function lineCoverage(ranges, lineCount) {
   return { coveredRanges, omittedRanges, complete: omittedRanges.length === 0 };
 }
 
+async function gitSource(root, reference) {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", root, "show", "--no-ext-diff", "--no-textconv", reference], {
+      encoding: "buffer",
+      maxBuffer: MAX_FILE_EVIDENCE_BYTES,
+      timeout: 5_000,
+    });
+    if (stdout.includes(0)) return undefined;
+
+    return stdout.toString("utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 async function deletedProjectSource(root, path) {
   for (const reference of [`:${path}`, `HEAD:${path}`]) {
-    try {
-      const { stdout } = await execFileAsync("git", ["-C", root, "show", "--no-ext-diff", "--no-textconv", reference], {
-        encoding: "buffer",
-        maxBuffer: MAX_FILE_EVIDENCE_BYTES,
-      });
-      if (stdout.includes(0)) return undefined;
-      return stdout.toString("utf8");
-    } catch {
-      // A new, untracked file may have no prior Git version.
-    }
+    const content = await gitSource(root, reference);
+    if (content !== undefined) return content;
   }
-  return undefined;
+
+  try {
+    const { stdout } = await execFileAsync("git", [
+      "-C", root, "log", "--first-parent", "--diff-merges=first-parent",
+      "--format=%H", "--no-patch", "--diff-filter=D", "-1", "HEAD", "--", `:(literal)${path}`,
+    ], { maxBuffer: 128, timeout: 5_000 });
+    const deletionCommit = stdout.trim();
+    if (!/^[a-f0-9]{40,64}$/.test(deletionCommit)) return undefined;
+
+    return gitSource(root, `${deletionCommit}^:${path}`);
+  } catch {
+    // Absent history, including shallow boundaries, cannot authenticate prior source.
+    return undefined;
+  }
 }
 
 function isGuidancePath(path) {

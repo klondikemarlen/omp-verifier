@@ -968,6 +968,44 @@ test("when a newer request supersedes an older one, only the current assessment 
   }
 });
 
+test("when a deletion was committed before any capture, Git history supplies the deleted source", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture();
+
+  try {
+    await rm(join(fixture.root, "src", "helper.js"));
+    await writeFile(join(fixture.root, "src", "caller.js"), "export const result = 1;\n");
+    execFileSync("git", ["add", "src"], { cwd: fixture.root });
+    execFileSync("git", ["commit", "--quiet", "-m", "remove forwarding helper"], { cwd: fixture.root });
+    await writeFile(join(fixture.root, "later.txt"), "A later unrelated commit.\n");
+    execFileSync("git", ["add", "later.txt"], { cwd: fixture.root });
+    execFileSync("git", ["commit", "--quiet", "-m", "later work"], { cwd: fixture.root });
+
+    // Act
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js", "src/caller.js"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    const deleted = prepared.reviewRequest.context.changedCode.find(record => record.path === "src/helper.js");
+    assert.equal(deleted.state, "deleted");
+    assert.equal(deleted.content, HELPER_SOURCE);
+    assert.match(deleted.previousSha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.equal(completed.status, "PASS");
+    assert.match(completed.evidence, /src\/helper\.js:1 \(deleted\)/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("when a corrected change deletes an untracked helper, the fresh request retains its prior source as deletion evidence", async () => {
   // Arrange
   const fixture = await createSemanticFixture({ untrackedHelper: true });
