@@ -138,9 +138,8 @@ test("when empty siblings are complete but caller coverage is missing, assessmen
     });
 
     // Assert
-    assert.deepEqual(prepared.reviewRequest.missingContext, [
-      "caller retrieval is incomplete within the bounded project evidence",
-    ]);
+    assert.equal(prepared.reviewRequest.context.sourceInventory.complete, false);
+    assert.ok(prepared.reviewRequest.context.callerRetrieval.omittedFiles > 0);
     assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

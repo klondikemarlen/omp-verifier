@@ -64,11 +64,12 @@ try {
       worktree: { type: "boolean", default: false },
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
+      "caller-context": { type: "string", multiple: true, default: [] },
     },
   });
   const reporter = values.reporter;
   const failuresOnly = values["failures-only"];
-  const hasSemanticOptions = values.assessment !== undefined || values.context.length > 0;
+  const hasSemanticOptions = values.assessment !== undefined || values.context.length > 0 || values["caller-context"].length > 0;
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -90,8 +91,13 @@ try {
     process.stdout.write(`${output}\n`);
     process.exitCode = blockedResults.length > 0 ? 1 : 0;
   } else if (command === "review" && positionals.length === 1 && reporter === "json" && !values.worktree && !failuresOnly && values.assessment === undefined) {
-    writeResults([await readSemanticEvaluation({ cwd, requestPath: positionals[0], contextPaths: values.context })], { reporter, failuresOnly });
-  } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && values.context.length === 0 && values.assessment !== undefined) {
+    writeResults([await readSemanticEvaluation({
+      cwd,
+      requestPath: positionals[0],
+      contextPaths: values.context,
+      callerContextPaths: values["caller-context"],
+    })], { reporter, failuresOnly });
+  } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && values.context.length === 0 && values["caller-context"].length === 0 && values.assessment !== undefined) {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
     const assessment = JSON.parse(assessmentText);
     writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
@@ -103,6 +109,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

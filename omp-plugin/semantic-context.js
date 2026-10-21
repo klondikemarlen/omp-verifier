@@ -355,13 +355,19 @@ function contextFingerprint(context) {
     projectGuidance: context.projectGuidance,
     targetedContext: context.targetedContext,
     sourceInventory: context.sourceInventory,
+    callerContextPaths: context.callerContextPaths,
   }));
 }
 
-export async function captureSemanticContext({ repositoryRoot, changedPaths, contextPaths = [], previousContext }) {
+export async function captureSemanticContext({ repositoryRoot, changedPaths, contextPaths = [], callerContextPaths = [], previousContext }) {
   const root = await realpath(repositoryRoot);
   const normalizedChangedPaths = [...new Set(changedPaths.map(path => normalizedProjectPath(path, "changed path")))].sort();
-  const selectors = contextPaths.map(contextRange).map(context => ({
+  const callerSourcePaths = new Set(callerContextPaths.map(contextRange).map(context =>
+    normalizedProjectPath(context.path, "caller context path")));
+  if ([...callerSourcePaths].some(path => normalizedChangedPaths.includes(path))) {
+    throw new Error("caller context must identify separate caller or runtime discovery source, not the changed file itself");
+  }
+  const selectors = [...new Set([...contextPaths, ...callerContextPaths])].map(contextRange).map(context => ({
     ...context,
     path: normalizedProjectPath(context.path, "context path"),
   }));
@@ -509,7 +515,9 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       missingContextPaths.push(path);
       continue;
     }
-    if (!addRecord(targetedContext, recordFor(path, result, "targeted-context"), budget)) {
+    let source = "targeted-context";
+    if (callerSourcePaths.has(path)) source = "caller-context";
+    if (!addRecord(targetedContext, recordFor(path, result, source), budget)) {
       targetedContext.push({ path, state: "unavailable", reason: "context evidence limit reached" });
       missingContextPaths.push(path);
     }
@@ -588,6 +596,16 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     guidanceRequirements,
     targetedContext: targetedContext.length ? targetedContext : [],
     sourceInventory,
+    callerContextPaths: [...callerSourcePaths].sort(),
+    callerRetrieval: {
+      inventoryFileLimit: MAX_INVENTORY_FILES,
+      inventoryReadByteLimit: MAX_INVENTORY_READ_BYTES,
+      inspectedFiles: inventoryRecords.length,
+      omittedFiles: Math.max(0, paths.length - selectedInventoryPaths.length),
+      omittedPathExamples: orderedInventoryPaths.slice(MAX_INVENTORY_FILES, MAX_INVENTORY_FILES + 30),
+      unreadable: inventoryRecords.filter(record => record.unreadable),
+      recovery: "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
+    },
     evidenceBudget: {
       maxBytes: MAX_TOTAL_EVIDENCE_BYTES,
       maxFiles: MAX_EVIDENCE_FILES,
@@ -626,10 +644,11 @@ export function semanticContextMissing(requiredContext, captured) {
     ? context.targetedContext.filter(record => record.content)
     : [];
   const hasCallerEvidence = (Array.isArray(context.callers) && context.callers.length > 0)
-    || targetedRecords.some(record => context.changedPaths.some(changedPath => {
-      const stem = basename(changedPath).replace(/\.[^.]+$/, "");
-      return stem && record.content.includes(stem);
-    }));
+    || targetedRecords.some(record => record.source === "caller-context"
+      || context.changedPaths.some(changedPath => {
+        const stem = basename(changedPath).replace(/\.[^.]+$/, "");
+        return stem && record.content.includes(stem);
+      }));
   const siblingRecords = [
     ...(Array.isArray(context.siblings) ? context.siblings : []),
     ...(Array.isArray(context.callers) ? context.callers : []),
@@ -640,7 +659,9 @@ export function semanticContextMissing(requiredContext, captured) {
       || siblingRecords.some(record => dirname(record.path) === inventory.path)));
   if (requiredContext.includes("callers") && !hasCallerEvidence
     && (!context.sourceInventory.complete || context.evidenceTruncated?.callers)) {
-    missing.push("caller retrieval is incomplete within the bounded project evidence");
+    const retrieval = context.callerRetrieval;
+    const limits = `${retrieval.inventoryFileLimit}-file inventory / ${retrieval.inventoryReadByteLimit}-byte read limits`;
+    missing.push(`caller retrieval is incomplete within the bounded project evidence (${limits}; ${retrieval.omittedFiles} files omitted; ${retrieval.unreadable.length} unreadable). Inspect context.callerRetrieval for omitted paths and exact read failures. ${retrieval.recovery}`);
   }
   if (requiredContext.includes("siblings") && !hasCompleteSiblingBoundaries) {
     missing.push("sibling retrieval is incomplete within the bounded project evidence");

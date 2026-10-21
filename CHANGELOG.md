@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.14 - 2026-10-21
+
+- Recover real runner/discovery caller context with `review --caller-context` when filename matching cannot identify a test's runtime entrypoint.
+- Preserve renewal, bounded capture, owning guidance, and source freshness; require source citations for runtime-caller claims and expose actionable caller acquisition limits without inferring global completeness or PASS.
+
 ## 0.10.13 - 2026-10-21
 
 - Keep required guidance scoped to changed paths and explicitly selected material boundaries instead of unrelated heuristic caller matches.

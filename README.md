@@ -84,7 +84,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...>
 omp-verifier automatic <changed-path...>
-omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...]
+omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
 
@@ -153,6 +153,8 @@ Preparation returns a private current review request. `review` exposes it; `--co
 Context recovery prioritizes changed code, explicit files/ranges, and owning/ancestor guidance before optional broad evidence. Oversized relevant guides expose a bounded initial excerpt with omitted ranges; recover a material section with, for example, `review <request-file> --context 'api/tests/README.md#L130-L150'`. Repeat `--context` for separate chunks and use the renewed request ID. Excerpts preserve original line numbers and hash the full bounded source so edits outside the excerpt invalidate the request. Partial capture and incomplete inventories remain explicit, not proof of complete guidance or caller coverage; unavailable material context stays BLOCKED.
 
 Changed paths and explicit material dependencies determine required owning guidance, not every heuristic caller match. Add a material caller/sibling with `--context` to include its boundary. Inspect `context.guidanceRequirements` for required-by paths and `context.evidenceBudget` for the exact capacity, admitted records, and rejections when recovery is BLOCKED; evidence that cannot coexist within those limits stays BLOCKED.
+
+For a runner-discovered test with no source importers, supply real runtime caller evidence rather than inventing an import: `review <request-file> --caller-context web/package.json --caller-context web/vitest.config.ts`. This labels captured source for the assessor; it does not infer discovery from test names or approve a no-caller claim. Explain applicability under the supplied rubric and cite both the changed test and captured runner source. Missing material callers stay BLOCKED. `context.callerRetrieval` reports inventory/read limits, omitted path examples, and unreadable records without claiming global coverage.
 
 Required changed code above the 16 KB record limit can be recovered with the same ranged selectors. Cover every original line within the existing source, selector, and total-evidence budgets; `changedCodeCoverage` reports covered and omitted ranges. A partial excerpt remains BLOCKED even when it contains a valid citation. Sources outside the supported bounds remain BLOCKED rather than being split or judged by size.
 
