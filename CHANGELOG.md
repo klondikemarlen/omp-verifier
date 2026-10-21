@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.13 - 2026-10-21
+
+- Keep required guidance scoped to changed paths and explicitly selected material boundaries instead of unrelated heuristic caller matches.
+- Reuse explicit caller/sibling excerpts without duplicate capture, bound optional records, and expose required-by guidance plus exact evidence-capacity diagnostics and competing records.
+
 ## 0.10.12 - 2026-10-21
 
 - Recover committed deleted-source evidence from authenticated local Git history before any semantic capture, including deletions followed by unrelated commits or merged through a first-parent boundary.
