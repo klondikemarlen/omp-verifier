@@ -322,14 +322,25 @@ function addRecord(records, record, budget) {
     && existing.content === record.content)) return true;
 
   const bytes = Buffer.byteLength(record.content);
-  if ((!budget.paths.has(record.path) && budget.paths.size >= MAX_EVIDENCE_FILES)
-    || budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES) {
+  const exceedsFiles = !budget.paths.has(record.path) && budget.paths.size >= MAX_EVIDENCE_FILES;
+  const exceedsBytes = budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES;
+  if (exceedsFiles || exceedsBytes) {
+    const limits = [];
+    if (exceedsFiles) limits.push(`${MAX_EVIDENCE_FILES}-file evidence limit`);
+    if (exceedsBytes) limits.push(`${MAX_TOTAL_EVIDENCE_BYTES}-byte evidence limit`);
+    budget.rejections.push({
+      path: record.path,
+      source: record.source,
+      bytes,
+      reason: `${limits.join(" and ")} reached; ${budget.used} bytes across ${budget.paths.size} files already admitted`,
+    });
     budget.truncated = true;
     return false;
   }
   records.push(record);
   budget.paths.add(record.path);
   budget.used += bytes;
+  budget.records.push({ path: record.path, source: record.source, bytes, startLine: record.startLine ?? 1 });
   return true;
 }
 
@@ -392,7 +403,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     availableText.set(path, result.content);
   }
 
-  const budget = { used: 0, paths: new Set(), truncated: false };
+  const budget = { used: 0, paths: new Set(), truncated: false, records: [], rejections: [] };
   const changedCode = [];
   const missingChangedPaths = [];
   const changedCodeCoverage = [];
@@ -518,8 +529,14 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   }
 
   const projectGuidance = [];
-  const boundaryPaths = [...normalizedChangedPaths, ...normalizedContextPaths, ...callerPaths];
+  // Filename matches are candidate callers, not a declaration of material dependencies.
+  // Explicit context promotes those boundaries and their owning guidance together.
+  const boundaryPaths = [...normalizedChangedPaths, ...normalizedContextPaths];
   const guidancePaths = paths.filter(path => relevantGuidance(path, boundaryPaths));
+  const guidanceRequirements = guidancePaths.map(path => ({
+    path,
+    requiredBy: boundaryPaths.filter(boundary => relevantGuidance(path, [boundary])),
+  }));
   const missingGuidancePaths = [];
   for (const path of guidancePaths) {
     if (targetedContext.some(record => record.path === path && record.content)) continue;
@@ -528,10 +545,12 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });
     }
     if (result.missing || result.error) {
+      guidanceRequirements.find(requirement => requirement.path === path).reason = result.error ?? "path is absent";
       missingGuidancePaths.push(path);
       continue;
     }
     if (!addRecord(projectGuidance, recordFor(path, result, "project-guidance"), budget)) {
+      guidanceRequirements.find(requirement => requirement.path === path).reason = budget.rejections.at(-1).reason;
       missingGuidancePaths.push(path);
     }
   }
@@ -543,7 +562,11 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     [siblingPaths, siblings, "siblings"],
   ]) {
     for (const path of pathsToCapture) {
+      if ([...targetedContext, ...callers].some(record => record.path === path && typeof record.content === "string")) continue;
+
       const content = availableText.get(path);
+      if (Buffer.byteLength(content) > MAX_FILE_EVIDENCE_BYTES) continue;
+
       addRecord(records, recordFor(path, { content, sha256: sha256(content) }, source), budget);
     }
   }
@@ -562,11 +585,20 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     siblings: siblings.length ? siblings : { status: "none-found", explanation: "No sibling source files were found in the changed files' directories." },
     siblingInventory,
     projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },
+    guidanceRequirements,
     targetedContext: targetedContext.length ? targetedContext : [],
     sourceInventory,
+    evidenceBudget: {
+      maxBytes: MAX_TOTAL_EVIDENCE_BYTES,
+      maxFiles: MAX_EVIDENCE_FILES,
+      usedBytes: budget.used,
+      usedFiles: budget.paths.size,
+      records: budget.records,
+      rejections: budget.rejections,
+    },
     evidenceTruncated: {
-      callers: callers.length < callerPaths.size,
-      siblings: siblings.length < siblingPaths.size,
+      callers: [...callerPaths].some(path => ![...callers, ...targetedContext].some(record => record.path === path && typeof record.content === "string")),
+      siblings: [...siblingPaths].some(path => ![...siblings, ...callers, ...targetedContext].some(record => record.path === path && typeof record.content === "string")),
     },
     notes: [
       ...(budget.truncated ? ["Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
@@ -600,6 +632,7 @@ export function semanticContextMissing(requiredContext, captured) {
     }));
   const siblingRecords = [
     ...(Array.isArray(context.siblings) ? context.siblings : []),
+    ...(Array.isArray(context.callers) ? context.callers : []),
     ...targetedRecords.filter(record => codeFile(record.path) && !context.changedPaths.includes(record.path)),
   ];
   const hasCompleteSiblingBoundaries = context.siblingInventory.every(inventory =>
@@ -616,7 +649,11 @@ export function semanticContextMissing(requiredContext, captured) {
     const unavailableGuidance = context.missingGuidancePaths.filter(path =>
       !targetedRecords.some(record => record.path === path));
     if (unavailableGuidance.length) {
-      missing.push(`could not capture project guidance: ${unavailableGuidance.join(", ")}`);
+      const details = unavailableGuidance.map(path => {
+        const requirement = context.guidanceRequirements.find(record => record.path === path);
+        return `${path} (${requirement.reason}; required by ${requirement.requiredBy.join(", ")})`;
+      });
+      missing.push(`could not capture project guidance: ${details.join("; ")}. Inspect context.evidenceBudget for competing records; recover material ranges with review --context. If required records cannot coexist, the review remains BLOCKED.`);
     }
   }
   if (context.missingContextPaths.length) {
