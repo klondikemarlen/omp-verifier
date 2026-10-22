@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.15 - 2026-10-21
+
+- Admit one combined semantic snapshot up to 256,000 bytes while preserving complete-source coverage, original citations, freshness, and the remaining bounded retrieval limits.
+- Add built-in `review --reporter text --page` inspection with lossless UTF-8-safe pages, reversible line wrapping to avoid output/column elision, and unchanged request identity; keep full JSON exports and one whole-scope verdict.
+- Count authenticated deleted source against the same byte/file budget and keep genuine overflow BLOCKED.
+
 ## 0.10.14 - 2026-10-21
 
 - Recover real runner/discovery caller context with `review --caller-context` when filename matching cannot identify a test's runtime entrypoint.

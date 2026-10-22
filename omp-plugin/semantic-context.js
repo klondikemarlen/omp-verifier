@@ -8,7 +8,7 @@ const MAX_INVENTORY_FILES = 1_200;
 const MAX_INVENTORY_READ_BYTES = 8_000_000;
 const MAX_FILE_EVIDENCE_BYTES = 16_000;
 const MAX_INVENTORY_FILE_BYTES = 256_000;
-const MAX_TOTAL_EVIDENCE_BYTES = 128_000;
+const MAX_TOTAL_EVIDENCE_BYTES = 256_000;
 const MAX_EVIDENCE_FILES = 40;
 const MAX_CONTEXT_PATHS = 30;
 const CODE_EXTENSIONS = new Set([
@@ -423,12 +423,17 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
         missingChangedPaths.push(path);
         continue;
       }
-      changedCode.push({
+      const deletedRecord = {
         path,
+        source: "changed-code",
         state: "deleted",
         content: priorContent,
         previousSha256: sha256(priorContent),
-      });
+      };
+      if (!addRecord(changedCode, deletedRecord, budget)) {
+        changedCode.push({ path, state: "unavailable", reason: "context evidence limit reached" });
+        missingChangedPaths.push(path);
+      }
       continue;
     }
     if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {

@@ -10,27 +10,25 @@ import {
   runInstalledVerificationChecks,
 } from "#root/omp-plugin/verifications.js";
 import { completeSemanticEvaluation, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
+import {
+  buildSemanticReviewPage,
+  formatSemanticReviewPage,
+  serializeSemanticReviewResults,
+} from "#root/omp-plugin/semantic-review-pages.js";
 
 const [command, ...args] = process.argv.slice(2);
 const cwd = process.cwd();
 
-function writeResults(results, { reporter, failuresOnly }) {
+function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   const failures = results.filter(result => result.status === "FAIL" || result.status === "BLOCKED");
   const reported = failuresOnly ? failures : results;
   let output;
-  if (reporter === "text") {
+  if (command === "review" && reporter === "text" && reported[0]?.reviewRequest) {
+    output = formatSemanticReviewPage(buildSemanticReviewPage(reported[0], pageIndex));
+  } else if (reporter === "text") {
     output = formatVerificationResults(reported);
   } else if (command === "review") {
-    output = JSON.stringify(reported, function (key, value) {
-      if (key === "content" && typeof value === "string") {
-        const startLine = this.startLine ?? 1;
-        return Object.fromEntries(value.split(/\r?\n/).map((line, index) => [startLine + index, line]));
-      }
-      if (key === "text" && typeof value === "string") {
-        return value.split(/\r?\n/);
-      }
-      return value;
-    }, 2);
+    output = serializeSemanticReviewResults(reported);
   } else {
     output = JSON.stringify(reported);
   }
@@ -65,6 +63,7 @@ try {
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
+      page: { type: "string" },
     },
   });
   const reporter = values.reporter;
@@ -73,6 +72,20 @@ try {
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
+  }
+
+  let pageIndex = 0;
+  if (values.page !== undefined) {
+    if (command !== "review" || reporter !== "text") {
+      throw new Error("--page requires review --reporter text");
+    }
+    if (!/^\d+$/.test(values.page) || !Number.isSafeInteger(Number(values.page))) {
+      throw new Error("Page must be a nonnegative integer");
+    }
+    pageIndex = Number(values.page);
+  }
+  if (pageIndex > 0 && (values.context.length > 0 || values["caller-context"].length > 0)) {
+    throw new Error("Context recovery must start at page 0; read later pages from the renewed request without context options");
   }
 
   if (command === "checks" && positionals.length === 0 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
@@ -90,13 +103,13 @@ try {
     const output = reporter === "json" ? JSON.stringify(inventory) : formatVerificationInventory(inventory);
     process.stdout.write(`${output}\n`);
     process.exitCode = blockedResults.length > 0 ? 1 : 0;
-  } else if (command === "review" && positionals.length === 1 && reporter === "json" && !values.worktree && !failuresOnly && values.assessment === undefined) {
+  } else if (command === "review" && positionals.length === 1 && !values.worktree && !failuresOnly && values.assessment === undefined) {
     writeResults([await readSemanticEvaluation({
       cwd,
       requestPath: positionals[0],
       contextPaths: values.context,
       callerContextPaths: values["caller-context"],
-    })], { reporter, failuresOnly });
+    })], { reporter, failuresOnly, pageIndex });
   } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && values.context.length === 0 && values["caller-context"].length === 0 && values.assessment !== undefined) {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
     const assessment = JSON.parse(assessmentText);
@@ -109,6 +122,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
