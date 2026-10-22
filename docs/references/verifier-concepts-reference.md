@@ -10,7 +10,7 @@ sequenceDiagram
   participant Verifier as Verifier advisor
   participant CLI as Automatic coordinator
 
-  Main-->>Verifier: completed changed turn
+  Main-->>Verifier: native scheduled review of completed changed scope
   Verifier->>CLI: run packaged coordinator
   CLI-->>Verifier: structured results or semantic request
   opt supported agentic contract
@@ -19,7 +19,10 @@ sequenceDiagram
   end
   alt FAIL or BLOCKED
     Verifier-->>Main: relay failure-only text via blocker transport
-    Main-->>Verifier: remediated turn
+    Main->>Main: remediate
+    opt fresh independently triggered scoped recheck
+      Main-->>Verifier: corrected scope, including deletions
+    end
   else PASS, SUPPRESSED, or no result
     Verifier-->>Verifier: stay silent
   end
@@ -32,7 +35,7 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 ## Lifecycle
 
 - Extension registration awaits guidance and roster reconciliation through OMP's active-profile SDK before native advisors import the generated file. Session starts also reconcile the active context; independent advisors remain untouched.
-- After a changed turn, the verifier advisor invokes the packaged automatic coordinator. The plugin has no `agent_end` notification runner.
+- When native OMP schedules a review, the verifier advisor invokes the packaged automatic coordinator for the completed run's changed scope. The plugin has no `agent_end` notification runner and does not select review cadence.
 - `/verifier status` reports global and project roster entries plus the guidance-file path.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
@@ -195,13 +198,19 @@ This handoff uses the existing private per-project, per-check request slot, not 
 
 ## Completion Boundary
 
-This integration requires evidence-backed correction through the existing advisor path; it does not implement an atomic completion gate. The plugin does not register a `session_stop` veto or bind main-session settlement to completion of the named verifier's current assessment.
+This integration provides evidence-backed correction through the existing advisor path; it does not implement an atomic completion gate. A user request starts an agent run, which may contain multiple model/tool cycles. Final yield is the attempted return of control to the user, not every tool-call boundary.
 
-OMP does expose a native [`session_stop` decision](https://github.com/can1357/oh-my-pi/blob/v18.11.1/packages/coding-agent/src/session/agent-session.ts#L5148-L5184): ordinary continuation is capped, while an explicit `decision: "block"` is exempt from that cap. The missing integration is not a claim that OMP has no veto primitive. A genuine hard gate also needs reliable current-turn advisor completion/outcome and an actual stop decision that waits for that evidence. [OMP #15422](https://github.com/can1357/oh-my-pi/issues/15422) tracks the extension-observable advisor-finished/outcome handoff.
+Native OMP 18.12.6 supports synchronous final review through a roster entry with `reviewMode: agent-end`, `reviewInterval: 1`, and `syncBacklog: strict`. The first two controls schedule a review of the accumulated run at final yield; `strict` waits for that scheduled review without the numeric policy's 30-second timeout. These are OMP-owned configuration controls, not defaults selected by this plugin. Strict-final-review-only configuration is a useful reduced capability, not a current-PASS completion gate.
 
-OMP 18.11.1 deliberately [captures advisor-triggered repair continuations without scheduling another review](https://github.com/can1357/oh-my-pi/blob/v18.11.1/packages/coding-agent/src/session/session-advisors.ts#L573-L582) to prevent advisor→primary→advisor cascades. A fresh independently triggered run, such as an explicit scoped recheck request, is needed to schedule the next peer assessment. Waiting alone cannot turn that repair into a verified PASS. Recheck the actual corrected scope, including a newly created helper that was removed; do not substitute unrelated working-tree paths or claim alignment before the fresh result.
+The [native catch-up contract](https://github.com/can1357/oh-my-pi/blob/v18.12.6/docs/advisor-watchdog.md#catch-up-with-advisorsyncbacklog) releases strict waiters on abort, failure, quota pause, session transition, or disposal. Waiting for a review therefore does not certify approval: a missing or failed assessment cannot establish PASS.
 
-Native blocker delivery followed by primary correction and a fresh PASS proves the exercised correction cycle, not that every unverified primary completion is prevented. Advisor scheduling, model availability, and settlement remain OMP-owned. This release adds neither a second stop loop nor a custom model runner.
+OMP 18.12.6 deliberately [captures advisor-triggered repair continuations without scheduling another review](https://github.com/can1357/oh-my-pi/blob/v18.12.6/packages/coding-agent/src/session/session-advisors.ts#L580-L710) to prevent advisor→primary→advisor cascades. A fresh independently triggered run, such as an explicit scoped recheck request, is needed to schedule the next assessment. Waiting alone cannot turn that repair into a verified PASS. Recheck the actual corrected scope, including deleted source; do not substitute unrelated working-tree paths or reuse an earlier result.
+
+[Verifier #150](https://github.com/klondikemarlen/omp-verifier/issues/150) and [OMP #14597](https://github.com/can1357/oh-my-pi/issues/14597) track the missing native policy: opt-in reassessment at repaired completion attempts, a current clean outcome before settlement, and explicit handling of unavailable reviews while preserving cancellation. The [18.12.6 roster schema](https://github.com/can1357/oh-my-pi/blob/v18.12.6/packages/coding-agent/src/advisor/config.ts#L67-L78) exposes cadence and catch-up controls, not that completion policy. Verification contracts and results remain package-owned; selecting and reconciling supported advisor policy belongs to the OMP configuration owner.
+
+An extension-owned integration is a different route. OMP exposes a [`session_stop` decision](https://github.com/can1357/oh-my-pi/blob/v18.11.1/packages/coding-agent/src/session/agent-session.ts#L5148-L5184) whose explicit `decision: "block"` is exempt from the ordinary continuation cap. [OMP #15422](https://github.com/can1357/oh-my-pi/issues/15422) requests extension-observable advisor completion/outcomes; it is not the sole prerequisite for an OMP-owned advisor policy. Verifier registers no stop veto, transcript polling, or second model runtime.
+
+Native blocker delivery followed by primary correction and a fresh PASS proves the exercised correction cycle, not that every unverified primary completion is prevented. Advisor scheduling, model availability, and settlement remain OMP-owned.
 
 ## Discovery and Execution Inputs
 
@@ -259,7 +268,7 @@ Consider an account-summary presenter whose only new extraction is an `accountNa
 3. The primary agent restores direct selection and deletes the helper. A fresh explicit scoped recheck must assess that corrected source and the removed helper; the earlier failure or an older PASS cannot establish the new result.
 4. An observed fresh PASS establishes only that the current scoped contract passed and stays private. Missing required evidence remains BLOCKED rather than being replaced by Learner's coverage result.
 
-This is an intended-behavior example, not additional observed release evidence. [Issue #130](https://github.com/klondikemarlen/omp-verifier/issues/130) tracks the remaining post-install native correction-cycle QA. Native blocker advice requests correction but is not an atomic completion veto; see [Completion Boundary](#completion-boundary) for the OMP-owned handoff dependency and required fresh recheck.
+This is an intended-behavior example, not additional observed release evidence. [Issue #130](https://github.com/klondikemarlen/omp-verifier/issues/130) records the completed standards-verification delivery; its closure does not establish the broader completion gate tracked by #150. See [Completion Boundary](#completion-boundary) for the native policy distinction and required fresh recheck.
 
 ## Implementation and Proof Map
 
@@ -283,6 +292,10 @@ The implementation is the authority for current behavior, tests are evidence for
 The [release smoke](../../README.md#development-and-release) proves one current named-verifier scenario at a time. Save its named-advisor transcript baseline and primary/event baseline before triggering work. Associate the actual selected paths, check ID, current semantic request ID where applicable, final coordinator output, completed review, native blocker, primary remediation, and fresh corrected-scope result. Include removed source in that recheck. An earlier private final, unrelated result, or settled primary RPC prompt cannot substitute for current named-review completion. Conversely, named-review completion alone does not mean the primary can accept another ordinary prompt; require successful prompt admission and the preceding primary prompt's settlement.
 
 Record the exact installed OMP/Verifier/provider versions and resolved verifier selector. Freeze synthetic source and provider inputs before the live cycle and verify their identity; a provider replacement during review correctly invalidates that request. Require actual intended-path selection: a valid PASS saying no changed files applied is no-action evidence, not proof that committed source was assessed. Use the provider's supported scope input, such as its comparison-base variable, rather than assuming manual checks receive automatic changed paths.
+
+A status-only probe can establish RPC readiness and protocol negotiation, `/verifier` registration, the installed version and guidance, and a resolved model in `/advisor status`. These local commands can complete with `agentInvoked: false` without exercising a model request. Their success proves loading and status, not provider availability, a completed semantic assessment, or completion enforcement.
+
+An unattended completion-gate claim needs one user request to drive FAIL → blocker → primary repair → fresh current PASS before settlement, without a follow-up work/recheck prompt. Account for unrelated continuation triggers such as unexpected-stop detection and todo reminders: their recheck can produce a valid PASS without proving that advisor-triggered repair itself schedules reassessment. Keep isolated failures and successful but differently triggered scenarios separate; the versioned reproduction and dependency record belong in #150 rather than a recurring knowledge-base status log.
 
 Keep outcome and diagnostics in their actual scenario windows. A later continuation or unrelated provider error does not erase a completed earlier scenario. A current error without a completed current result remains FAIL/BLOCKED; no result is invented from historical success. Startup-only timeouts, mismatched installed-version assertions, rejected overlapping prompts, and incomplete PTY terminal-query responses are setup/harness failures, not semantic verdicts or general provider-outage evidence. Use an observable initialized-editor or RPC-ready barrier and answer terminal queries instead of relying on sleeps.
 
