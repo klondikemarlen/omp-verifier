@@ -35,7 +35,7 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 ## Lifecycle
 
 - Extension registration awaits guidance and roster reconciliation through OMP's active-profile SDK before native advisors import the generated file. Session starts also reconcile the active context; independent advisors remain untouched.
-- When native OMP schedules a review, the verifier advisor invokes the packaged automatic coordinator for the completed run's changed scope. The plugin has no `agent_end` notification runner and does not select review cadence.
+- When native OMP schedules a review, the verifier advisor binds transcript changes to their edit-owned Git checkouts and invokes the packaged automatic coordinator once per complete checkout group. It validates each request's root and changed scope before assessment and keeps recovery in that checkout. Unknown ownership stays BLOCKED; same-named files in another worktree do not establish identity. The plugin has no `agent_end` notification runner and does not select review cadence.
 - `/verifier status` reports global and project roster entries plus the guidance-file path.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.

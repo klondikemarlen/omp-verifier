@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.19 - 2026-10-22
+
+- Bind initial automatic verification to each edit-owned checkout, grouping complete changed scopes by Git root rather than the session's startup directory or matching filenames.
+- Validate semantic request ownership before assessment; renew wrong-root requests from the established checkout while preserving deletions, context recovery, and fail-closed missing evidence.
+
 ## 0.10.18 - 2026-10-22
 
 - Anchor semantic context recovery to the current request's checkout, changed scope, captured source, and directory inventory rather than stacked-child or remembered paths.
