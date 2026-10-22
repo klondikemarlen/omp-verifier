@@ -4,6 +4,7 @@
 
 - Distinguish optional sibling evidence omissions from unavailable material dependencies before reporting a semantic budget blocker.
 - Require targeted schema/backfill and real runner recovery within existing evidence limits; preserve whole-scope assessment, genuine missing-context blockers, and fail-closed validation.
+- Ground material dependency claims in project source and preserve opaque request paths during recovery; provider source identities are not application imports.
 
 ## 0.10.16 - 2026-10-22
 
