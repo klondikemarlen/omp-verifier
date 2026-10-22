@@ -141,6 +141,23 @@ test("when a long review line contains multibyte characters, page boundaries pre
   assert.ok(pages.every(page => Buffer.byteLength(formatSemanticReviewPage(page), "utf8") <= 24_000));
 });
 
+test("when rendered source exceeds tool column limits, display continuations preserve every character", () => {
+  // Arrange
+  const title = '界🙂é"\\'.repeat(800);
+  const sourceContent = `export const title = ${JSON.stringify(title)};`;
+  const result = reviewResult({ sourceContent });
+
+  // Act
+  const rendered = formatSemanticReviewPage(buildSemanticReviewPage(result));
+  const displayedFragment = rendered.split("JSON fragment:\n")[1].split("\nNext page index:")[0];
+  const decoded = JSON.parse(displayedFragment.replace(/\\\n/g, ""));
+
+  // Assert
+  assert.equal(decoded[0].reviewRequest.context.changedCode[0].content[1], sourceContent);
+  assert.ok(rendered.split("\n").every(line => Buffer.byteLength(line) <= 601));
+  assert.ok(Buffer.byteLength(rendered) <= 24_000);
+});
+
 test("when a page index is invalid, review rejects it rather than returning partial evidence", () => {
   // Arrange
   const result = reviewResult({ sourceContent: "export const policy = true;" });
