@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.16 - 2026-10-22
+
+- Clarify native strict final review versus a current-PASS completion gate, including repair reassessment, unavailable-review handling, and runtime/configuration ownership.
+- Reconcile the lifecycle diagram and historical standards-delivery reference; distinguish status/loading smoke, correction-cycle evidence, and unattended completion-gate proof without changing runtime behavior.
+
 ## 0.10.15 - 2026-10-21
 
 - Admit one combined semantic snapshot up to 256,000 bytes while preserving complete-source coverage, original citations, freshness, and the remaining bounded retrieval limits.
