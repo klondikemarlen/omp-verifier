@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.18 - 2026-10-22
+
+- Anchor semantic context recovery to the current request's checkout, changed scope, captured source, and directory inventory rather than stacked-child or remembered paths.
+- Recover mistakenly requested optional files with a fresh complete-scope request; preserve authenticated deletions, genuinely missing material-dependency blockers, and unchanged coordinator validation.
+
 ## 0.10.17 - 2026-10-22
 
 - Distinguish optional sibling evidence omissions from unavailable material dependencies before reporting a semantic budget blocker.
