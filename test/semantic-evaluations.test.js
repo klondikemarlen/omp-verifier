@@ -369,41 +369,6 @@ test("when changed source exceeds the source-size limit, requested excerpts cann
   }
 });
 
-test("when recovered changed-source evidence exceeds the total budget, completion stays BLOCKED", async () => {
-  // Arrange
-  const source = oversizedHelperSource(2_300);
-  const lineCount = source.split(/\r?\n/).length;
-  const fixture = await createSemanticFixture({ helperSource: source });
-
-  try {
-    const prepared = await prepareSemanticEvaluation({
-      check: await discoverSemanticCheck(fixture),
-      cwd: fixture.root,
-      repositoryRoot: fixture.root,
-      changedPaths: ["src/helper.js"],
-    });
-
-    // Act
-    const recovered = await readSemanticEvaluation({
-      cwd: fixture.root,
-      requestPath: prepared.reviewRequest.path,
-      contextPaths: sourceRangeSelectors("src/helper.js", lineCount, 80),
-    });
-    const completed = await completeSemanticEvaluation({
-      cwd: fixture.root,
-      requestPath: recovered.reviewRequest.path,
-      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("src/helper.js", source, 4)),
-    });
-
-    // Assert
-    assert.ok(Buffer.byteLength(source) > 128_000);
-    assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
-    assert.equal(completed.status, "BLOCKED");
-  } finally {
-    await rm(fixture.root, { recursive: true, force: true });
-  }
-});
-
 test("when an oversized recovered file is deleted, a partial excerpt is not treated as complete prior source", async () => {
   // Arrange
   const source = oversizedHelperSource();

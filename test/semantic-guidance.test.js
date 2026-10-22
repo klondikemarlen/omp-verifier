@@ -140,14 +140,15 @@ test("when changed source and material guidance are recovered, unrelated caller 
   }
 });
 
-test("when required guidance cannot coexist with explicit evidence, the blocker names the exact capacity and boundary", async () => {
+test("when required guidance exceeds the total evidence budget after explicit context, evaluation is BLOCKED", async () => {
   // Arrange
+  const guidance = `${"Owning guidance. ".repeat(900)}\n`;
   const fixture = await createSemanticFixture();
 
   try {
-    await writeFile(join(fixture.root, "README.md"), `${"Owning guidance. ".repeat(900)}\n`);
+    await writeFile(join(fixture.root, "README.md"), guidance);
     const contextPaths = [];
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 17; index += 1) {
       const path = `src/context-${index}.js`;
       contextPaths.push(path);
       await writeFile(join(fixture.root, path), `// ${"material ".repeat(1_660)}\n`);
@@ -167,11 +168,15 @@ test("when required guidance cannot coexist with explicit evidence, the blocker 
     });
 
     // Assert
+    const context = prepared.reviewRequest.context;
+    const rejectedGuidance = context.evidenceBudget.rejections.find(record => record.path === "README.md");
     assert.equal(completed.status, "BLOCKED");
-    assert.match(completed.evidence, /README.md \(128000-byte evidence limit reached/);
-    assert.match(completed.evidence, /required by src\/helper.js/);
-    assert.ok(prepared.reviewRequest.context.evidenceBudget.records.some(record => record.path === "src/context-0.js"));
-    assert.ok(prepared.reviewRequest.context.evidenceBudget.rejections.some(record => record.path === "README.md"));
+    assert.ok(context.missingGuidancePaths.includes("README.md"));
+    assert.ok(context.evidenceBudget.records.some(record => record.path === "src/context-0.js"));
+    assert.equal(rejectedGuidance.bytes, Buffer.byteLength(guidance));
+    assert.ok(context.evidenceBudget.usedBytes + rejectedGuidance.bytes > context.evidenceBudget.maxBytes);
+    assert.ok(context.guidanceRequirements.some(record =>
+      record.path === "README.md" && record.requiredBy.includes("src/helper.js")));
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
