@@ -1,5 +1,6 @@
 const MAX_FORMATTED_PAGE_BYTES = 24_000;
 const NUMERIC_HEADER_ALLOWANCE = 128;
+const REVIEW_PAGE_INSTRUCTION = "Read every page in separate coordinator calls, then assess the whole original scope once. Unread pages are pending work, not an execution blocker.";
 
 const REVIEW_RESULT_ORDER = ["id", "status", "summary", "evidence", "reviewRequest"];
 const REVIEW_REQUEST_ORDER = [
@@ -84,7 +85,7 @@ function fixedHeaderBytes(path, requestId) {
     "JSON fragment:",
     "",
     "Next page index: ",
-    "Evaluate the whole original scope only after all pages have been reviewed.",
+    REVIEW_PAGE_INSTRUCTION,
     "",
   ].join("\n");
   return Buffer.byteLength(header, "utf8");
@@ -171,7 +172,7 @@ export function formatSemanticReviewPage(page) {
     "JSON fragment:",
     page.content,
     `Next page index: ${nextPage}`,
-    "Evaluate the whole original scope only after all pages have been reviewed.",
+    REVIEW_PAGE_INSTRUCTION,
   ].join("\n");
 
   if (Buffer.byteLength(output, "utf8") > MAX_FORMATTED_PAGE_BYTES) {
