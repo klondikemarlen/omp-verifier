@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.17 - 2026-10-22
+
+- Distinguish optional sibling evidence omissions from unavailable material dependencies before reporting a semantic budget blocker.
+- Require targeted schema/backfill and real runner recovery within existing evidence limits; preserve whole-scope assessment, genuine missing-context blockers, and fail-closed validation.
+
 ## 0.10.16 - 2026-10-22
 
 - Clarify native strict final review versus a current-PASS completion gate, including repair reassessment, unavailable-review handling, and runtime/configuration ownership.
