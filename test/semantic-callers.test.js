@@ -181,3 +181,36 @@ test("when a runtime-entrypoint claim omits its runner citation, the assessment 
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("when a later review page requests new caller context, the original request remains current", async () => {
+  // Arrange
+  const fixture = await createCallerFixture();
+  const prepared = cli(fixture, "automatic", "tests/policy.test.js");
+
+  try {
+    // Act
+    const rejected = spawnSync(process.execPath, [
+      CLI,
+      "review",
+      prepared.reviewRequest.path,
+      "--reporter",
+      "text",
+      "--page",
+      "1",
+      "--caller-context",
+      "package.json",
+    ], {
+      cwd: fixture.root,
+      encoding: "utf8",
+      env: { ...process.env, PI_CODING_AGENT_DIR: join(fixture.root, "agent") },
+    });
+    const current = cli(fixture, "review", prepared.reviewRequest.path);
+
+    // Assert
+    assert.equal(rejected.status, 2);
+    assert.equal(current.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.deepEqual(current.reviewRequest.scope.callerContextPaths, []);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
