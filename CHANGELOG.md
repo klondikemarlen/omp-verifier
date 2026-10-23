@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.21 - 2026-10-23
+
+- Return the existing bounded first review page immediately for single pending text results, removing the extra inspection call before semantic context recovery.
+- Batch known material context additions and reuse preparation/recovery pages already delivered; preserve mixed-result handles, complete changed scope, authenticated deletions, evidence limits, and current-request validation.
+
 ## 0.10.20 - 2026-10-23
 
 - Recover the validated current semantic request when a late read or assessment targets superseded work; never apply the old assessment or selectors to its replacement.

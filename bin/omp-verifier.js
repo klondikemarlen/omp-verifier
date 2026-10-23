@@ -29,7 +29,7 @@ function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   }
 
   let output;
-  if (command === "review" && reporter === "text" && reported[0]?.reviewRequest) {
+  if (reporter === "text" && reported.length === 1 && reported[0]?.reviewRequest) {
     let currentPageIndex = pageIndex;
     if (reported[0].evaluation?.supersededBy) currentPageIndex = 0;
 
