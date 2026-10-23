@@ -21,12 +21,18 @@ const cwd = process.cwd();
 
 function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   const failures = results.filter(result => result.status === "FAIL" || result.status === "BLOCKED");
-  const reported = failuresOnly
-    ? results.filter(result => result.status === "FAIL" || result.status === "BLOCKED" || result.status === "SUPERSEDED")
-    : results;
+  let reported = results;
+  if (failuresOnly) {
+    reported = results.filter(result =>
+      result.status === "FAIL" || result.status === "BLOCKED" || result.status === "SUPERSEDED",
+    );
+  }
+
   let output;
   if (command === "review" && reporter === "text" && reported[0]?.reviewRequest) {
-    const currentPageIndex = reported[0].evaluation?.supersededBy ? 0 : pageIndex;
+    let currentPageIndex = pageIndex;
+    if (reported[0].evaluation?.supersededBy) currentPageIndex = 0;
+
     output = formatSemanticReviewPage(buildSemanticReviewPage(reported[0], currentPageIndex));
   } else if (reporter === "text") {
     output = formatVerificationResults(reported);
