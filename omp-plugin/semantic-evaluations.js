@@ -360,6 +360,38 @@ function requestBlock(id, error) {
   return blocked(id || "semantic-evaluation", "Semantic request is unavailable", error);
 }
 
+async function reconcileSupersededRequest(target) {
+  const currentState = await readCurrentState(target.cacheDirectory, target.checkId);
+  if (!currentState || currentState.requestId === target.requestId) return undefined;
+
+  const current = await readStoredRequest(target.cacheDirectory, target.checkId, currentState.requestId, {
+    requireCurrent: false,
+  });
+  await validateFreshness({
+    checkId: target.checkId,
+    repositoryRoot: target.repositoryRoot,
+    stored: current.stored,
+  });
+  const evaluation = {
+    mode: "agentic",
+    requestId: target.requestId,
+    supersededBy: currentState.requestId,
+  };
+  if (currentState.consumed) {
+    return {
+      id: target.checkId,
+      status: "SUPERSEDED",
+      summary: "Obsolete semantic operation skipped; the current request has already been assessed",
+      evaluation,
+    };
+  }
+
+  return {
+    ...requestEnvelope(current.stored.payload, current.requestPath),
+    evaluation,
+  };
+}
+
 export async function prepareSemanticEvaluation({ check, cwd, changedPaths = [], repositoryRoot = cwd, contextPaths = [] }) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
     return blocked(check?.id || "semantic-evaluation", "Semantic verification check is not supported by this runtime");
@@ -396,6 +428,9 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
+      const superseded = await reconcileSupersededRequest(target);
+      if (superseded) return superseded;
+
       const { stored } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
       await validateFreshness({ checkId: target.checkId, repositoryRoot: target.repositoryRoot, stored });
 
@@ -489,6 +524,9 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
+      const superseded = await reconcileSupersededRequest(target);
+      if (superseded) return superseded;
+
       const { stored, currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
       await validateFreshness({
         checkId: target.checkId,
