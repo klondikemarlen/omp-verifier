@@ -289,8 +289,9 @@ test("when recovery supersedes an oversized-source request, the older request ca
 
     // Assert
     assert.notEqual(recovered.reviewRequest.requestId, prepared.reviewRequest.requestId);
-    assert.equal(superseded.status, "BLOCKED");
-    assert.match(superseded.evidence, /superseded/);
+    assert.equal(superseded.reviewRequest.requestId, recovered.reviewRequest.requestId);
+    assert.equal(superseded.evaluation.requestId, prepared.reviewRequest.requestId);
+    assert.equal(superseded.evaluation.supersededBy, recovered.reviewRequest.requestId);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -691,7 +692,11 @@ test("when semantic requests overlap, only the current assessment can report PAS
 
     // Assert
     assert.equal(completed.filter(result => result.status === "PASS").length, 1);
-    assert.equal(completed.filter(result => result.status === "BLOCKED").length, 7);
+    const currentRequestId = completed.find(result => result.status === "PASS").evaluation.requestId;
+    for (const result of completed.filter(result => result.status !== "PASS")) {
+      assert.ok(result.status === "BLOCKED" || result.status === "SUPERSEDED");
+      assert.equal(result.evaluation.supersededBy, currentRequestId);
+    }
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -731,7 +736,7 @@ test("when additional context is requested, the refreshed request renews its non
     });
     // Assert
     assert.equal(oldAssessment.status, "BLOCKED");
-    assert.match(oldAssessment.evidence, /superseded/);
+    assert.equal(oldAssessment.reviewRequest.requestId, refreshed.reviewRequest.requestId);
 
     // Act
     const newAssessment = await completeSemanticEvaluation({
@@ -910,8 +915,9 @@ test("when a newer request supersedes an older one, only the current assessment 
       assessment: passAssessment(first.reviewRequest.requestId),
     });
     // Assert
-    assert.equal(supersededAssessment.status, "BLOCKED");
-    assert.match(supersededAssessment.evidence, /superseded/);
+    assert.equal(supersededAssessment.reviewRequest.requestId, second.reviewRequest.requestId);
+    assert.equal(supersededAssessment.evaluation.requestId, first.reviewRequest.requestId);
+    assert.equal(supersededAssessment.evaluation.supersededBy, second.reviewRequest.requestId);
 
     // Act
     const currentAssessment = await completeSemanticEvaluation({

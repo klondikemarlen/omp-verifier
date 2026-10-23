@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.20 - 2026-10-23
+
+- Recover the validated current semantic request when a late read or assessment targets superseded work; never apply the old assessment or selectors to its replacement.
+- Distinguish already-assessed replacement work with a non-verdict `SUPERSEDED` lifecycle result; preserve genuine current blockers, freshness validation, complete-scope paging, and native result delivery.
+
 ## 0.10.19 - 2026-10-22
 
 - Bind initial automatic verification to each edit-owned checkout, grouping complete changed scopes by Git root rather than the session's startup directory or matching filenames.
