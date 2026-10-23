@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,8 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
+
+const CLI = join(process.cwd(), "bin", "omp-verifier.js");
 
 async function createSemanticFixture() {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-supersession-"));
@@ -161,6 +164,77 @@ test("when a late read includes old context selectors, it returns the replacemen
     assert.equal(late.reviewRequest.requestId, current.reviewRequest.requestId);
     assert.deepEqual(late.reviewRequest.scope.changedPaths, ["src/caller.js", "src/helper.js"]);
     assert.deepEqual(late.reviewRequest.scope.contextPaths, []);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a late CLI assessment follows replacement completion, failure-only output preserves its non-verdict lifecycle", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture();
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const first = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const current = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: current.reviewRequest.path,
+      assessment: passAssessment(current.reviewRequest.requestId),
+    });
+
+    // Act
+    const late = spawnSync(process.execPath, [
+      CLI, "evaluate", first.reviewRequest.path,
+      "--assessment", JSON.stringify(passAssessment(first.reviewRequest.requestId)),
+      "--failures-only",
+    ], { cwd: fixture.root, encoding: "utf8" });
+
+    // Assert
+    assert.equal(late.status, 0);
+    const result = JSON.parse(late.stdout)[0];
+    assert.equal(result.status, "SUPERSEDED");
+    assert.equal(result.evaluation.supersededBy, current.reviewRequest.requestId);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a late CLI page read follows supersession, replacement inspection starts at page zero", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture();
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const first = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const current = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const late = spawnSync(process.execPath, [
+      CLI, "review", first.reviewRequest.path,
+      "--reporter", "text", "--page", "4",
+    ], { cwd: fixture.root, encoding: "utf8" });
+
+    // Assert
+    assert.equal(late.status, 1);
+    assert.ok(late.stdout.includes(`Request ID: ${current.reviewRequest.requestId}\n`));
+    assert.match(late.stdout, /Page index: 0 of 1 /);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
