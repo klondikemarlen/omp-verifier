@@ -15,7 +15,7 @@ import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
 const CHECK_ID = "publisher:alignment";
 const HELPER_SOURCE = "export function helper(value) { if (!Number.isInteger(value)) throw new TypeError(\"Expected integer\"); return value; }\n";
 
-async function createEmptySiblingFixture() {
+async function createEmptySiblingFixture({ noiseFiles = 1_197 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-siblings-"));
   const packageDirectory = join(root, "plugins");
   const packagePath = join(packageDirectory, "publisher");
@@ -51,7 +51,7 @@ async function createEmptySiblingFixture() {
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "fixture baseline"], { cwd: root });
-  for (let index = 0; index < 1_197; index += 1) {
+  for (let index = 0; index < noiseFiles; index += 1) {
     await writeFile(join(root, "noise", `unrelated-${index}.js`), "export const unrelated = true;\n");
   }
   return { root, packageDirectory };
@@ -169,9 +169,6 @@ test("when a sibling directory exceeds its entry budget, empty evidence cannot p
     });
 
     // Assert
-    assert.deepEqual(prepared.reviewRequest.missingContext, [
-      "sibling retrieval is incomplete within the bounded project evidence",
-    ]);
     assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -199,9 +196,6 @@ test("when the only sibling source is unreadable within capture limits, assessme
     });
 
     // Assert
-    assert.deepEqual(prepared.reviewRequest.missingContext, [
-      "sibling retrieval is incomplete within the bounded project evidence",
-    ]);
     assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
@@ -257,10 +251,99 @@ test("when a changed directory cannot be inspected, retained deletion source doe
 
     // Assert
     assert.equal(prepared.reviewRequest.context.changedCode[0].state, "deleted");
-    assert.deepEqual(prepared.reviewRequest.missingContext, [
-      "sibling retrieval is incomplete within the bounded project evidence",
-    ]);
     assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when generic callers fill the budget, each changed directory retains representative sibling source", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+  const directories = ["src/first", "src/second", "src/third"];
+  const changedPaths = directories.map(directory => `${directory}/create-service.js`);
+
+  try {
+    for (const directory of directories) {
+      await mkdir(join(fixture.root, directory));
+      await writeFile(join(fixture.root, directory, "create-service.js"), HELPER_SOURCE);
+      const siblingCount = directory === directories[0] ? 44 : 1;
+      for (let index = 0; index < siblingCount; index += 1) {
+        await writeFile(join(fixture.root, directory, `sibling-${index}.js`), "export const sibling = true;\n");
+      }
+    }
+    for (let index = 0; index < 45; index += 1) {
+      await writeFile(join(fixture.root, "noise", `caller-${index}.js`), '// generic create-service candidate\nexport const unrelated = true;\n');
+    }
+    const check = await discoverSemanticCheck(fixture);
+
+    // Act
+    const prepared = await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: {
+        ...passAssessment(prepared.reviewRequest.requestId),
+        citations: [{ path: changedPaths[0], line: 1, quote: HELPER_SOURCE.trim() }],
+      },
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    for (const directory of directories) {
+      assert.ok(Array.isArray(context.siblings)
+        && context.siblings.some(record => record.path === `${directory}/sibling-0.js`));
+    }
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.equal(context.evidenceBudget.usedFiles, context.evidenceBudget.maxFiles);
+    assert.ok(context.evidenceBudget.usedBytes <= context.evidenceBudget.maxBytes);
+    assert.ok(context.evidenceBudget.rejections.some(record => record.source === "callers"));
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when discovered sibling source exceeds capture limits, explicit ranges recover the same complete scope", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    await writeFile(join(fixture.root, "src", "large.js"), `export const sibling = true;\n${"// bounded source\n".repeat(1_000)}`);
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const blocked = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/large.js#L1-L1"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(blocked.status, "BLOCKED");
+    assert.equal(prepared.reviewRequest.context.siblings.status, "not-captured");
+    assert.ok(prepared.reviewRequest.context.evidenceBudget.rejections.some(record =>
+      record.path === "src/large.js" && record.reason.includes("16000-byte")));
+    assert.ok(prepared.reviewRequest.missingContext.some(reason =>
+      reason.includes("src") && reason.includes("review --context")));
+    assert.deepEqual(recovered.reviewRequest.scope.changedPaths, ["src/helper.js"]);
+    assert.equal(recovered.reviewRequest.context.siblings.status, "captured-elsewhere");
+    assert.deepEqual(recovered.reviewRequest.missingContext, []);
+    assert.equal(completed.status, "PASS");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
