@@ -165,7 +165,6 @@ test("when combined changed source exceeds 128 KB but fits the total budget, one
     const context = recovered.reviewRequest.context;
     assert.ok(combinedBytes > 128_000);
     assert.ok(combinedBytes < 256_000);
-    assert.equal(context.evidenceBudget.maxBytes, 256_000);
     assert.ok(context.evidenceBudget.usedBytes > 128_000);
     assert.ok(context.evidenceBudget.usedBytes <= context.evidenceBudget.maxBytes);
     assert.deepEqual(context.missingChangedPaths, []);
@@ -244,6 +243,149 @@ test("when confirmed deletions exceed the remaining total budget, deleted source
     assert.ok(context.evidenceBudget.usedBytes + rejectedDeletion.bytes > context.evidenceBudget.maxBytes);
     assert.ok(context.missingChangedPaths.includes(rejectedPath));
     assert.equal(context.changedCode.find(record => record.path === rejectedPath).state, "unavailable");
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when 102 required changed files exceed the ordinary budget, one assessment retains present and deleted source", async () => {
+  // Arrange
+  const source = sourceWithByteLength(3_500);
+  const changedPaths = Array.from({ length: 102 }, (_, index) => `src/module-${String(index).padStart(3, "0")}.js`);
+  const initialSources = Object.fromEntries(changedPaths.map(path => [path, source]));
+  const fixture = await createSemanticFixture({ initialSources });
+
+  try {
+    await rm(join(fixture.root, changedPaths.at(-1)));
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor(changedPaths[0], source)),
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    assert.deepEqual(prepared.reviewRequest.scope.changedPaths, changedPaths);
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.ok(context.evidenceBudget.usedBytes > 256_000);
+    assert.ok(context.evidenceBudget.usedBytes <= context.evidenceBudget.maxBytes);
+    assert.ok(context.changedCode.every(record => record.state === "present" || record.state === "deleted"));
+    const deleted = context.changedCode.find(record => record.path === changedPaths.at(-1));
+    assert.equal(deleted.state, "deleted");
+    assert.equal(deleted.previousSha256, sha256(source));
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when mandatory code plus owning guidance exceeds 40 files, every boundary retains its guide", async () => {
+  // Arrange
+  const changedPaths = Array.from({ length: 21 }, (_, index) => `src/domain-${String(index).padStart(2, "0")}/module.js`);
+  const initialSources = {};
+  for (const path of changedPaths) {
+    initialSources[path] = "export const invariant = true;\n";
+    initialSources[`${dirname(path)}/README.md`] = "This domain owns its invariant.\n";
+  }
+  const fixture = await createSemanticFixture({ initialSources });
+
+  try {
+    // Act
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor(changedPaths[0], initialSources[changedPaths[0]])),
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    assert.deepEqual(context.missingGuidancePaths, []);
+    for (const path of changedPaths) {
+      assert.ok(context.projectGuidance.some(record => record.path === `${dirname(path)}/README.md`));
+    }
+    assert.ok(context.evidenceBudget.usedFiles > 40);
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when required file cardinality exceeds large-scope capacity, optional recovery cannot admit a partial PASS", async () => {
+  // Arrange
+  const source = "export const invariant = true;\n";
+  const changedPaths = Array.from({ length: 257 }, (_, index) => `src/module-${String(index).padStart(3, "0")}.js`);
+  const fixture = await createSemanticFixture({ initialSources: Object.fromEntries(changedPaths.map(path => [path, source])) });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+    });
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/caller.js#L1-L1"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor(changedPaths[0], source)),
+    });
+
+    // Assert
+    assert.deepEqual(recovered.reviewRequest.scope.changedPaths, changedPaths);
+    assert.ok(recovered.reviewRequest.missingContext.some(reason =>
+      reason.includes("required-scope") && reason.includes("distinct") && reason.includes("BLOCKED")));
+    assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes(changedPaths.at(-1)));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when required source exceeds the large-scope byte budget, missing complete source remains BLOCKED", async () => {
+  // Arrange
+  const source = sourceWithByteLength(15_700);
+  const changedPaths = Array.from({ length: 70 }, (_, index) => `src/module-${String(index).padStart(3, "0")}.js`);
+  const fixture = await createSemanticFixture({ initialSources: Object.fromEntries(changedPaths.map(path => [path, source])) });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor(changedPaths[0], source)),
+    });
+
+    // Assert
+    const budget = prepared.reviewRequest.context.evidenceBudget;
+    assert.ok(budget.usedBytes <= budget.maxBytes);
+    assert.ok(budget.rejections.some(record => record.source === "changed-code"
+      && budget.usedBytes + record.bytes > budget.maxBytes));
+    assert.ok(prepared.reviewRequest.missingContext.some(reason => reason.includes("required-scope")));
     assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

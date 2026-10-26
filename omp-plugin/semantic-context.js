@@ -10,6 +10,8 @@ const MAX_FILE_EVIDENCE_BYTES = 16_000;
 const MAX_INVENTORY_FILE_BYTES = 256_000;
 const MAX_TOTAL_EVIDENCE_BYTES = 256_000;
 const MAX_EVIDENCE_FILES = 40;
+const MAX_LARGE_SCOPE_EVIDENCE_BYTES = 1_024_000;
+const MAX_LARGE_SCOPE_EVIDENCE_FILES = 256;
 const MAX_CONTEXT_PATHS = 30;
 const CODE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".java", ".js", ".jsx", ".mjs", ".cjs", ".kt", ".mts", ".php",
@@ -322,12 +324,12 @@ function addRecord(records, record, budget) {
     && existing.content === record.content)) return true;
 
   const bytes = Buffer.byteLength(record.content);
-  const exceedsFiles = !budget.paths.has(record.path) && budget.paths.size >= MAX_EVIDENCE_FILES;
-  const exceedsBytes = budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES;
+  const exceedsFiles = !budget.paths.has(record.path) && budget.paths.size >= budget.maxFiles;
+  const exceedsBytes = budget.used + bytes > budget.maxBytes;
   if (exceedsFiles || exceedsBytes) {
     const limits = [];
-    if (exceedsFiles) limits.push(`${MAX_EVIDENCE_FILES}-file evidence limit`);
-    if (exceedsBytes) limits.push(`${MAX_TOTAL_EVIDENCE_BYTES}-byte evidence limit`);
+    if (exceedsFiles) limits.push(`${budget.maxFiles}-file evidence limit`);
+    if (exceedsBytes) limits.push(`${budget.maxBytes}-byte evidence limit`);
     budget.rejections.push({
       path: record.path,
       source: record.source,
@@ -383,6 +385,11 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     ...await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]),
     ...siblingInventory.flatMap(inventory => inventory.files),
   ])].sort();
+
+  // Filename matches are candidate callers, not a declaration of material dependencies.
+  // Explicit context promotes those boundaries and their owning guidance together.
+  const boundaryPaths = [...normalizedChangedPaths, ...normalizedContextPaths];
+  const guidancePaths = paths.filter(path => relevantGuidance(path, boundaryPaths));
   const inventoryWasTruncated = paths.length > MAX_INVENTORY_FILES;
   const orderedInventoryPaths = prioritizedInventory(paths, normalizedChangedPaths, normalizedContextPaths);
   const selectedInventoryPaths = orderedInventoryPaths.slice(0, MAX_INVENTORY_FILES);
@@ -409,7 +416,17 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     availableText.set(path, result.content);
   }
 
-  const budget = { used: 0, paths: new Set(), truncated: false, records: [], rejections: [] };
+  const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths]);
+  const largeScope = requiredEvidencePaths.size > MAX_EVIDENCE_FILES;
+  const budget = {
+    maxFiles: largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES,
+    maxBytes: largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES,
+    used: 0,
+    paths: new Set(),
+    truncated: false,
+    records: [],
+    rejections: [],
+  };
   const changedCode = [];
   const missingChangedPaths = [];
   const changedCodeCoverage = [];
@@ -542,10 +559,6 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   }
 
   const projectGuidance = [];
-  // Filename matches are candidate callers, not a declaration of material dependencies.
-  // Explicit context promotes those boundaries and their owning guidance together.
-  const boundaryPaths = [...normalizedChangedPaths, ...normalizedContextPaths];
-  const guidancePaths = paths.filter(path => relevantGuidance(path, boundaryPaths));
   const guidanceRequirements = guidancePaths.map(path => ({
     path,
     requiredBy: boundaryPaths.filter(boundary => relevantGuidance(path, [boundary])),
@@ -661,8 +674,9 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       recovery: "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
     },
     evidenceBudget: {
-      maxBytes: MAX_TOTAL_EVIDENCE_BYTES,
-      maxFiles: MAX_EVIDENCE_FILES,
+      maxBytes: budget.maxBytes,
+      maxFiles: budget.maxFiles,
+      requiredFiles: requiredEvidencePaths.size,
       usedBytes: budget.used,
       usedFiles: budget.paths.size,
       records: budget.records,
@@ -687,6 +701,17 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
 export function semanticContextMissing(requiredContext, captured) {
   const missing = [];
   const { context } = captured;
+  const { evidenceBudget } = context;
+  const requiredRejections = evidenceBudget.rejections.filter(record =>
+    (record.source === "changed-code" && requiredContext.includes("changed-code"))
+    || (record.source === "project-guidance" && requiredContext.includes("project-guidance"))
+    || record.source === "targeted-context" || record.source === "caller-context");
+  if (requiredRejections.length && evidenceBudget.requiredFiles > evidenceBudget.maxFiles) {
+    missing.push(`required-scope capacity exceeded: ${evidenceBudget.requiredFiles} distinct required paths cannot fit the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte evidence budget. Smaller excerpts cannot reduce required file cardinality; no supported within-request recovery exists. Keep the complete scope BLOCKED rather than splitting it or dropping required evidence.`);
+  } else if (requiredRejections.length) {
+    missing.push(`required-scope evidence capacity reached within the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte budget; inspect evidenceBudget.rejections for exact required records and limits. Recover material context ranges with review --context while retaining complete changed-source coverage. If all required evidence still cannot coexist, keep the whole scope BLOCKED; optional caller/sibling omissions alone do not establish this failure.`);
+  }
+
   if (requiredContext.includes("changed-code")) {
     if (context.changedPaths.length === 0) missing.push("changed-code scope was not supplied");
     if (context.missingChangedPaths.length) {
