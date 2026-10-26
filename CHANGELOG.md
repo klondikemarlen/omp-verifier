@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.23 - 2026-10-26
+
+- Automatically admit large required scopes within a 256-file / 1,024,000-byte snapshot when changed paths, explicit material context, and owning guidance exceed the ordinary 40-file budget.
+- Preserve the smaller budget for ordinary scopes and optional discovery; distinguish required-capacity failures from optional omissions while retaining whole-scope paging, complete source coverage, authenticated deletions, freshness, and citation checks.
+
 ## 0.10.22 - 2026-10-26
 
 - Reserve representative sibling source from each changed directory before broad filename-matched caller candidates consume the shared evidence budget.
