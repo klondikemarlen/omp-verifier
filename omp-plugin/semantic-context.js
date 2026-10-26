@@ -572,20 +572,25 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const siblings = [];
   const capturedOptionalPaths = new Set(targetedContext.filter(record => typeof record.content === "string").map(record => record.path));
   const attemptedOptionalPaths = new Set();
+
   function captureOptionalSource(path, records, source) {
     if (capturedOptionalPaths.has(path)) return true;
     if (attemptedOptionalPaths.has(path)) return false;
+
     attemptedOptionalPaths.add(path);
 
     const content = availableText.get(path);
     if (content === undefined) return false;
+
     const bytes = Buffer.byteLength(content);
     if (bytes > MAX_FILE_EVIDENCE_BYTES) {
       budget.rejections.push({ path, source, bytes, reason: `source exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte per-file context limit; select material ranges with review --context` });
       budget.truncated = true;
       return false;
     }
+
     if (!addRecord(records, recordFor(path, { content, sha256: sha256(content) }, source), budget)) return false;
+
     capturedOptionalPaths.add(path);
     return true;
   }
@@ -594,10 +599,12 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   // Explicit source already admitted for that boundary satisfies the same requirement.
   for (const inventory of siblingInventory) {
     if (inventory.files.some(path => capturedOptionalPaths.has(path))) continue;
+
     for (const path of inventory.files) {
       if (captureOptionalSource(path, siblings, "siblings")) break;
     }
   }
+
   for (const path of callerPaths) captureOptionalSource(path, callers, "callers");
   for (const path of siblingPaths) captureOptionalSource(path, siblings, "siblings");
 

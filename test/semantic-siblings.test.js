@@ -348,3 +348,35 @@ test("when discovered sibling source exceeds capture limits, explicit ranges rec
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("when sibling source is also the caller, incomplete global inventory does not hide its admitted evidence", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture();
+
+  try {
+    await rm(join(fixture.root, "caller.js"));
+    await writeFile(join(fixture.root, "src", "caller.js"), 'import { helper } from "./helper.js";\nexport const result = helper(1);\n');
+    await writeFile(join(fixture.root, "noise", "extra-a.js"), "export const unrelated = true;\n");
+    await writeFile(join(fixture.root, "noise", "extra-b.js"), "export const unrelated = true;\n");
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(prepared.reviewRequest.context.sourceInventory.complete, false);
+    assert.equal(prepared.reviewRequest.context.callers.status, "captured-elsewhere");
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
