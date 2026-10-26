@@ -570,17 +570,66 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
 
   const callers = [];
   const siblings = [];
-  for (const [pathsToCapture, records, source] of [
-    [callerPaths, callers, "callers"],
-    [siblingPaths, siblings, "siblings"],
-  ]) {
-    for (const path of pathsToCapture) {
-      if ([...targetedContext, ...callers].some(record => record.path === path && typeof record.content === "string")) continue;
+  const capturedOptionalPaths = new Set(targetedContext.filter(record => typeof record.content === "string").map(record => record.path));
+  const attemptedOptionalPaths = new Set();
 
-      const content = availableText.get(path);
-      if (Buffer.byteLength(content) > MAX_FILE_EVIDENCE_BYTES) continue;
+  function captureOptionalSource(path, records, source) {
+    if (capturedOptionalPaths.has(path)) return true;
+    if (attemptedOptionalPaths.has(path)) return false;
 
-      addRecord(records, recordFor(path, { content, sha256: sha256(content) }, source), budget);
+    attemptedOptionalPaths.add(path);
+
+    const content = availableText.get(path);
+    if (content === undefined) return false;
+
+    const bytes = Buffer.byteLength(content);
+    if (bytes > MAX_FILE_EVIDENCE_BYTES) {
+      budget.rejections.push({ path, source, bytes, reason: `source exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte per-file context limit; select material ranges with review --context` });
+      budget.truncated = true;
+      return false;
+    }
+
+    if (!addRecord(records, recordFor(path, { content, sha256: sha256(content) }, source), budget)) return false;
+
+    capturedOptionalPaths.add(path);
+    return true;
+  }
+
+  // Reserve one representative per changed boundary before broad filename-matched callers.
+  // Explicit source already admitted for that boundary satisfies the same requirement.
+  for (const inventory of siblingInventory) {
+    if (inventory.files.some(path => capturedOptionalPaths.has(path))) continue;
+
+    for (const path of inventory.files) {
+      if (captureOptionalSource(path, siblings, "siblings")) break;
+    }
+  }
+
+  for (const path of callerPaths) captureOptionalSource(path, callers, "callers");
+  for (const path of siblingPaths) captureOptionalSource(path, siblings, "siblings");
+
+  let siblingEvidence = siblings;
+  if (!siblings.length) {
+    const discovered = siblingInventory.flatMap(inventory => inventory.files);
+    if (discovered.some(path => capturedOptionalPaths.has(path))) {
+      siblingEvidence = { status: "captured-elsewhere", explanation: "Sibling source is captured in targeted context or caller records; inspect siblingInventory for each boundary." };
+    } else if (discovered.length) {
+      siblingEvidence = { status: "not-captured", explanation: "Sibling source files were discovered but not admitted; inspect siblingInventory, sourceInventory, and evidenceBudget.rejections, then select material ranges with review --context." };
+    } else if (siblingInventory.some(inventory => !inventory.complete)) {
+      siblingEvidence = { status: "unavailable", explanation: "Sibling discovery is incomplete; inspect siblingInventory for the affected directories and retrieval failures." };
+    } else {
+      siblingEvidence = { status: "none-found", explanation: "No sibling source files were found in the completely inspected changed directories." };
+    }
+  }
+
+  let callerEvidence = callers;
+  if (!callers.length) {
+    if ([...callerPaths].some(path => capturedOptionalPaths.has(path))) {
+      callerEvidence = { status: "captured-elsewhere", explanation: "Filename-matched caller candidates are captured in sibling or targeted records; source relationships still require assessment." };
+    } else if (callerPaths.size) {
+      callerEvidence = { status: "not-captured", explanation: "Caller candidates were found but not admitted; inspect evidenceBudget.rejections and recover material source with review --context." };
+    } else {
+      callerEvidence = { status: "none-found", explanation: "No current project source file referenced the changed file names in the inspected inventory." };
     }
   }
 
@@ -594,8 +643,8 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     changedPaths: normalizedChangedPaths,
     changedCode,
     ...(changedCodeCoverage.length ? { changedCodeCoverage } : {}),
-    callers: callers.length ? callers : { status: "none-found", explanation: "No current project source file referenced the changed file names in the inspected inventory." },
-    siblings: siblings.length ? siblings : { status: "none-found", explanation: "No sibling source files were found in the changed files' directories." },
+    callers: callerEvidence,
+    siblings: siblingEvidence,
     siblingInventory,
     projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },
     guidanceRequirements,
@@ -620,7 +669,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       rejections: budget.rejections,
     },
     evidenceTruncated: {
-      callers: [...callerPaths].some(path => ![...callers, ...targetedContext].some(record => record.path === path && typeof record.content === "string")),
+      callers: [...callerPaths].some(path => !capturedOptionalPaths.has(path)),
       siblings: [...siblingPaths].some(path => ![...siblings, ...callers, ...targetedContext].some(record => record.path === path && typeof record.content === "string")),
     },
     notes: [
@@ -649,7 +698,7 @@ export function semanticContextMissing(requiredContext, captured) {
     ? context.targetedContext.filter(record => record.content)
     : [];
   const hasCallerEvidence = (Array.isArray(context.callers) && context.callers.length > 0)
-    || targetedRecords.some(record => record.source === "caller-context"
+    || [...(Array.isArray(context.siblings) ? context.siblings : []), ...targetedRecords].some(record => record.source === "caller-context"
       || context.changedPaths.some(changedPath => {
         const stem = basename(changedPath).replace(/\.[^.]+$/, "");
         return stem && record.content.includes(stem);
@@ -659,17 +708,21 @@ export function semanticContextMissing(requiredContext, captured) {
     ...(Array.isArray(context.callers) ? context.callers : []),
     ...targetedRecords.filter(record => codeFile(record.path) && !context.changedPaths.includes(record.path)),
   ];
-  const hasCompleteSiblingBoundaries = context.siblingInventory.every(inventory =>
-    inventory.complete && (inventory.files.length === 0
-      || siblingRecords.some(record => dirname(record.path) === inventory.path)));
+  const incompleteSiblingBoundaries = context.siblingInventory.filter(inventory =>
+    !inventory.complete || (inventory.files.length > 0
+      && !siblingRecords.some(record => dirname(record.path) === inventory.path)));
   if (requiredContext.includes("callers") && !hasCallerEvidence
     && (!context.sourceInventory.complete || context.evidenceTruncated?.callers)) {
     const retrieval = context.callerRetrieval;
     const limits = `${retrieval.inventoryFileLimit}-file inventory / ${retrieval.inventoryReadByteLimit}-byte read limits`;
     missing.push(`caller retrieval is incomplete within the bounded project evidence (${limits}; ${retrieval.omittedFiles} files omitted; ${retrieval.unreadable.length} unreadable). Inspect context.callerRetrieval for omitted paths and exact read failures. ${retrieval.recovery}`);
   }
-  if (requiredContext.includes("siblings") && !hasCompleteSiblingBoundaries) {
-    missing.push("sibling retrieval is incomplete within the bounded project evidence");
+  if (requiredContext.includes("siblings") && incompleteSiblingBoundaries.length) {
+    const boundaries = incompleteSiblingBoundaries.map(inventory => {
+      const candidates = inventory.files.slice(0, 3).join(", ");
+      return `${inventory.path} (${inventory.reason ?? "no representative sibling source captured"}${candidates ? `; candidates: ${candidates}` : ""})`;
+    });
+    missing.push(`sibling retrieval is incomplete for changed boundaries: ${boundaries.join("; ")}. Inspect siblingInventory and evidenceBudget.rejections; recover material source with review --context <path[#Lstart-Lend]> without narrowing the changed scope.`);
   }
   if (requiredContext.includes("project-guidance")) {
     const unavailableGuidance = context.missingGuidancePaths.filter(path =>
