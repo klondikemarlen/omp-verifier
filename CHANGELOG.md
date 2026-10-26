@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.22 - 2026-10-26
+
+- Reserve representative sibling source from each changed directory before broad filename-matched caller candidates consume the shared evidence budget.
+- Distinguish absent siblings from discovered-but-uncaptured or explicitly captured source; report affected boundaries, exact capture-limit rejections, and targeted range recovery without changing scope or limits.
+
 ## 0.10.21 - 2026-10-23
 
 - Return the existing bounded first review page immediately for single pending text results, removing the extra inspection call before semantic context recovery.
