@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.24 - 2026-10-27
+
+- Reconcile restored candidate files against an evidenced run or delivery baseline before automatic selection, without dropping committed changes or authenticated deletions.
+- Keep obsolete-scope failures historical rather than current blockers; distinguish compaction replay from fresh edits while preserving genuine failures and manual-check scope.
+
 ## 0.10.23 - 2026-10-26
 
 - Automatically admit large required scopes within a 256-file / 1,024,000-byte snapshot when changed paths, explicit material context, and owning guidance exceed the ordinary 40-file budget.
