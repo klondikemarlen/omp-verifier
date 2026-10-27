@@ -566,6 +566,11 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const missingGuidancePaths = [];
   for (const path of guidancePaths) {
     if (targetedContext.some(record => record.path === path && record.content)) continue;
+    // A complete changed guide is already admitted; partial source cannot discharge its guidance requirement.
+    if (!missingChangedPaths.includes(path)
+      && changedCode.some(record => record.path === path && record.state === "present")) {
+      continue;
+    }
     let result = await readProjectText(root, path);
     if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
       result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });

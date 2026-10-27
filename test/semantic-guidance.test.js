@@ -20,7 +20,10 @@ function oversizedHelperSource() {
   return `export const policies = new Map([\n${policies.join("\n")}\n]);\n`;
 }
 
-async function createSemanticFixture({ helperSource = "export const helper = value => value;\n" } = {}) {
+async function createSemanticFixture({
+  helperSource = "export const helper = value => value;\n",
+  requiredContext = ["changed-code", "callers", "siblings", "project-guidance"],
+} = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-guidance-"));
   const packagePath = join(root, "plugins", "publisher");
   await mkdir(packagePath, { recursive: true });
@@ -34,7 +37,7 @@ async function createSemanticFixture({ helperSource = "export const helper = val
     standardId: "publisher:alignment",
     source: "./standard.md",
     gold: "Modules own meaningful invariants.",
-    requiredContext: ["changed-code", "callers", "siblings", "project-guidance"],
+    requiredContext,
     rubric: [{ id: "ownership", question: "Which invariant is owned here?" }],
   }));
   await writeFile(join(packagePath, "package.json"), JSON.stringify({
@@ -135,6 +138,107 @@ test("when changed source and material guidance are recovered, unrelated caller 
       record.path === "services/README.md" && record.requiredBy.includes("services/consumer.js")));
     assert.equal(materialRecovery.reviewRequest.context.guidanceRequirements.some(record => record.path.startsWith("unrelated/")), false);
     assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a changed guide is fully recovered, its admitted source satisfies required project guidance", async () => {
+  // Arrange
+  const guidance = `${"Preserve boundary ownership and inspect current source evidence. ".repeat(4)}\n`.repeat(100);
+  const fixture = await createSemanticFixture();
+
+  try {
+    await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["WATCHDOG.md", "src/helper.js"],
+    });
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["WATCHDOG.md#L1-L40", "WATCHDOG.md#L41-L80", "WATCHDOG.md#L81-L101"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: passAssessment(recovered.reviewRequest.requestId, citationFor("WATCHDOG.md", guidance, 100)),
+    });
+
+    // Assert
+    assert.deepEqual(recovered.reviewRequest.scope.changedPaths, ["WATCHDOG.md", "src/helper.js"]);
+    assert.equal(recovered.reviewRequest.context.changedCodeCoverage.find(record => record.path === "WATCHDOG.md").complete, true);
+    assert.deepEqual(recovered.reviewRequest.context.missingGuidancePaths, []);
+    assert.deepEqual(recovered.reviewRequest.missingContext, []);
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when only part of a changed guide is admitted, a guidance-only contract cannot approve it", async () => {
+  // Arrange
+  const guidance = `${"Preserve boundary ownership and inspect current source evidence. ".repeat(4)}\n`.repeat(100);
+  const fixture = await createSemanticFixture({ requiredContext: ["project-guidance"] });
+
+  try {
+    await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["WATCHDOG.md", "src/helper.js"],
+      contextPaths: ["WATCHDOG.md#L1-L40"],
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(prepared.reviewRequest.context.changedCodeCoverage.find(record => record.path === "WATCHDOG.md").complete, false);
+    assert.ok(prepared.reviewRequest.context.missingGuidancePaths.includes("WATCHDOG.md"));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a changed guide is deleted, its historical source cannot replace current project guidance", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture({ requiredContext: ["project-guidance"] });
+
+  try {
+    await writeFile(join(fixture.root, "WATCHDOG.md"), "Preserve current boundary ownership.\n");
+    const check = await discoverSemanticCheck(fixture);
+    await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["WATCHDOG.md", "src/helper.js"],
+    });
+    await rm(join(fixture.root, "WATCHDOG.md"));
+
+    // Act
+    const deleted = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["WATCHDOG.md", "src/helper.js"],
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: deleted.reviewRequest.path,
+      assessment: passAssessment(deleted.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(deleted.reviewRequest.context.changedCode.find(record => record.path === "WATCHDOG.md").state, "deleted");
+    assert.ok(deleted.reviewRequest.context.missingGuidancePaths.includes("WATCHDOG.md"));
+    assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
