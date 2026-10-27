@@ -539,7 +539,7 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
         "README.md#L130-L150",
       ], { cwd: fixture.root, encoding: "utf8" });
     } catch (error) {
-      assert.equal(error.status, 1);
+      assert.equal(error.status, 3);
       output = error.stdout;
     }
     // Assert
@@ -694,7 +694,7 @@ test("when semantic requests overlap, only the current assessment can report PAS
     assert.equal(completed.filter(result => result.status === "PASS").length, 1);
     const currentRequestId = completed.find(result => result.status === "PASS").evaluation.requestId;
     for (const result of completed.filter(result => result.status !== "PASS")) {
-      assert.ok(result.status === "BLOCKED" || result.status === "SUPERSEDED");
+      assert.ok(result.status === "PENDING" || result.status === "SUPERSEDED");
       assert.equal(result.evaluation.supersededBy, currentRequestId);
     }
   } finally {
@@ -735,7 +735,7 @@ test("when additional context is requested, the refreshed request renews its non
       assessment: passAssessment(prepared.reviewRequest.requestId),
     });
     // Assert
-    assert.equal(oldAssessment.status, "BLOCKED");
+    assert.equal(oldAssessment.status, "PENDING");
     assert.equal(oldAssessment.reviewRequest.requestId, refreshed.reviewRequest.requestId);
 
     // Act
@@ -766,7 +766,7 @@ test("when requested context is unavailable, semantic completion cannot report P
       contextPaths: ["src/missing-caller.js"],
     });
     // Assert
-    assert.equal(prepared.status, "BLOCKED");
+    assert.equal(prepared.status, "PENDING");
     assert.equal(prepared.reviewRequest.missingContext.some(reason => reason.includes("src/missing-caller.js")), true);
 
     // Act

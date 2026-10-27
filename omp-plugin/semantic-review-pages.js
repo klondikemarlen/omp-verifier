@@ -1,3 +1,6 @@
+import { fileURLToPath } from "node:url";
+
+const COORDINATOR_PATH = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const MAX_FORMATTED_PAGE_BYTES = 24_000;
 const MAX_DISPLAY_LINE_BYTES = 600;
 // UTF-8-safe cuts can use three fewer bytes; each continuation adds backslash + newline.
@@ -5,7 +8,7 @@ const WRAPPING_OVERHEAD_BYTES = Math.ceil(MAX_FORMATTED_PAGE_BYTES / (MAX_DISPLA
 const MAX_UNWRAPPED_PAGE_BYTES = MAX_FORMATTED_PAGE_BYTES - WRAPPING_OVERHEAD_BYTES;
 const DISPLAY_WRAP_NOTE = "Display wraps at 600 UTF-8 bytes. Join backslash-newline continuations without adding a newline; original source line keys are unchanged.";
 const NUMERIC_HEADER_ALLOWANCE = 128;
-const REVIEW_PAGE_INSTRUCTION = "Read every page in separate coordinator calls, then assess the whole original scope once. Unread pages are pending work, not an execution blocker.";
+const REVIEW_PAGE_INSTRUCTION = "Read every page in separate coordinator calls, then assess the whole original scope once. PENDING is unfinished verifier work, not a final BLOCKED result or permission to complete.";
 
 const REVIEW_RESULT_ORDER = ["id", "status", "summary", "evidence", "reviewRequest"];
 const REVIEW_REQUEST_ORDER = [
@@ -80,9 +83,38 @@ export function serializeSemanticReviewResults(results) {
   }, 2);
 }
 
+function quoteShellArgument(value) {
+  return `'${value.replaceAll("'", "'\"'\"'")}'`;
+}
+
+function nextReviewCommand(path, nextPageIndex) {
+  const coordinator = `node ${quoteShellArgument(COORDINATOR_PATH)}`;
+  const request = quoteShellArgument(path);
+  if (nextPageIndex === null) {
+    return `${coordinator} evaluate ${request} --assessment - --reporter text --failures-only`;
+  }
+
+  return `${coordinator} review ${request} --reporter text --page ${nextPageIndex}`;
+}
+
+function reviewContinuation(path, nextPageIndex) {
+  if (nextPageIndex === null) {
+    return [
+      "Next action: Assess the complete scope using this request ID, then submit literal assessment JSON on stdin. Do not finish before observing the accepted final result.",
+      `Next command: ${nextReviewCommand(path, null)}`,
+    ].join("\n");
+  }
+
+  return [
+    "Next action: Read the next page now; do not report unread pages as a blocker or finish the review.",
+    `Next command: ${nextReviewCommand(path, nextPageIndex)}`,
+  ].join("\n");
+}
+
 function fixedHeaderBytes(path, requestId) {
   const header = [
     "Semantic review page",
+    "Review state: PENDING",
     `Request path: ${path}`,
     `Request ID: ${requestId}`,
     "Page index:  of  (zero-based)",
@@ -94,7 +126,11 @@ function fixedHeaderBytes(path, requestId) {
     REVIEW_PAGE_INSTRUCTION,
     "",
   ].join("\n");
-  return Buffer.byteLength(header, "utf8");
+  const continuationBytes = Math.max(
+    Buffer.byteLength(reviewContinuation(path, 0), "utf8"),
+    Buffer.byteLength(reviewContinuation(path, null), "utf8"),
+  );
+  return Buffer.byteLength(header, "utf8") + continuationBytes;
 }
 
 function contentCapacity(path, requestId) {
@@ -187,9 +223,16 @@ function wrapDisplayLines(text) {
 }
 
 export function formatSemanticReviewPage(page) {
-  const nextPage = page.index + 1 < page.count ? String(page.index + 1) : "none (final page)";
+  let nextPageIndex = null;
+  let nextPage = "none (final page)";
+  if (page.index + 1 < page.count) {
+    nextPageIndex = page.index + 1;
+    nextPage = String(nextPageIndex);
+  }
+
   const output = wrapDisplayLines([
     "Semantic review page",
+    "Review state: PENDING",
     `Request path: ${page.path}`,
     `Request ID: ${page.requestId}`,
     `Page index: ${page.index} of ${page.count} (zero-based)`,
@@ -198,6 +241,7 @@ export function formatSemanticReviewPage(page) {
     "JSON fragment:",
     page.content,
     `Next page index: ${nextPage}`,
+    reviewContinuation(page.path, nextPageIndex),
     REVIEW_PAGE_INSTRUCTION,
   ].join("\n"));
 

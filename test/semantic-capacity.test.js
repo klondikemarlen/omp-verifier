@@ -352,7 +352,7 @@ test("when required file cardinality exceeds large-scope capacity, optional reco
     // Assert
     assert.deepEqual(recovered.reviewRequest.scope.changedPaths, changedPaths);
     assert.ok(recovered.reviewRequest.missingContext.some(reason =>
-      reason.includes("required-scope") && reason.includes("distinct") && reason.includes("BLOCKED")));
+      reason.includes("required-scope") && reason.includes("distinct")));
     assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes(changedPaths.at(-1)));
     assert.equal(completed.status, "BLOCKED");
   } finally {

@@ -293,12 +293,14 @@ async function captureRequest({ check, repositoryRoot, changedPaths, contextPath
 }
 
 function requestEnvelope(payload, requestPath) {
-  const summary = payload.missingContext.length
-    ? "Semantic evaluation is blocked pending required context"
-    : "Semantic evaluation is ready for assessment";
+  let summary = "Semantic evaluation is ready for assessment";
+  if (payload.missingContext.length) {
+    summary = "Semantic evaluation awaits required context";
+  }
+
   return {
     id: payload.check.id,
-    status: "BLOCKED",
+    status: "PENDING",
     summary,
     ...(payload.missingContext.length ? { evidence: payload.missingContext.join("; ") } : {}),
     reviewRequest: { ...payload, path: requestPath },
