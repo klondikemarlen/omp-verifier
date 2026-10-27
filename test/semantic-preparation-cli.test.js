@@ -146,7 +146,7 @@ test("when preparation returns one pending review, its first text response expos
   ]);
 
   // Assert
-  assert.equal(prepared.status, 3);
+  assert.equal(prepared.status, 0);
   const fragment = prepared.stdout.split("JSON fragment:\n")[1].split("\nNext page index:")[0].replaceAll("\\\n", "");
   const result = JSON.parse(fragment)[0];
   assert.equal(result.status, "PENDING");
@@ -171,7 +171,7 @@ test("when preparation returns multiple pending reviews, each handle remains sep
   ]);
 
   // Assert
-  assert.equal(prepared.status, 3);
+  assert.equal(prepared.status, 0);
   assert.deepEqual(prepared.stdout.match(/^PENDING publisher:[a-z]+$/gm), [
     "PENDING publisher:first",
     "PENDING publisher:second",
@@ -265,14 +265,14 @@ test("when a text review skips pages, evaluation remains pending until every mis
   const replay = evaluateAssessment(fixture, firstPage.requestPath, assessment, "text");
 
   // Assert
-  assert.equal(prepared.status, 3, prepared.stderr);
+  assert.equal(prepared.status, 0, prepared.stderr);
   assert.ok(firstPage.count >= 3);
   assert.equal(finalPage.status, 0, finalPage.stderr);
-  assert.equal(jsonAttempt.status, 3, jsonAttempt.stderr);
+  assert.equal(jsonAttempt.status, 0, jsonAttempt.stderr);
   assert.equal(pending.status, "PENDING");
   assert.equal(pending.reviewRequest.requestId, firstPage.requestId);
   assert.deepEqual(pending.reviewProgress.missingPages, skippedPages);
-  assert.equal(textAttempt.status, 3, textAttempt.stderr);
+  assert.equal(textAttempt.status, 0, textAttempt.stderr);
   assert.equal(recoveredPage.requestId, firstPage.requestId);
   assert.equal(recoveredPage.index, skippedPages[0]);
   assert.equal(completed.status, 0, completed.stderr);
@@ -316,7 +316,7 @@ test("when context renewal replaces a fully delivered review, the new request ca
   assert.equal(lateRead.status, 0, lateRead.stderr);
   assert.equal(replacementPage.requestId, renewed.requestId);
   assert.equal(replacementPage.index, 0);
-  assert.equal(assessment.status, 3, assessment.stderr);
+  assert.equal(assessment.status, 0, assessment.stderr);
   assert.equal(pending.status, "PENDING");
   assert.equal(pending.reviewRequest.requestId, renewed.requestId);
   assert.deepEqual(pending.reviewProgress.missingPages,

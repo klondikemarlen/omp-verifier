@@ -57,7 +57,7 @@ function cli(fixture, ...args) {
     env: { ...process.env, PI_CODING_AGENT_DIR: join(fixture.root, "agent") },
     maxBuffer: 4_000_000,
   });
-  assert.ok(result.status === 0 || result.status === 1 || result.status === 3, result.stderr);
+  assert.ok(result.status === 0 || result.status === 1, result.stderr);
   return JSON.parse(result.stdout)[0];
 }
 
