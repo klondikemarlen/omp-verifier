@@ -10,7 +10,7 @@ import {
 function reviewResult({ path = "/tmp/semantic-review.json", sourceContent, startLine = 1 } = {}) {
   return {
     id: "publisher:alignment",
-    status: "BLOCKED",
+    status: "PENDING",
     summary: "Semantic evaluation is ready for assessment",
     evidence: "Review the captured evidence",
     reviewRequest: {
