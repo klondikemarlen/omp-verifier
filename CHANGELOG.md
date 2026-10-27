@@ -4,6 +4,7 @@
 
 - Distinguish supported, unfinished semantic requests as `PENDING` rather than final `BLOCKED` verdicts. Unfinished verification CLI invocations now exit `3`; successful `review` retrieval exits `0` without becoming PASS. Final `FAIL`/`BLOCKED` still exits `1`, and invocation errors exit `2`.
 - Preserve pending work in failure-only output and provide the exact next review or evaluation command on every bounded page, retaining opaque request identity and whole-scope assessment.
+- Record delivered text pages against the current request's canonical view and refuse to consume an assessment while any page is missing. Return the first missing page as PENDING work; request renewal resets receipts, and JSON cannot bypass an enrolled text review.
 - Keep unread pages as verifier-owned work until an accepted final result; preserve genuine unavailable-prerequisite blockers, source/citation freshness, silent successful outcomes, and existing native model routes and cadence. These instructions do not add a native completion veto.
 
 ## 0.10.24 - 2026-10-27
