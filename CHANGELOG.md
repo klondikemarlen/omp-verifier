@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0 - 2026-10-27
+
+- Distinguish supported, unfinished semantic requests as `PENDING` rather than final `BLOCKED` verdicts. Pending-only CLI invocations now exit `3`; final `FAIL`/`BLOCKED` still exits `1`, invocation errors exit `2`, and completed non-failure outcomes exit `0`.
+- Preserve pending work in failure-only output and provide the exact next review or evaluation command on every bounded page, retaining opaque request identity and whole-scope assessment.
+- Keep unread pages as verifier-owned work until an accepted final result; preserve genuine unavailable-prerequisite blockers, source/citation freshness, silent successful outcomes, and existing native model routes and cadence. These instructions do not add a native completion veto.
+
 ## 0.10.24 - 2026-10-27
 
 - Reconcile restored candidate files against an evidenced run or delivery baseline before automatic selection, without dropping committed changes or authenticated deletions.
