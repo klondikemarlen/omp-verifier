@@ -232,7 +232,7 @@ test("when a late CLI page read follows supersession, replacement inspection sta
     ], { cwd: fixture.root, encoding: "utf8" });
 
     // Assert
-    assert.equal(late.status, 3);
+    assert.equal(late.status, 0);
     assert.ok(late.stdout.includes(`Request ID: ${current.reviewRequest.requestId}\n`));
     assert.match(late.stdout, /Page index: 0 of 1 /);
   } finally {

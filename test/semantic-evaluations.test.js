@@ -529,19 +529,14 @@ test("when a relevant guide exceeds the capture limit in a large repository, ran
     });
 
     // Act
-    let output;
-    try {
-      output = execFileSync(process.execPath, [
-        join(process.cwd(), "bin/omp-verifier.js"),
-        "review",
-        prepared.reviewRequest.path,
-        "--context",
-        "README.md#L130-L150",
-      ], { cwd: fixture.root, encoding: "utf8" });
-    } catch (error) {
-      assert.equal(error.status, 3);
-      output = error.stdout;
-    }
+    const output = execFileSync(process.execPath, [
+      join(process.cwd(), "bin/omp-verifier.js"),
+      "review",
+      prepared.reviewRequest.path,
+      "--context",
+      "README.md#L130-L150",
+    ], { cwd: fixture.root, encoding: "utf8" });
+
     // Assert
     const reviewed = JSON.parse(output)[0].reviewRequest;
     const guide = reviewed.context.targetedContext.find(record => record.path === "README.md");

@@ -49,7 +49,7 @@ function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
 
   if (failures.length > 0) {
     process.exitCode = 1;
-  } else if (pending) {
+  } else if (pending && command !== "review") {
     process.exitCode = 3;
   } else {
     process.exitCode = 0;
