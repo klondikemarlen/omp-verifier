@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.1 - 2026-10-27
+
+- Recover from an invalid retained context selector with `review --remove-context`, adding corrected ranges without losing other selections or narrowing the changed scope.
+- Renew current evidence and page receipts after selector edits; preserve full-source coverage, freshness, citation checks, and existing evidence limits. Unknown removals leave the current request unchanged.
+
 ## 0.11.0 - 2026-10-27
 
 - Distinguish supported, unfinished semantic requests as `PENDING` rather than final `BLOCKED` verdicts. Successful preparation, retrieval, and missing-page recovery exit `0` without becoming PASS or a failed tool call. Final `FAIL`/`BLOCKED` still exits `1`, and invocation errors exit `2`; consumers must inspect result status rather than infer approval from exit `0`.

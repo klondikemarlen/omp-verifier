@@ -92,12 +92,14 @@ try {
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
+      "remove-context": { type: "string", multiple: true, default: [] },
       page: { type: "string" },
     },
   });
   const reporter = values.reporter;
   const failuresOnly = values["failures-only"];
-  const hasSemanticOptions = values.assessment !== undefined || values.context.length > 0 || values["caller-context"].length > 0;
+  const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0 || values["remove-context"].length > 0;
+  const hasSemanticOptions = values.assessment !== undefined || hasContextOptions;
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -113,7 +115,7 @@ try {
     }
     pageIndex = Number(values.page);
   }
-  if (pageIndex > 0 && (values.context.length > 0 || values["caller-context"].length > 0)) {
+  if (pageIndex > 0 && hasContextOptions) {
     throw new Error("Context recovery must start at page 0; read later pages from the renewed request without context options");
   }
 
@@ -138,8 +140,9 @@ try {
       requestPath: positionals[0],
       contextPaths: values.context,
       callerContextPaths: values["caller-context"],
+      removeContextPaths: values["remove-context"],
     })], { reporter, failuresOnly, pageIndex });
-  } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && values.context.length === 0 && values["caller-context"].length === 0 && values.assessment !== undefined) {
+  } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && !hasContextOptions && values.assessment !== undefined) {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
     const assessment = JSON.parse(assessmentText);
     await writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
@@ -151,6 +154,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
