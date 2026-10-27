@@ -45,7 +45,7 @@ function evaluateAssessment(fixture, requestPath, assessment, reporter) {
   );
 }
 
-async function preparationFixture(t, { checkIds = ["publisher:alignment"], includeBlockedCheck = false, pagedReview = false } = {}) {
+async function preparationFixture(t, { checkIds = ["publisher:alignment"], includeBlockedCheck = false, pagedReview = false, policySource = POLICY_SOURCE } = {}) {
   let pagedSourcePaths = [];
   if (pagedReview) {
     pagedSourcePaths = PAGED_SOURCE_PATHS;
@@ -56,7 +56,7 @@ async function preparationFixture(t, { checkIds = ["publisher:alignment"], inclu
   const provider = join(root, "plugins", "node_modules", "publisher");
   await mkdir(provider, { recursive: true });
   await mkdir(join(root, "src"));
-  await writeFile(join(root, "src", "policy.js"), POLICY_SOURCE);
+  await writeFile(join(root, "src", "policy.js"), policySource);
   for (const [index, path] of pagedSourcePaths.entries()) {
     await writeFile(join(root, path), `export const context${index} = "baseline";\n`);
   }
@@ -235,6 +235,74 @@ test("when pending review and final blocked checks are mixed, failure-only retai
   assert.equal(result.status, 1);
   assert.match(result.stdout, /^PENDING publisher:alignment$/m);
   assert.match(result.stdout, /^BLOCKED publisher:baseline$/m);
+});
+
+test("when an invalid retained range is replaced, recovery preserves earlier evidence and complete scope", async t => {
+  // Arrange
+  const source = [
+    POLICY_SOURCE.trimEnd(),
+    "export const validationRules = [",
+    ...Array.from({ length: 250 }, (_, index) =>
+      `  { id: "rule-${index}", minimum: 0, maximum: 10, domain: "threshold-validation" },`),
+    "];",
+    "",
+  ].join("\n");
+  const firstSelector = "src/policy.js#L1-L120";
+  const invalidSelector = "src/policy.js#L121-L300";
+  const correctedSelector = `src/policy.js#L121-L${source.split("\n").length}`;
+  const standardPath = "plugins/node_modules/publisher/standard.md";
+  const fixture = await preparationFixture(t, { policySource: source });
+  const prepared = JSON.parse(fixture.run(["automatic", "src/policy.js", "src/obsolete.js"]).stdout)[0];
+  const partial = JSON.parse(fixture.run([
+    "review", prepared.reviewRequest.path, "--context", firstSelector, "--context", standardPath,
+  ]).stdout)[0];
+  const invalid = JSON.parse(fixture.run([
+    "review", partial.reviewRequest.path, "--context", invalidSelector,
+  ]).stdout)[0];
+
+  // Act
+  const correction = fixture.run([
+    "review", invalid.reviewRequest.path,
+    "--remove-context", invalidSelector, "--context", correctedSelector,
+  ]);
+  const recovered = JSON.parse(correction.stdout)[0];
+  const evaluation = evaluateAssessment(fixture, recovered.reviewRequest.path,
+    assessmentFor(recovered.reviewRequest.requestId), "json");
+  const completed = JSON.parse(evaluation.stdout)[0];
+
+  // Assert
+  assert.ok(invalid.reviewRequest.context.missingChangedPaths.includes("src/policy.js"));
+  assert.equal(correction.status, 0, correction.stderr);
+  assert.notEqual(recovered.reviewRequest.requestId, invalid.reviewRequest.requestId);
+  assert.deepEqual(recovered.reviewRequest.scope.changedPaths, ["src/obsolete.js", "src/policy.js"]);
+  assert.deepEqual(recovered.reviewRequest.scope.contextPaths, [firstSelector, standardPath, correctedSelector]);
+  assert.deepEqual(recovered.reviewRequest.context.missingChangedPaths, []);
+  const coverage = recovered.reviewRequest.context.changedCodeCoverage.find(record => record.path === "src/policy.js");
+  assert.equal(coverage.complete, true);
+  const deletion = recovered.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js");
+  assert.equal(deletion.state, "deleted");
+  assert.equal(deletion.content[1], "export const obsolete = true;");
+  assert.equal(evaluation.status, 0, evaluation.stderr);
+  assert.equal(completed.status, "PASS");
+});
+
+test("when removal names an unretained selector, the current request remains assessable", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t);
+  const prepared = JSON.parse(fixture.run(["automatic", "src/policy.js"]).stdout)[0];
+  const request = prepared.reviewRequest;
+
+  // Act
+  const rejected = fixture.run(["review", request.path, "--remove-context", "src/policy.js#L99-L100"]);
+  const completed = evaluateAssessment(fixture, request.path, assessmentFor(request.requestId), "json");
+
+  // Assert
+  assert.equal(rejected.status, 1, rejected.stderr);
+  const failure = JSON.parse(rejected.stdout)[0];
+  assert.equal(failure.status, "BLOCKED");
+  assert.ok(failure.evidence.includes("src/policy.js#L99-L100"));
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(JSON.parse(completed.stdout)[0].status, "PASS");
 });
 
 test("when a text review skips pages, evaluation remains pending until every missing page is delivered", async t => {

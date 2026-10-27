@@ -420,7 +420,7 @@ export async function prepareSemanticEvaluation({ check, cwd, changedPaths = [],
   }
 }
 
-export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [] }) {
+export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [], removeContextPaths = [] }) {
   let target;
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
@@ -438,12 +438,26 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
       if (!Array.isArray(callerContextPaths)) throw new Error("callerContextPaths must be an array of project-relative paths");
-      const additionalContextPaths = [...new Set([...stored.payload.scope.contextPaths, ...contextPaths])];
+      if (!Array.isArray(removeContextPaths)) throw new Error("removeContextPaths must be an array of retained selectors");
+      const previousContextPaths = stored.payload.scope.contextPaths;
       const previousCallerContext = stored.payload.scope.callerContextPaths ?? [];
-      const additionalCallerContext = [...new Set([...previousCallerContext, ...callerContextPaths])];
-      const hasAdditionalContext = additionalContextPaths.length !== stored.payload.scope.contextPaths.length
+      const retainedSelectors = new Set([...previousContextPaths, ...previousCallerContext]);
+      const removedSelectors = new Set(removeContextPaths);
+      for (const selector of removedSelectors) {
+        if (!retainedSelectors.has(selector)) throw new Error(`context selector is not retained: ${selector}`);
+      }
+      const additionalContextPaths = [...new Set([
+        ...previousContextPaths.filter(selector => !removedSelectors.has(selector)),
+        ...contextPaths,
+      ])];
+      const additionalCallerContext = [...new Set([
+        ...previousCallerContext.filter(selector => !removedSelectors.has(selector)),
+        ...callerContextPaths,
+      ])];
+      const hasContextChanges = removedSelectors.size > 0
+        || additionalContextPaths.length !== previousContextPaths.length
         || additionalCallerContext.length !== previousCallerContext.length;
-      if (!hasAdditionalContext) return requestEnvelope(stored.payload, target.absoluteRequestPath);
+      if (!hasContextChanges) return requestEnvelope(stored.payload, target.absoluteRequestPath);
 
       const check = {
         id: target.checkId,
