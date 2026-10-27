@@ -21,10 +21,11 @@ const cwd = process.cwd();
 
 function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   const failures = results.filter(result => result.status === "FAIL" || result.status === "BLOCKED");
+  const pending = results.some(result => result.status === "PENDING");
   let reported = results;
   if (failuresOnly) {
     reported = results.filter(result =>
-      result.status === "FAIL" || result.status === "BLOCKED" || result.status === "SUPERSEDED",
+      result.status === "FAIL" || result.status === "BLOCKED" || result.status === "PENDING" || result.status === "SUPERSEDED",
     );
   }
 
@@ -46,7 +47,13 @@ function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
     process.stdout.write(`${output}\n`);
   }
 
-  process.exitCode = failures.length > 0 ? 1 : 0;
+  if (failures.length > 0) {
+    process.exitCode = 1;
+  } else if (pending) {
+    process.exitCode = 3;
+  } else {
+    process.exitCode = 0;
+  }
 }
 
 async function automaticResults(paths, worktree) {
