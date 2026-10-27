@@ -156,8 +156,6 @@ The provider supplies the versioned standard/source, quality standard, required 
 
 The advisor assesses the complete current scope against the provider's supplied rubric. Recoverable evidence gaps remain pending work; source size or an incomplete excerpt is not a quality verdict. A fresh assessment is required after correction.
 
-For manual recovery, add relevant source with `review <request-file> --context 'src/module.js#L1-L120'`, or use `--caller-context` for real runtime-discovery source. Correct an erroneous retained range with `review <request-file> --remove-context 'src/module.js#L301-L468' --context 'src/module.js#L301-L466'`.
-
 See the [semantic protocol reference](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for complete-source recovery, owning guidance, evidence limits, supersession, and source/citation validation. Native blocker delivery supports correction but is not a hard [completion gate](docs/references/verifier-concepts-reference.md#completion-boundary).
 
 
