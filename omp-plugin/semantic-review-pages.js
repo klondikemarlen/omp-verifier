@@ -9,7 +9,7 @@ const WRAPPING_OVERHEAD_BYTES = Math.ceil(MAX_FORMATTED_PAGE_BYTES / (MAX_DISPLA
 const MAX_UNWRAPPED_PAGE_BYTES = MAX_FORMATTED_PAGE_BYTES - WRAPPING_OVERHEAD_BYTES;
 const DISPLAY_WRAP_NOTE = "Display wraps at 600 UTF-8 bytes. Join backslash-newline continuations without adding a newline; original source line keys are unchanged.";
 const NUMERIC_HEADER_ALLOWANCE = 128;
-const REVIEW_PAGE_INSTRUCTION = "Read every page in separate coordinator calls, then assess the whole original scope once. PENDING is unfinished verifier work, not a final BLOCKED result or permission to complete.";
+const REVIEW_PAGE_INSTRUCTION = "You are the verifier: execute the next command with bash yourself. A standalone advise call ends this review; never use it for continuation or PENDING progress. Inspect every page, then assess the whole scope once and observe the accepted final result.";
 
 const REVIEW_RESULT_ORDER = ["id", "status", "summary", "evidence", "reviewRequest"];
 const REVIEW_REQUEST_ORDER = [
