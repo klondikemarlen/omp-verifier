@@ -9,7 +9,11 @@ import {
   runCurrentAutomaticVerification,
   runInstalledVerificationChecks,
 } from "#root/omp-plugin/verifications.js";
-import { completeSemanticEvaluation, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
+import {
+  completeSemanticEvaluation,
+  readSemanticEvaluation,
+  recordSemanticReviewPage,
+} from "#root/omp-plugin/semantic-evaluations.js";
 import {
   buildSemanticReviewPage,
   formatSemanticReviewPage,
@@ -19,7 +23,7 @@ import {
 const [command, ...args] = process.argv.slice(2);
 const cwd = process.cwd();
 
-function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
+async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   const failures = results.filter(result => result.status === "FAIL" || result.status === "BLOCKED");
   const pending = results.some(result => result.status === "PENDING");
   let reported = results;
@@ -30,11 +34,15 @@ function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   }
 
   let output;
+  let reviewPage;
   if (reporter === "text" && reported.length === 1 && reported[0]?.reviewRequest) {
+    const result = reported[0];
     let currentPageIndex = pageIndex;
-    if (reported[0].evaluation?.supersededBy) currentPageIndex = 0;
+    if (result.evaluation?.supersededBy) currentPageIndex = 0;
+    else if (result.reviewProgress?.nextPage !== undefined) currentPageIndex = result.reviewProgress.nextPage;
 
-    output = formatSemanticReviewPage(buildSemanticReviewPage(reported[0], currentPageIndex));
+    reviewPage = buildSemanticReviewPage(result, currentPageIndex);
+    output = formatSemanticReviewPage(reviewPage);
   } else if (reporter === "text") {
     output = formatVerificationResults(reported);
   } else if (command === "review") {
@@ -44,7 +52,15 @@ function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
   }
 
   if (output) {
-    process.stdout.write(`${output}\n`);
+    await new Promise((resolve, reject) => {
+      process.stdout.write(`${output}\n`, error => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+    if (reviewPage && reported[0].status === "PENDING") {
+      await recordSemanticReviewPage({ cwd, page: reviewPage });
+    }
   }
 
   if (failures.length > 0) {
@@ -120,7 +136,7 @@ try {
     process.stdout.write(`${output}\n`);
     process.exitCode = blockedResults.length > 0 ? 1 : 0;
   } else if (command === "review" && positionals.length === 1 && !values.worktree && !failuresOnly && values.assessment === undefined) {
-    writeResults([await readSemanticEvaluation({
+    await writeResults([await readSemanticEvaluation({
       cwd,
       requestPath: positionals[0],
       contextPaths: values.context,
@@ -129,11 +145,11 @@ try {
   } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && values.context.length === 0 && values["caller-context"].length === 0 && values.assessment !== undefined) {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
     const assessment = JSON.parse(assessmentText);
-    writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
+    await writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
   } else if (command === "verify" && !values.worktree && !hasSemanticOptions) {
-    writeResults(await runInstalledVerificationChecks({ cwd, ids: positionals }), { reporter, failuresOnly });
+    await writeResults(await runInstalledVerificationChecks({ cwd, ids: positionals }), { reporter, failuresOnly });
   } else if (command === "automatic" && (!values.worktree || positionals.length === 0) && !hasSemanticOptions) {
-    writeResults(await automaticResults(positionals, values.worktree), { reporter, failuresOnly });
+    await writeResults(await automaticResults(positionals, values.worktree), { reporter, failuresOnly });
   } else {
     throw new Error("Invalid command or arguments");
   }
