@@ -469,6 +469,56 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
   }
 }
 
+export async function recordSemanticReviewPage({ cwd, page }) {
+  if (!page || !Number.isSafeInteger(page.index) || !Number.isSafeInteger(page.count)
+    || page.index < 0 || page.count < 1 || page.index >= page.count
+    || !/^[a-f0-9]{64}$/.test(page.viewFingerprint)) {
+    throw new Error("semantic review page identity is invalid");
+  }
+
+  const target = await loadRequestForOperation({ cwd, requestPath: page.path });
+  if (page.requestId !== target.requestId) {
+    throw new Error("semantic review page requestId does not match its request path");
+  }
+
+  await withCheckLock(target.cacheDirectory, target.checkId, async () => {
+    const { currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
+    const previous = currentState.pagePresentation;
+    let deliveredPages = [];
+    if (previous?.viewFingerprint === page.viewFingerprint && previous.count === page.count) {
+      deliveredPages = previous.deliveredPages;
+    }
+
+    const delivered = new Set(deliveredPages);
+    delivered.add(page.index);
+    await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify({
+      ...currentState,
+      pagePresentation: {
+        viewFingerprint: page.viewFingerprint,
+        count: page.count,
+        deliveredPages: [...delivered].sort((left, right) => left - right),
+      },
+    }));
+  });
+}
+
+function missingReviewPages(presentation) {
+  if (!presentation) return [];
+
+  if (!Number.isSafeInteger(presentation.count) || presentation.count < 1
+    || !Array.isArray(presentation.deliveredPages)
+    || presentation.deliveredPages.some(index => !Number.isSafeInteger(index) || index < 0 || index >= presentation.count)) {
+    throw new Error("semantic review page presentation state is invalid");
+  }
+
+  const delivered = new Set(presentation.deliveredPages);
+  const missing = [];
+  for (let index = 0; index < presentation.count; index += 1) {
+    if (!delivered.has(index)) missing.push(index);
+  }
+  return missing;
+}
+
 function normalizedAssessment(assessment, payload) {
   if (!assessment || typeof assessment !== "object" || Array.isArray(assessment)) {
     throw new Error("assessment must be an object");
@@ -535,6 +585,17 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
         repositoryRoot: target.repositoryRoot,
         stored,
       });
+      const missingPages = missingReviewPages(currentState.pagePresentation);
+      if (missingPages.length > 0) {
+        return {
+          ...requestEnvelope(stored.payload, target.absoluteRequestPath),
+          reviewProgress: {
+            nextPage: missingPages[0],
+            missingPages,
+          },
+        };
+      }
+
       const result = normalizedAssessment(assessment, stored.payload);
       if (result.status === "FAIL" && !result.citations.length) {
         throw new Error("FAIL assessments require an actual source location citation");

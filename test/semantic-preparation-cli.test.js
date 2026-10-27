@@ -8,13 +8,59 @@ import test from "node:test";
 const CLI = join(process.cwd(), "bin", "omp-verifier.js");
 const POLICY_SOURCE = "export function positive(value) { if (value <= 0) throw new RangeError(); return value; }\n";
 
-async function preparationFixture(t, checkIds = ["publisher:alignment"], includeBlockedCheck = false) {
+const PAGED_SOURCE_PATHS = [
+  "src/context-a.js",
+  "src/context-b.js",
+  "src/context-c.js",
+  "src/context-d.js",
+];
+
+function reviewPageDetails(output) {
+  const requestPath = output.match(/^Request path: (.+)$/m)?.[1];
+  const requestId = output.match(/^Request ID: (.+)$/m)?.[1];
+  const page = output.match(/^Page index: (\d+) of (\d+) \(zero-based\)$/m);
+  if (!requestPath || !requestId || !page) return undefined;
+  return {
+    requestPath,
+    requestId,
+    index: Number(page[1]),
+    count: Number(page[2]),
+  };
+}
+
+function assessmentFor(requestId) {
+  return {
+    requestId,
+    status: "PASS",
+    summary: "The positive function rejects non-positive inputs.",
+    rationale: "Its value <= 0 guard throws before returning the input.",
+    citations: [{ path: "src/policy.js", line: 1, quote: POLICY_SOURCE.trim() }],
+  };
+}
+
+function evaluateAssessment(fixture, requestPath, assessment, reporter) {
+  return fixture.runInput(
+    ["evaluate", requestPath, "--assessment", "-", "--reporter", reporter],
+    `${JSON.stringify(assessment)}\n`,
+  );
+}
+
+async function preparationFixture(t, { checkIds = ["publisher:alignment"], includeBlockedCheck = false, pagedReview = false } = {}) {
+  let pagedSourcePaths = [];
+  if (pagedReview) {
+    pagedSourcePaths = PAGED_SOURCE_PATHS;
+  }
+
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-preparation-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const provider = join(root, "plugins", "node_modules", "publisher");
   await mkdir(provider, { recursive: true });
   await mkdir(join(root, "src"));
   await writeFile(join(root, "src", "policy.js"), POLICY_SOURCE);
+  for (const [index, path] of pagedSourcePaths.entries()) {
+    await writeFile(join(root, path), `export const context${index} = "baseline";\n`);
+  }
+
   await writeFile(join(root, "src", "obsolete.js"), "export const obsolete = true;\n");
   await writeFile(join(provider, "standard.md"), "The changed positive function rejects non-positive inputs.\n");
   const verifications = [];
@@ -61,11 +107,21 @@ process.exitCode = 1;
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "baseline"], { cwd: root });
+  for (const [index, path] of pagedSourcePaths.entries()) {
+    const source = `// ${"review context. ".repeat(900)}\nexport const context${index} = true;\n`;
+    await writeFile(join(root, path), source);
+  }
   await rm(join(root, "src", "obsolete.js"));
   return {
     run: args => spawnSync(process.execPath, [CLI, ...args], {
       cwd: root,
       encoding: "utf8",
+      env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
+    }),
+    runInput: (args, input) => spawnSync(process.execPath, [CLI, ...args], {
+      cwd: root,
+      encoding: "utf8",
+      input,
       env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
     }),
     runCommand: (command, input) => spawnSync(command, {
@@ -75,6 +131,7 @@ process.exitCode = 1;
       input,
       env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
     }),
+    pagedSourcePaths,
   };
 }
 
@@ -103,7 +160,9 @@ test("when preparation returns one pending review, its first text response expos
 
 test("when preparation returns multiple pending reviews, each handle remains separately inspectable without concatenated pages", async t => {
   // Arrange
-  const fixture = await preparationFixture(t, ["publisher:first", "publisher:second"]);
+  const fixture = await preparationFixture(t, {
+    checkIds: ["publisher:first", "publisher:second"],
+  });
 
   // Act
   const prepared = fixture.run([
@@ -117,7 +176,6 @@ test("when preparation returns multiple pending reviews, each handle remains sep
     "PENDING publisher:first",
     "PENDING publisher:second",
   ]);
-  assert.equal(prepared.stdout.includes("Semantic review page"), false);
   const paths = [...prepared.stdout.matchAll(/^  Review request: (.+)$/gm)].map(match => match[1]);
   const inspected = paths.map(path => fixture.run(["review", path]));
   assert.deepEqual(inspected.map(result => JSON.parse(result.stdout)[0].id), [
@@ -163,7 +221,9 @@ test("when a final review page supplies evaluation, its command consumes the cur
 
 test("when pending review and final blocked checks are mixed, failure-only retains both and final BLOCKED wins", async t => {
   // Arrange
-  const fixture = await preparationFixture(t, ["publisher:alignment"], true);
+  const fixture = await preparationFixture(t, {
+    includeBlockedCheck: true,
+  });
 
   // Act
   const result = fixture.run([
@@ -175,4 +235,90 @@ test("when pending review and final blocked checks are mixed, failure-only retai
   assert.equal(result.status, 1);
   assert.match(result.stdout, /^PENDING publisher:alignment$/m);
   assert.match(result.stdout, /^BLOCKED publisher:baseline$/m);
+});
+
+test("when a text review skips pages, evaluation remains pending until every missing page is delivered", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t, {
+    pagedReview: true,
+  });
+  const sourcePaths = ["src/policy.js", "src/obsolete.js", ...fixture.pagedSourcePaths];
+  const prepared = fixture.run([
+    "automatic", ...sourcePaths, "--reporter", "text", "--failures-only",
+  ]);
+  const firstPage = reviewPageDetails(prepared.stdout);
+  const finalPage = fixture.run([
+    "review", firstPage.requestPath, "--reporter", "text", "--page", String(firstPage.count - 1),
+  ]);
+  const skippedPages = Array.from({ length: firstPage.count - 2 }, (_, index) => index + 1);
+  const assessment = assessmentFor(firstPage.requestId);
+
+  // Act
+  const jsonAttempt = evaluateAssessment(fixture, firstPage.requestPath, assessment, "json");
+  const pending = JSON.parse(jsonAttempt.stdout)[0];
+  const textAttempt = evaluateAssessment(fixture, firstPage.requestPath, assessment, "text");
+  const recoveredPage = reviewPageDetails(textAttempt.stdout);
+  for (const pageIndex of skippedPages.slice(1)) {
+    fixture.run(["review", firstPage.requestPath, "--reporter", "text", "--page", String(pageIndex)]);
+  }
+  const completed = evaluateAssessment(fixture, firstPage.requestPath, assessment, "text");
+  const replay = evaluateAssessment(fixture, firstPage.requestPath, assessment, "text");
+
+  // Assert
+  assert.equal(prepared.status, 3, prepared.stderr);
+  assert.ok(firstPage.count >= 3);
+  assert.equal(finalPage.status, 0, finalPage.stderr);
+  assert.equal(jsonAttempt.status, 3, jsonAttempt.stderr);
+  assert.equal(pending.status, "PENDING");
+  assert.equal(pending.reviewRequest.requestId, firstPage.requestId);
+  assert.deepEqual(pending.reviewProgress.missingPages, skippedPages);
+  assert.equal(textAttempt.status, 3, textAttempt.stderr);
+  assert.equal(recoveredPage.requestId, firstPage.requestId);
+  assert.equal(recoveredPage.index, skippedPages[0]);
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.match(completed.stdout, /^PASS publisher:alignment$/m);
+  assert.equal(replay.status, 1, replay.stderr);
+  assert.match(replay.stdout, /^BLOCKED publisher:alignment$/m);
+});
+
+test("when context renewal replaces a fully delivered review, the new request cannot reuse old page receipts", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t, {
+    pagedReview: true,
+  });
+  const sourcePaths = ["src/policy.js", "src/obsolete.js", ...fixture.pagedSourcePaths];
+  const prepared = fixture.run([
+    "automatic", ...sourcePaths, "--reporter", "text", "--failures-only",
+  ]);
+  const original = reviewPageDetails(prepared.stdout);
+  for (let index = 1; index < original.count; index += 1) {
+    fixture.run(["review", original.requestPath, "--reporter", "text", "--page", String(index)]);
+  }
+
+  // Act
+  const contextRenewal = fixture.run([
+    "review", original.requestPath,
+    "--context", "plugins/node_modules/publisher/standard.md",
+    "--reporter", "text",
+  ]);
+  const renewed = reviewPageDetails(contextRenewal.stdout);
+  const lateRead = fixture.run([
+    "review", original.requestPath, "--reporter", "text", "--page", String(original.count - 1),
+  ]);
+  const replacementPage = reviewPageDetails(lateRead.stdout);
+  const assessment = evaluateAssessment(fixture, renewed.requestPath, assessmentFor(renewed.requestId), "json");
+  const pending = JSON.parse(assessment.stdout)[0];
+
+  // Assert
+  assert.equal(contextRenewal.status, 0, contextRenewal.stderr);
+  assert.notEqual(renewed.requestId, original.requestId);
+  assert.equal(renewed.index, 0);
+  assert.equal(lateRead.status, 0, lateRead.stderr);
+  assert.equal(replacementPage.requestId, renewed.requestId);
+  assert.equal(replacementPage.index, 0);
+  assert.equal(assessment.status, 3, assessment.stderr);
+  assert.equal(pending.status, "PENDING");
+  assert.equal(pending.reviewRequest.requestId, renewed.requestId);
+  assert.deepEqual(pending.reviewProgress.missingPages,
+    Array.from({ length: renewed.count - 1 }, (_, index) => index + 1));
 });

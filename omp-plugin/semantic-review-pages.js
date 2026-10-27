@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const COORDINATOR_PATH = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
@@ -67,7 +68,19 @@ function orderedReviewResult(result) {
     }
     reviewRequest.context = context;
   }
-  return orderedObject({ ...result, reviewRequest }, REVIEW_RESULT_ORDER);
+
+  // Transport metadata must not change evidence page boundaries or delivery identity.
+  const canonicalResult = {
+    id: result.id,
+    status: result.status,
+    summary: result.summary,
+    reviewRequest,
+  };
+  if (Object.hasOwn(result, "evidence")) {
+    canonicalResult.evidence = result.evidence;
+  }
+
+  return orderedObject(canonicalResult, REVIEW_RESULT_ORDER);
 }
 
 export function serializeSemanticReviewResults(results) {
@@ -187,15 +200,18 @@ export function buildSemanticReviewPage(result, pageIndex = 0) {
 
   const serialized = serializeSemanticReviewResults([orderedReviewResult(result)]);
   const buffer = Buffer.from(serialized, "utf8");
-  const offsets = pageOffsets(buffer, contentCapacity(path, requestId));
+  const capacity = contentCapacity(path, requestId);
+  const offsets = pageOffsets(buffer, capacity);
   if (pageIndex >= offsets.length) {
     throw new RangeError(`Semantic review page index ${pageIndex} is out of range; page count is ${offsets.length}.`);
   }
 
   const { startByte, endByte } = offsets[pageIndex];
+  const viewFingerprint = createHash("sha256").update(String(capacity)).update("\n").update(buffer).digest("hex");
   return {
     requestId,
     path,
+    viewFingerprint,
     index: pageIndex,
     count: offsets.length,
     startByte,
