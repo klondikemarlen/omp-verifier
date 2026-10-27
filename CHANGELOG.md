@@ -4,6 +4,7 @@
 
 - Recognize complete admitted changed guides as required project guidance, allowing bounded recovery without demanding a duplicate over-limit record.
 - Keep partial or unavailable changed guides blocked and preserve current source identity, citation, scope, and evidence-limit checks.
+- Keep the README focused on everyday use, linking detailed semantic-review and recovery procedures to their existing protocol reference.
 
 ## 0.11.1 - 2026-10-27
 
