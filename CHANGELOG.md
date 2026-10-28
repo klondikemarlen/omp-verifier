@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.11.3 - 2026-10-27
+
+- Reconcile earlier automatic semantic requests with current delivery scope and provider availability before presenting a current blocker.
+- Retain fresh assessment for applicable work under changed providers, genuine current prerequisite failures, and fail-closed direct stale-request validation.
+
 ## 0.11.2 - 2026-10-27
 
 - Recognize complete admitted changed guides as required project guidance, allowing bounded recovery without demanding a duplicate over-limit record.
