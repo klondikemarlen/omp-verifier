@@ -399,7 +399,7 @@ function verificationEnvironment(changedPaths) {
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes) {
   if (check.mode === "agentic") {
     let scopePaths = changedPaths;
     let scopeRoot = repositoryRoot;
@@ -417,6 +417,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
       cwd,
       changedPaths: scopePaths,
       repositoryRoot: scopeRoot,
+      maxSourceBytes,
     });
   }
 
@@ -442,21 +443,24 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
   }
 }
 
-export async function runVerificationCheck(check, cwd, changedPaths) {
-  return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd);
+export async function runVerificationCheck(check, cwd, changedPaths, maxSourceBytes) {
+  return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes);
 }
-export async function runVerificationChecks(checks, cwd, ids = []) {
+export async function runVerificationChecks(checks, cwd, ids = [], maxSourceBytes) {
   const byId = new Map(checks.map(check => [check.id, check]));
   const requestedIds = [...new Set(ids)];
   const selected = requestedIds.length === 0 ? checks : requestedIds.map(id => byId.get(id)).filter(Boolean);
   const unknown = requestedIds.filter(id => !byId.has(id)).map(id => blocked(id, "Verification check is not installed"));
-  return [...unknown, ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd))))];
+  return [
+    ...unknown,
+    ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd, undefined, maxSourceBytes)))),
+  ];
 }
 
-export async function runInstalledVerificationChecks({ cwd, ids = [], packageDirectory }) {
+export async function runInstalledVerificationChecks({ cwd, ids = [], packageDirectory, maxSourceBytes }) {
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
   const selectedBlocked = ids.length === 0 ? blockedResults : blockedResults.filter(result => ids.includes(result.id));
-  const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids))];
+  const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids, maxSourceBytes))];
   if (results.length === 0) {
     results.push(blocked("verifier", "No verification checks are installed"));
   }
@@ -474,7 +478,13 @@ export function selectAutomaticVerificationChecks(checks, changedPaths) {
   });
 }
 
-export async function runAutomaticVerification({ cwd, changedPaths, packageDirectory, repositoryRoot = cwd }) {
+export async function runAutomaticVerification({
+  cwd,
+  changedPaths,
+  packageDirectory,
+  repositoryRoot = cwd,
+  maxSourceBytes,
+}) {
   let paths;
   try {
     paths = [...new Set(changedPaths.map(path => projectPath(path, "changed path")))];
@@ -567,14 +577,14 @@ export async function runAutomaticVerification({ cwd, changedPaths, packageDirec
     }
     if (unsuppressedMatches.length === 0) continue;
     results.push({
-      ...(await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot)),
+      ...(await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot, maxSourceBytes)),
       matches: unsuppressedMatches,
     });
   }
   return results;
 }
 
-export async function runAutomaticVerificationForPaths({ cwd, changedPaths, packageDirectory }) {
+export async function runAutomaticVerificationForPaths({ cwd, changedPaths, packageDirectory, maxSourceBytes }) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
@@ -586,10 +596,11 @@ export async function runAutomaticVerificationForPaths({ cwd, changedPaths, pack
     changedPaths,
     packageDirectory,
     repositoryRoot: root.repositoryRoot,
+    maxSourceBytes,
   });
 }
 
-export async function runCurrentAutomaticVerification({ cwd, packageDirectory }) {
+export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes }) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
@@ -603,6 +614,7 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory })
     changedPaths: changeSet.paths,
     packageDirectory,
     repositoryRoot: changeSet.repositoryRoot,
+    maxSourceBytes,
   });
 }
 

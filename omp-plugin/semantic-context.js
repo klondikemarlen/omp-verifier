@@ -12,6 +12,8 @@ const MAX_TOTAL_EVIDENCE_BYTES = 256_000;
 const MAX_EVIDENCE_FILES = 40;
 const MAX_LARGE_SCOPE_EVIDENCE_BYTES = 1_024_000;
 const MAX_LARGE_SCOPE_EVIDENCE_FILES = 256;
+const DEFAULT_MAX_SOURCE_BYTES = MAX_FILE_EVIDENCE_BYTES;
+const MAX_SOURCE_BYTES = MAX_INVENTORY_FILE_BYTES;
 const MAX_CONTEXT_PATHS = 30;
 const CODE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".java", ".js", ".jsx", ".mjs", ".cjs", ".kt", ".mts", ".php",
@@ -27,6 +29,13 @@ const PROJECT_GUIDANCE_NAMES = new Set([
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function validateSourceByteLimit(value = DEFAULT_MAX_SOURCE_BYTES) {
+  if (!Number.isSafeInteger(value) || value < DEFAULT_MAX_SOURCE_BYTES || value > MAX_SOURCE_BYTES) {
+    throw new RangeError(`maxSourceBytes must be a safe integer from ${DEFAULT_MAX_SOURCE_BYTES} through ${MAX_SOURCE_BYTES}`);
+  }
+  return value;
 }
 
 function normalizedProjectPath(value, name) {
@@ -184,7 +193,9 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
   if (!fileStat.isFile()) return { error: "path is not a regular file" };
 
   const sourceLimit = range ? MAX_INVENTORY_FILE_BYTES : maxBytes;
-  if (fileStat.size > sourceLimit) return { error: `file exceeds the ${sourceLimit}-byte context limit` };
+  if (fileStat.size > sourceLimit) {
+    return { error: `file exceeds the ${sourceLimit}-byte context limit`, sizeLimitExceeded: true };
+  }
 
   let contents;
   try {
@@ -276,25 +287,29 @@ function lineCoverage(ranges, lineCount) {
   return { coveredRanges, omittedRanges, complete: omittedRanges.length === 0 };
 }
 
-async function gitSource(root, reference) {
+async function gitSource(root, reference, maxSourceBytes) {
   try {
     const { stdout } = await execFileAsync("git", ["-C", root, "show", "--no-ext-diff", "--no-textconv", reference], {
       encoding: "buffer",
-      maxBuffer: MAX_FILE_EVIDENCE_BYTES,
+      maxBuffer: maxSourceBytes,
       timeout: 5_000,
     });
+    if (stdout.byteLength > maxSourceBytes) return { oversized: true };
     if (stdout.includes(0)) return undefined;
 
-    return stdout.toString("utf8");
-  } catch {
+    return { content: stdout.toString("utf8") };
+  } catch (error) {
+    if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return { oversized: true };
     return undefined;
   }
 }
 
-async function deletedProjectSource(root, path) {
+async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversized = true } = {}) {
   for (const reference of [`:${path}`, `HEAD:${path}`]) {
-    const content = await gitSource(root, reference);
-    if (content !== undefined) return content;
+    const source = await gitSource(root, reference, maxSourceBytes);
+    if (source === undefined) continue;
+    if (source.oversized && !identifyOversized) continue;
+    return source;
   }
 
   try {
@@ -305,7 +320,8 @@ async function deletedProjectSource(root, path) {
     const deletionCommit = stdout.trim();
     if (!/^[a-f0-9]{40,64}$/.test(deletionCommit)) return undefined;
 
-    return gitSource(root, `${deletionCommit}^:${path}`);
+    const source = await gitSource(root, `${deletionCommit}^:${path}`, maxSourceBytes);
+    return source?.oversized && !identifyOversized ? undefined : source;
   } catch {
     // Absent history, including shallow boundaries, cannot authenticate prior source.
     return undefined;
@@ -346,8 +362,8 @@ function addRecord(records, record, budget) {
   return true;
 }
 
-function contextFingerprint(context) {
-  return sha256(JSON.stringify({
+function contextFingerprint(context, includeMaxSourceBytes = true) {
+  const fingerprint = {
     changedPaths: context.changedPaths,
     changedCode: context.changedCode,
     changedCodeCoverage: context.changedCodeCoverage,
@@ -358,10 +374,21 @@ function contextFingerprint(context) {
     targetedContext: context.targetedContext,
     sourceInventory: context.sourceInventory,
     callerContextPaths: context.callerContextPaths,
-  }));
+  };
+  if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
+  return sha256(JSON.stringify(fingerprint));
 }
 
-export async function captureSemanticContext({ repositoryRoot, changedPaths, contextPaths = [], callerContextPaths = [], previousContext }) {
+export async function captureSemanticContext({
+  repositoryRoot,
+  changedPaths,
+  contextPaths = [],
+  callerContextPaths = [],
+  previousContext,
+  maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
+  legacyRequest = false,
+}) {
+  const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const root = await realpath(repositoryRoot);
   const normalizedChangedPaths = [...new Set(changedPaths.map(path => normalizedProjectPath(path, "changed path")))].sort();
   const callerSourcePaths = new Set(callerContextPaths.map(contextRange).map(context =>
@@ -432,11 +459,25 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
   const changedCodeCoverage = [];
   const changedSelectors = new Map();
   for (const path of normalizedChangedPaths) {
-    const result = await readProjectText(root, path);
+    const result = await readProjectText(root, path, sourceByteLimit);
     if (result.missing) {
-      const priorContent = previousSource(previousContext, path) ?? await deletedProjectSource(root, path);
-      if (typeof priorContent !== "string") {
+      const cachedContent = previousSource(previousContext, path);
+      const priorSource = cachedContent === undefined
+        ? await deletedProjectSource(root, path, sourceByteLimit, {
+          identifyOversized: !legacyRequest,
+        })
+        : { oversized: Buffer.byteLength(cachedContent) > sourceByteLimit, content: cachedContent };
+      if (!priorSource) {
         changedCode.push({ path, state: "unavailable", reason: "path is absent and no prior source confirms its deletion" });
+        missingChangedPaths.push(path);
+        continue;
+      }
+      if (priorSource.oversized || Buffer.byteLength(priorSource.content ?? "") > sourceByteLimit) {
+        changedCode.push({
+          path,
+          state: "unavailable",
+          reason: `deleted source exceeds the ${sourceByteLimit}-byte changed-source limit`,
+        });
         missingChangedPaths.push(path);
         continue;
       }
@@ -444,8 +485,8 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
         path,
         source: "changed-code",
         state: "deleted",
-        content: priorContent,
-        previousSha256: sha256(priorContent),
+        content: priorSource.content,
+        previousSha256: sha256(priorSource.content),
       };
       if (!addRecord(changedCode, deletedRecord, budget)) {
         changedCode.push({ path, state: "unavailable", reason: "context evidence limit reached" });
@@ -453,7 +494,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       }
       continue;
     }
-    if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
+    if (result.sizeLimitExceeded) {
       const selectorsForPath = requestedContext.filter(selector => selector.path === path && selector.startLine);
       if (selectorsForPath.length) changedSelectors.set(path, true);
       if (!selectorsForPath.length) {
@@ -682,6 +723,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
       maxBytes: budget.maxBytes,
       maxFiles: budget.maxFiles,
       requiredFiles: requiredEvidencePaths.size,
+      maxSourceBytes: sourceByteLimit,
       usedBytes: budget.used,
       usedFiles: budget.paths.size,
       records: budget.records,
@@ -699,7 +741,7 @@ export async function captureSemanticContext({ repositoryRoot, changedPaths, con
     missingContextPaths,
     missingGuidancePaths,
   };
-  context.fingerprint = contextFingerprint(context);
+  context.fingerprint = contextFingerprint(context, !legacyRequest);
   return { context, fingerprint: context.fingerprint };
 }
 

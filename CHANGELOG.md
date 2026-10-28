@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0 - 2026-10-27
+
+- Add an explicit request-local `--max-source-bytes` option to fresh semantic captures, including authenticated committed deletions just above the default 16,000-byte limit.
+- Preserve the selected cap through recovery and assessment, reset independent captures to defaults, and retain aggregate, excerpt, identity, freshness, and citation safeguards.
+
 ## 0.11.3 - 2026-10-27
 
 - Reconcile earlier automatic semantic requests with current delivery scope and provider availability before presenting a current blocker.

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
+import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import {
   discoverVerificationChecks,
   runAutomaticVerificationForPaths,
@@ -69,16 +70,20 @@ async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) 
   }
 }
 
-async function automaticResults(paths, worktree) {
+async function automaticResults(paths, worktree, maxSourceBytes) {
   if (worktree) {
-    return runCurrentAutomaticVerification({ cwd });
+    return runCurrentAutomaticVerification({ cwd, maxSourceBytes });
   }
 
   if (paths.length === 0) {
     return [];
   }
 
-  return runAutomaticVerificationForPaths({ cwd, changedPaths: paths });
+  return runAutomaticVerificationForPaths({
+    cwd,
+    changedPaths: paths,
+    maxSourceBytes,
+  });
 }
 
 try {
@@ -89,6 +94,7 @@ try {
       reporter: { type: "string", default: "json" },
       "failures-only": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
+      "max-source-bytes": { type: "string" },
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
@@ -96,6 +102,16 @@ try {
       page: { type: "string" },
     },
   });
+  let maxSourceBytes;
+  if (values["max-source-bytes"] !== undefined) {
+    if (command !== "automatic" && command !== "verify") {
+      throw new Error("--max-source-bytes is only supported by fresh automatic or verify commands");
+    }
+    if (!/^\d+$/.test(values["max-source-bytes"]) || !Number.isSafeInteger(Number(values["max-source-bytes"]))) {
+      throw new Error("--max-source-bytes must be a whole number between 16000 and 256000");
+    }
+    maxSourceBytes = validateSourceByteLimit(Number(values["max-source-bytes"]));
+  }
   const reporter = values.reporter;
   const failuresOnly = values["failures-only"];
   const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0 || values["remove-context"].length > 0;
@@ -147,13 +163,17 @@ try {
     const assessment = JSON.parse(assessmentText);
     await writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
   } else if (command === "verify" && !values.worktree && !hasSemanticOptions) {
-    await writeResults(await runInstalledVerificationChecks({ cwd, ids: positionals }), { reporter, failuresOnly });
+    await writeResults(await runInstalledVerificationChecks({
+      cwd,
+      ids: positionals,
+      maxSourceBytes,
+    }), { reporter, failuresOnly });
   } else if (command === "automatic" && (!values.worktree || positionals.length === 0) && !hasSemanticOptions) {
-    await writeResults(await automaticResults(positionals, values.worktree), { reporter, failuresOnly });
+    await writeResults(await automaticResults(positionals, values.worktree, maxSourceBytes), { reporter, failuresOnly });
   } else {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] | automatic [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
