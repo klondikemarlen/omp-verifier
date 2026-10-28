@@ -10,6 +10,7 @@ import {
   captureSemanticContext,
   semanticContextMissing,
   validateSemanticCitations,
+  validateSourceByteLimit,
 } from "#root/omp-plugin/semantic-context.js";
 
 const execFileAsync = promisify(execFile);
@@ -241,7 +242,16 @@ async function currentDefinition(check) {
 }
 
 
-async function captureRequest({ check, repositoryRoot, changedPaths, contextPaths, callerContextPaths = [], previousContext }) {
+async function captureRequest({
+  check,
+  repositoryRoot,
+  changedPaths,
+  contextPaths,
+  callerContextPaths = [],
+  previousContext,
+  maxSourceBytes,
+}) {
+  const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const definition = await currentDefinition(check);
   const captured = await captureSemanticContext({
     repositoryRoot,
@@ -249,6 +259,7 @@ async function captureRequest({ check, repositoryRoot, changedPaths, contextPath
     contextPaths,
     callerContextPaths,
     previousContext,
+    maxSourceBytes: sourceByteLimit,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
   const requestId = randomUUID();
@@ -274,6 +285,7 @@ async function captureRequest({ check, repositoryRoot, changedPaths, contextPath
       changedPaths: captured.context.changedPaths,
       contextPaths: [...contextPaths],
       callerContextPaths: [...callerContextPaths],
+      maxSourceBytes: sourceByteLimit,
     },
     context: captured.context,
     missingContext,
@@ -332,6 +344,9 @@ async function loadRequestForOperation({ cwd, requestPath }) {
 
 async function validateFreshness({ checkId, repositoryRoot, stored }) {
   const { payload, runtime } = stored;
+  // Older stored requests have no source cap and retain their original fingerprint shape.
+  const usesLegacySourceLimit = payload.scope.maxSourceBytes === undefined;
+  const sourceByteLimit = validateSourceByteLimit(payload.scope.maxSourceBytes);
   if (payload.scope.repositoryRoot !== repositoryRoot) throw new Error("request project root no longer matches the active project");
   const check = {
     id: checkId,
@@ -352,9 +367,15 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     contextPaths: payload.scope.contextPaths,
     callerContextPaths: payload.scope.callerContextPaths,
     previousContext: payload.context,
+    maxSourceBytes: sourceByteLimit,
+    legacyRequest: usesLegacySourceLimit,
   });
   if (captured.fingerprint !== runtime.contextFingerprint || captured.fingerprint !== payload.context.fingerprint) {
     throw new Error("captured source or project context changed after the request was prepared");
+  }
+  if (usesLegacySourceLimit) {
+    payload.scope.maxSourceBytes = sourceByteLimit;
+    payload.context.evidenceBudget.maxSourceBytes = sourceByteLimit;
   }
 }
 
@@ -394,12 +415,20 @@ async function reconcileSupersededRequest(target) {
   };
 }
 
-export async function prepareSemanticEvaluation({ check, cwd, changedPaths = [], repositoryRoot = cwd, contextPaths = [] }) {
+export async function prepareSemanticEvaluation({
+  check,
+  cwd,
+  changedPaths = [],
+  repositoryRoot = cwd,
+  contextPaths = [],
+  maxSourceBytes,
+}) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
     return blocked(check?.id || "semantic-evaluation", "Semantic verification check is not supported by this runtime");
   }
 
   try {
+    const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
     const root = await realpath(repositoryRoot);
     const cacheDirectory = await requestCacheRoot(root);
     return await withCheckLock(cacheDirectory, check.id, async () => {
@@ -410,6 +439,7 @@ export async function prepareSemanticEvaluation({ check, cwd, changedPaths = [],
         changedPaths,
         contextPaths,
         previousContext: previous?.context,
+        maxSourceBytes: sourceByteLimit,
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
       await persistRequest(cacheDirectory, check.id, requestPath, result.stored);
@@ -472,6 +502,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         changedPaths: stored.payload.scope.changedPaths,
         contextPaths: additionalContextPaths,
         callerContextPaths: additionalCallerContext,
+        maxSourceBytes: stored.payload.scope.maxSourceBytes,
         previousContext: stored.payload.context,
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));

@@ -7,6 +7,10 @@ import test from "node:test";
 
 const CLI = join(process.cwd(), "bin", "omp-verifier.js");
 const POLICY_SOURCE = "export function positive(value) { if (value <= 0) throw new RangeError(); return value; }\n";
+const LARGE_HISTORICAL_SOURCE = [
+  ...Array.from({ length: 438 }, () => `//${"x".repeat(34)}`),
+  `//${"x".repeat(21)}`,
+].join("\n");
 
 const PAGED_SOURCE_PATHS = [
   "src/context-a.js",
@@ -45,7 +49,14 @@ function evaluateAssessment(fixture, requestPath, assessment, reporter) {
   );
 }
 
-async function preparationFixture(t, { checkIds = ["publisher:alignment"], includeBlockedCheck = false, pagedReview = false, policySource = POLICY_SOURCE } = {}) {
+async function preparationFixture(t, {
+  checkIds = ["publisher:alignment"],
+  includeBlockedCheck = false,
+  pagedReview = false,
+  policySource = POLICY_SOURCE,
+  changedPolicySource,
+  deletedSource = "export const obsolete = true;\n",
+} = {}) {
   let pagedSourcePaths = [];
   if (pagedReview) {
     pagedSourcePaths = PAGED_SOURCE_PATHS;
@@ -61,7 +72,7 @@ async function preparationFixture(t, { checkIds = ["publisher:alignment"], inclu
     await writeFile(join(root, path), `export const context${index} = "baseline";\n`);
   }
 
-  await writeFile(join(root, "src", "obsolete.js"), "export const obsolete = true;\n");
+  await writeFile(join(root, "src", "obsolete.js"), deletedSource);
   await writeFile(join(provider, "standard.md"), "The changed positive function rejects non-positive inputs.\n");
   const verifications = [];
   for (const id of checkIds) {
@@ -107,6 +118,9 @@ process.exitCode = 1;
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "baseline"], { cwd: root });
+  if (changedPolicySource !== undefined) {
+    await writeFile(join(root, "src", "policy.js"), changedPolicySource);
+  }
   for (const [index, path] of pagedSourcePaths.entries()) {
     const source = `// ${"review context. ".repeat(900)}\nexport const context${index} = true;\n`;
     await writeFile(join(root, path), source);
@@ -134,6 +148,205 @@ process.exitCode = 1;
     pagedSourcePaths,
   };
 }
+
+test("when automatic receives a larger source cap, it recovers a full authenticated historical deletion", async t => {
+  // Arrange
+  const changedPolicySource = POLICY_SOURCE.replace("value <= 0", "value < 1");
+  const fixture = await preparationFixture(t, {
+    changedPolicySource,
+    deletedSource: LARGE_HISTORICAL_SOURCE,
+  });
+
+  // Act
+  const prepared = fixture.run([
+    "automatic", "src/policy.js", "src/obsolete.js",
+    "--max-source-bytes", "32768",
+  ]);
+  const result = JSON.parse(prepared.stdout)[0];
+  const firstPage = fixture.run(["review", result.reviewRequest.path, "--reporter", "text"]);
+  const review = reviewPageDetails(firstPage.stdout);
+  const pageReads = [firstPage];
+  for (let pageIndex = 1; pageIndex < review.count; pageIndex += 1) {
+    pageReads.push(fixture.run([
+      "review", result.reviewRequest.path,
+      "--reporter", "text",
+      "--page", String(pageIndex),
+    ]));
+  }
+  const deletedLine = LARGE_HISTORICAL_SOURCE.split("\n")[438];
+  const assessment = {
+    requestId: result.reviewRequest.requestId,
+    status: "PASS",
+    summary: "The changed positive function rejects values below one.",
+    rationale: "Its value < 1 guard throws before returning the input.",
+    citations: [
+      {
+        path: "src/policy.js",
+        line: 1,
+        quote: changedPolicySource.trim(),
+      },
+      {
+        path: "src/obsolete.js",
+        line: 439,
+        quote: deletedLine,
+      },
+    ],
+  };
+  const evaluation = fixture.runInput(
+    ["evaluate", result.reviewRequest.path, "--assessment", "-"],
+    `${JSON.stringify(assessment)}\n`,
+  );
+  const completed = JSON.parse(evaluation.stdout)[0];
+
+  // Assert
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.equal(Buffer.byteLength(LARGE_HISTORICAL_SOURCE), 16229);
+  assert.equal(LARGE_HISTORICAL_SOURCE.split("\n").length, 439);
+  assert.ok(pageReads.every(page => page.status === 0), pageReads.map(page => page.stderr).join("\n"));
+  assert.equal(result.status, "PENDING");
+  assert.deepEqual(result.reviewRequest.scope.changedPaths, ["src/obsolete.js", "src/policy.js"]);
+  assert.equal(result.reviewRequest.scope.maxSourceBytes, 32768);
+  assert.equal(result.reviewRequest.context.evidenceBudget.maxSourceBytes, 32768);
+  const changedPolicy = result.reviewRequest.context.changedCode.find(record => record.path === "src/policy.js");
+  const deletion = result.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js");
+  assert.equal(changedPolicy.content, changedPolicySource);
+  assert.equal(deletion.state, "deleted");
+  assert.equal(deletion.content, LARGE_HISTORICAL_SOURCE);
+  assert.equal(evaluation.status, 0, evaluation.stderr);
+  assert.equal(completed.status, "PASS");
+  assert.match(completed.evidence, /src\/obsolete\.js:439 \(deleted\)/);
+});
+
+test("when manual verify receives a larger source cap, changed historical deletions remain in its review scope", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t, {
+    changedPolicySource: POLICY_SOURCE.replace("value <= 0", "value < 1"),
+    deletedSource: LARGE_HISTORICAL_SOURCE,
+  });
+
+  // Act
+  const prepared = fixture.run([
+    "verify", "publisher:alignment",
+    "--max-source-bytes", "32768",
+  ]);
+  const result = JSON.parse(prepared.stdout)[0];
+
+  // Assert
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.equal(result.status, "PENDING");
+  assert.equal(result.reviewRequest.scope.maxSourceBytes, 32768);
+  assert.deepEqual(result.reviewRequest.scope.changedPaths, ["src/obsolete.js", "src/policy.js"]);
+  assert.equal(result.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js").content,
+    LARGE_HISTORICAL_SOURCE);
+});
+
+test("when worktree automatic receives a larger source cap, it recovers deleted source from the current worktree", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t, {
+    changedPolicySource: POLICY_SOURCE.replace("value <= 0", "value < 1"),
+    deletedSource: LARGE_HISTORICAL_SOURCE,
+  });
+
+  // Act
+  const prepared = fixture.run([
+    "automatic", "--worktree",
+    "--max-source-bytes", "32768",
+  ]);
+  const result = JSON.parse(prepared.stdout)[0];
+
+  // Assert
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.equal(result.status, "PENDING");
+  assert.equal(result.reviewRequest.scope.maxSourceBytes, 32768);
+  assert.deepEqual(result.reviewRequest.scope.changedPaths, ["src/obsolete.js", "src/policy.js"]);
+  assert.equal(result.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js").content,
+    LARGE_HISTORICAL_SOURCE);
+});
+
+test("when a default automatic capture follows an explicit override, cached large deletion is rejected again", async t => {
+  // Arrange
+  const changedPolicySource = POLICY_SOURCE.replace("value <= 0", "value < 1");
+  const fixture = await preparationFixture(t, {
+    changedPolicySource,
+    deletedSource: LARGE_HISTORICAL_SOURCE,
+  });
+  const admitted = fixture.run([
+    "automatic", "src/policy.js", "src/obsolete.js",
+    "--max-source-bytes", "32768",
+  ]);
+  const admittedResult = JSON.parse(admitted.stdout)[0];
+
+  // Act
+  const defaultCapture = fixture.run(["automatic", "src/policy.js", "src/obsolete.js"]);
+  const defaultResult = JSON.parse(defaultCapture.stdout)[0];
+  const rejectedDeletion = defaultResult.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js");
+  const assessment = {
+    requestId: defaultResult.reviewRequest.requestId,
+    status: "PASS",
+    summary: "The changed positive function rejects values below one.",
+    rationale: "Its value < 1 guard throws before returning the input.",
+    citations: [
+      {
+        path: "src/policy.js",
+        line: 1,
+        quote: changedPolicySource.trim(),
+      },
+    ],
+  };
+  const evaluation = fixture.runInput(
+    ["evaluate", defaultResult.reviewRequest.path, "--assessment", "-"],
+    `${JSON.stringify(assessment)}\n`,
+  );
+  const completed = JSON.parse(evaluation.stdout)[0];
+
+  // Assert
+  assert.equal(admitted.status, 0, admitted.stderr);
+  assert.equal(admittedResult.status, "PENDING");
+  assert.equal(admittedResult.reviewRequest.scope.maxSourceBytes, 32768);
+  assert.equal(defaultCapture.status, 0, defaultCapture.stderr);
+  assert.equal(defaultResult.status, "PENDING");
+  assert.equal(defaultResult.reviewRequest.scope.maxSourceBytes, 16000);
+  assert.equal(rejectedDeletion.state, "unavailable");
+  assert.ok(defaultResult.reviewRequest.context.missingChangedPaths.includes("src/obsolete.js"));
+  assert.ok(defaultResult.reviewRequest.missingContext.some(reason => reason.includes("src/obsolete.js")));
+  assert.equal(evaluation.status, 1, evaluation.stderr);
+  assert.equal(completed.status, "BLOCKED");
+});
+
+test("when checks, review or evaluate receives a source cap, CLI rejects the unsupported command before dispatch", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t);
+  const unsupportedCommands = [
+    ["checks"],
+    ["review", "unavailable.json"],
+    ["evaluate", "unavailable.json", "--assessment", "{}"],
+  ];
+
+  // Act
+  const results = unsupportedCommands.map(args => fixture.run([...args, "--max-source-bytes", "32768"]));
+
+  // Assert
+  for (const result of results) {
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /--max-source-bytes is only supported by fresh automatic or verify commands/);
+  }
+});
+
+test("when automatic receives a malformed or out-of-range source cap, CLI rejects it before preparation", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t);
+  const invalidCaps = ["15999", "32768.5"];
+
+  // Act
+  const results = invalidCaps.map(value =>
+    fixture.run(["automatic", "src/policy.js", "--max-source-bytes", value]));
+
+  // Assert
+  for (const result of results) {
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /16000|whole number/);
+  }
+});
 
 test("when preparation returns one pending review, its first text response exposes current code and authenticated deletions", async t => {
   // Arrange

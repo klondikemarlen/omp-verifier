@@ -13,6 +13,8 @@ import {
 } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
 
+import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
+
 const CHECK_ID = "publisher:alignment";
 const CALLER_SOURCE = 'import { helper } from "./helper.js";\nexport const result = helper(1);\n';
 
@@ -98,6 +100,18 @@ function sourceWithByteLength(byteLength) {
   const prefix = 'export const value = "';
   const suffix = '";\n';
   return `${prefix}${"x".repeat(byteLength - prefix.length - suffix.length)}${suffix}`;
+}
+
+function sourceWithByteLengthAndLineCount(byteLength, lineCount) {
+  const lines = Array.from({ length: lineCount }, (_, index) =>
+    `export const originalLine${String(index + 1).padStart(3, "0")} = ${index + 1};`);
+  const remainingLines = lines.slice(1).join("\n");
+  const firstLineLength = byteLength - Buffer.byteLength(remainingLines) - 1;
+  const prefix = 'export const deletedBoundary = "';
+  const suffix = '";';
+  const paddingLength = firstLineLength - Buffer.byteLength(prefix) - Buffer.byteLength(suffix);
+  lines[0] = `${prefix}${"x".repeat(paddingLength)}${suffix}`;
+  return lines.join("\n");
 }
 
 function sourceRangeSelectors(path, lineCount, chunkSize = 100) {
@@ -387,6 +401,119 @@ test("when required source exceeds the large-scope byte budget, missing complete
       && budget.usedBytes + record.bytes > budget.maxBytes));
     assert.ok(prepared.reviewRequest.missingContext.some(reason => reason.includes("required-scope")));
     assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when source byte limits are outside the supported range, validation rejects them", () => {
+  // Arrange
+  const invalidLimits = [
+    15_999,
+    256_001,
+    16_000.5,
+    Number.MAX_SAFE_INTEGER + 1,
+    Infinity,
+    -Infinity,
+    NaN,
+    "32768",
+    null,
+  ];
+
+  // Act & Assert
+  assert.equal(validateSourceByteLimit(), 16_000);
+  assert.equal(validateSourceByteLimit(16_000), 16_000);
+  assert.equal(validateSourceByteLimit(256_000), 256_000);
+  for (const limit of invalidLimits) {
+    assert.throws(() => validateSourceByteLimit(limit), RangeError);
+  }
+});
+
+test("when a committed deletion exceeds the default source cap, explicit renewal succeeds and a later default rejects cached source", async () => {
+  // Arrange
+  const deletedPath = "src/deleted-boundary.js";
+  const companionPath = "src/present-boundary.js";
+  const source = sourceWithByteLengthAndLineCount(16_229, 439);
+  const initialCompanion = "export const companion = false;\n";
+  const companion = "export const companion = true;\n";
+  assert.equal(Buffer.byteLength(source), 16_229);
+  assert.equal(source.split(/\r?\n/).length, 439);
+  const fixture = await createSemanticFixture({
+    initialSources: {
+      [deletedPath]: source,
+      [companionPath]: initialCompanion,
+    },
+  });
+
+  try {
+    execFileSync("git", ["rm", "--", deletedPath], { cwd: fixture.root });
+    execFileSync("git", ["commit", "--quiet", "-m", "delete oversized source"], { cwd: fixture.root });
+    await writeFile(join(fixture.root, companionPath), companion);
+    const check = await discoverSemanticCheck(fixture);
+    const changedPaths = [deletedPath, companionPath];
+    const defaultCapture = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths,
+    });
+    const rejectedDeletion = defaultCapture.reviewRequest.context.changedCode.find(record =>
+      record.path === deletedPath);
+
+    // Act
+    const expandedCapture = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths,
+      maxSourceBytes: 32_768,
+    });
+    const renewed = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: expandedCapture.reviewRequest.path,
+      contextPaths: ["src/helper.js#L1-L1"],
+    });
+    const citation = {
+      path: deletedPath,
+      line: 439,
+      quote: source.split(/\r?\n/)[438],
+    };
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: renewed.reviewRequest.path,
+      assessment: passAssessment(renewed.reviewRequest.requestId, citation),
+    });
+    const resetCapture = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths,
+    });
+    const resetDeletion = resetCapture.reviewRequest.context.changedCode.find(record =>
+      record.path === deletedPath);
+
+    // Assert
+    assert.equal(defaultCapture.reviewRequest.scope.maxSourceBytes, 16_000);
+    assert.equal(defaultCapture.reviewRequest.context.evidenceBudget.maxSourceBytes, 16_000);
+    assert.equal(defaultCapture.status, "PENDING");
+    assert.equal(rejectedDeletion.state, "unavailable");
+    assert.match(rejectedDeletion.reason, /deleted source exceeds the 16000-byte changed-source limit/);
+    const admittedDeletion = expandedCapture.reviewRequest.context.changedCode.find(record =>
+      record.path === deletedPath);
+    assert.equal(admittedDeletion.state, "deleted");
+    assert.equal(admittedDeletion.content, source);
+    assert.equal(admittedDeletion.previousSha256, sha256(source));
+    assert.equal(expandedCapture.reviewRequest.scope.maxSourceBytes, 32_768);
+    assert.equal(expandedCapture.reviewRequest.context.evidenceBudget.maxSourceBytes, 32_768);
+    assert.ok(expandedCapture.reviewRequest.context.changedCode.some(record =>
+      record.path === companionPath && record.state === "present" && record.content === companion));
+    assert.equal(renewed.reviewRequest.scope.maxSourceBytes, 32_768);
+    assert.equal(renewed.reviewRequest.context.evidenceBudget.maxSourceBytes, 32_768);
+    assert.equal(renewed.reviewRequest.context.changedCode.find(record =>
+      record.path === deletedPath).content, source);
+    assert.equal(completed.status, "PASS");
+    assert.ok(completed.evidence.includes(`${deletedPath}:439 (deleted)`));
+    assert.equal(resetCapture.reviewRequest.scope.maxSourceBytes, 16_000);
+    assert.equal(resetCapture.reviewRequest.context.evidenceBudget.maxSourceBytes, 16_000);
+    assert.equal(resetDeletion.state, "unavailable");
+    assert.match(resetDeletion.reason, /deleted source exceeds the 16000-byte changed-source limit/);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
