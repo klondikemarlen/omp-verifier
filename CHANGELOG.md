@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.1 - 2026-10-29
+
+- Add project-local ESLint checks, locked development dependencies, and reproducible CI setup; run non-fixing lint with zero allowed warnings as part of `npm run release:check`.
+- Resolve existing recommended-rule violations while preserving roster matching, verification input isolation, and reported error messages; retain caught errors as diagnostic causes.
+
 ## 0.12.0 - 2026-10-27
 
 - Add an explicit request-local `--max-source-bytes` option to fresh semantic captures, including authenticated committed deletions just above the default 16,000-byte limit.

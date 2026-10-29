@@ -15,6 +15,10 @@ npm run reinstall
 
 - Do not claim the release installed until the installed version and changed behavior are observed in a new OMP process.
 
+## Project lint requirement
+
+- Check id `project:lint`. When any JavaScript source/test, `eslint.config.js`, `package.json`, or `package-lock.json` changes, run `npm run lint` from this checkout. The quality standard is that all maintained JavaScript passes the configured recommended ESLint rules with zero warnings; PASS requires observed exit 0. Report violations as FAIL with the actual diagnostics. Missing dependencies/configuration or an unexecuted check is BLOCKED; restore the documented development setup before retrying. This is a project-specific executable requirement, not an installed manifest check or permission to provision linters in other repositories.
+
 ## Product rule
 
 Less is more. Do not add task agents, planning tools, PR checkout, app booting, GitHub comments, or a custom runtime unless explicitly requested.
