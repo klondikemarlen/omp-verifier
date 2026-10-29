@@ -142,6 +142,8 @@ Automatic calls use only the coordinator's explicit changed paths, including new
 
 Discovery prefers project-installed tools and environments, then existing PATH tools. Simple supported non-fixing package lint scripts run through the existing package manager rather than being replaced with a different linter command or warning policy. Native execution uses non-fixing tool modes; Ruby projects with a Gemfile use Bundler. Vue is supported only through the project's configured ESLint support; CSS/style linting and alternative tools are outside this initial catalog.
 
+Recognized Ruff package scripts must explicitly use `check --no-fix`; golangci-lint scripts must use `run --fix=false`. A missing fixing flag alone is insufficient because project configuration can enable mutation. Unsupported scripts remain BLOCKED until the project supplies a supported non-fixing command or an explicit trusted binding.
+
 If a project has a `bin/dev` or `dev` wrapper, Verifier does not guess its arguments or bypass it with a host command. The project may declare the existing trusted command in `.omp-verifier.json`, for example:
 
 ```json
