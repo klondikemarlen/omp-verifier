@@ -188,6 +188,8 @@ Use `/advisor status` for OMP runtime state.
 
 ## Development and release
 
+Use Node `^20.19.0 || ^22.13.0 || >=24` for development (CI uses Node 22). Run `npm ci --ignore-scripts` to install the locked development tools, then `npm run lint` for non-fixing ESLint checks over the CLI, runtime, tests, and lint configuration. Recommended JavaScript rules apply with Node globals and zero allowed warnings. `npm run release:check` runs lint, syntax checks, and the test suite; it is also the CI gate. Lint tooling is development-only and is not required to run the installed plugin.
+
 Every release uses the same workflow:
 
 1. Create or update an issue with acceptance criteria and learner coverage.

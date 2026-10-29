@@ -40,7 +40,7 @@ function withoutLegacyGeneratedPreamble(content) {
 
   return content
     .replace(`${LEGACY_GENERATED_MARKER}\n`, "")
-    .replace(/^instructions: \|\n(?:  .*\n)*\n/, "");
+    .replace(/^instructions: \|\n(?: {2}.*\n)*\n/, "");
 }
 
 function withVerifierAdvisor(content, guidancePath) {
@@ -58,7 +58,7 @@ function withVerifierAdvisor(content, guidancePath) {
     end = lines.length;
   }
 
-  let defaultIndex = lines.slice(advisors + 1, end).findIndex(line => /^  - name: default\s*$/.test(line));
+  let defaultIndex = lines.slice(advisors + 1, end).findIndex(line => /^ {2}- name: default\s*$/.test(line));
   if (defaultIndex === -1) {
     lines.splice(advisors + 1, 0, "  - name: default");
     defaultIndex = 0;
@@ -165,7 +165,7 @@ export async function uninstallGlobalVerifier(ctx) {
 }
 
 function advisorNames(content) {
-  return [...content.matchAll(/^  - name: (.+)$/gm)].map(([, name]) => name);
+  return [...content.matchAll(/^ {2}- name: (.+)$/gm)].map(([, name]) => name);
 }
 
 async function packageVersion() {
