@@ -103,7 +103,7 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
       }
       if (error?.code !== "EEXIST") throw error;
       if (Date.now() - startedAt > LOCK_WAIT_MS) {
-        throw new Error(`semantic request state is busy: ${filePath}; finish its owner operation, or remove an abandoned lock only after confirming its recorded owner process has exited`);
+        throw new Error(`semantic request state is busy: ${filePath}; finish its owner operation, or remove an abandoned lock only after confirming its recorded owner process has exited`, { cause: error });
       }
       await new Promise(resolveDelay => setTimeout(resolveDelay, 20));
     }
@@ -165,7 +165,7 @@ async function readCurrentState(cacheDirectory, checkId) {
     return JSON.parse(await readFile(statePath(cacheDirectory, checkId), "utf8"));
   } catch (error) {
     if (error?.code === "ENOENT") return undefined;
-    throw new Error(`could not read semantic request state: ${error.message}`);
+    throw new Error(`could not read semantic request state: ${error.message}`, { cause: error });
   }
 }
 
@@ -181,7 +181,7 @@ async function readStoredRequest(cacheDirectory, checkId, requestId, { requireCu
   try {
     contents = await readFile(requestPath);
   } catch (error) {
-    throw new Error(`semantic request file is unavailable: ${error.message}`);
+    throw new Error(`semantic request file is unavailable: ${error.message}`, { cause: error });
   }
   if (hash(contents) !== currentState.requestHash) throw new Error("semantic request file was tampered with");
 
@@ -212,14 +212,14 @@ async function currentDefinition(check) {
   try {
     manifestContents = await readFile(check.manifestPath, "utf8");
   } catch (error) {
-    throw new Error(`plugin manifest is unavailable: ${error.message}`);
+    throw new Error(`plugin manifest is unavailable: ${error.message}`, { cause: error });
   }
 
   let manifest;
   try {
     manifest = JSON.parse(manifestContents);
   } catch (error) {
-    throw new Error(`plugin manifest is not valid JSON: ${error.message}`);
+    throw new Error(`plugin manifest is not valid JSON: ${error.message}`, { cause: error });
   }
   const entries = manifest?.omp?.verifications;
   const entry = Array.isArray(entries) ? entries.find(candidate => candidate?.id === check.id) : undefined;

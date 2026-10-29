@@ -389,7 +389,7 @@ test("when preparation returns multiple pending reviews, each handle remains sep
     "PENDING publisher:first",
     "PENDING publisher:second",
   ]);
-  const paths = [...prepared.stdout.matchAll(/^  Review request: (.+)$/gm)].map(match => match[1]);
+  const paths = [...prepared.stdout.matchAll(/^ {2}Review request: (.+)$/gm)].map(match => match[1]);
   const inspected = paths.map(path => fixture.run(["review", path]));
   assert.deepEqual(inspected.map(result => JSON.parse(result.stdout)[0].id), [
     "publisher:first",

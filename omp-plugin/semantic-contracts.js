@@ -127,7 +127,7 @@ export async function loadSemanticContract({ checkId, packageName, packageVersio
   try {
     parsedContract = JSON.parse(contractBytes.toString("utf8"));
   } catch (error) {
-    throw new Error(`agentic contract is not valid JSON: ${error.message}`);
+    throw new Error(`agentic contract is not valid JSON: ${error.message}`, { cause: error });
   }
   const contract = validateContract(parsedContract, checkId);
 

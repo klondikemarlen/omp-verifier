@@ -395,7 +395,8 @@ function resultFromOutput(check, output) {
 }
 
 function verificationEnvironment(changedPaths) {
-  const { OMP_VERIFIER_CHANGED_PATHS: _automaticPaths, ...environment } = process.env;
+  const environment = { ...process.env };
+  delete environment.OMP_VERIFIER_CHANGED_PATHS;
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
