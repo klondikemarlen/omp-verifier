@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { access, readFile, realpath, stat } from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -152,8 +152,8 @@ function scriptMatches(script, family) {
   if (typeof script !== "string" || /[;&|`$<>'"\\\n\r]/.test(script)) return false;
   const words = script.trim().split(/\s+/);
   if (words[0] !== family.tool || unsafeArguments(words)) return false;
-  if (family.tool === "ruff" && words[1] !== "check") return false;
-  if (family.tool === "golangci-lint" && words[1] !== "run") return false;
+  if (family.tool === "ruff" && (words[1] !== "check" || !words.includes("--no-fix"))) return false;
+  if (family.tool === "golangci-lint" && (words[1] !== "run" || !words.includes("--fix=false"))) return false;
   return true;
 }
 
@@ -347,28 +347,51 @@ function combinedResult(outcomes, repositoryRoot) {
 function executeLint(plan, env, timeout) {
   return new Promise((resolve, reject) => {
     const grouped = process.platform !== "win32";
+    const child = spawn(plan.command[0], plan.command.slice(1), {
+      cwd: plan.cwd,
+      env,
+      detached: grouped,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let failure;
+    let stdout = "";
+    let stderr = "";
+    let bytes = 0;
     const stop = () => {
       if (!child.pid) return;
       try {
         if (grouped) process.kill(-child.pid, "SIGKILL");
         else child.kill("SIGKILL");
       } catch (error) {
-        if (error.code !== "ESRCH") reject(error);
+        if (error.code !== "ESRCH") failure ??= error;
       }
     };
-    const child = execFile(plan.command[0], plan.command.slice(1), {
-      cwd: plan.cwd,
-      env,
-      detached: grouped,
-      maxBuffer: 64_000,
-    }, (error, stdout, stderr) => {
-      clearTimeout(timer);
-      if (error) {
+    const capture = (chunk, errorStream) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > 64_000) {
+        failure ??= new Error("Lint output exceeded the 64000-byte capture limit");
         stop();
+      } else if (errorStream) stderr += chunk;
+      else stdout += chunk;
+    };
+    child.stdout.setEncoding("utf8").on("data", chunk => capture(chunk, false));
+    child.stderr.setEncoding("utf8").on("data", chunk => capture(chunk, true));
+    child.once("error", error => { failure ??= error; });
+    const timer = setTimeout(() => {
+      failure ??= new Error("Project lint execution exceeded its overall time budget");
+      stop();
+    }, timeout);
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      if (failure || code !== 0 || signal) {
+        stop();
+        const error = failure ?? new Error(`Lint command exited with ${signal ?? code}`);
+        if (!failure) error.code = code;
+        error.stdout = stdout;
+        error.stderr = stderr;
         reject(error);
       } else resolve({ stdout, stderr });
     });
-    const timer = setTimeout(stop, timeout);
   });
 }
 

@@ -366,3 +366,24 @@ test("when changed lint configuration owns no source, verification does not invo
   assert.equal(result.status, "N/A");
   await assert.rejects(access(join(root, "invocations.log")));
 });
+
+test("when a Ruff script can enable fixes from configuration, discovery blocks before executing it", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "src/task.py", "import unused\n");
+  await writeProjectFile(root, "ruff.toml", "fix = true\n");
+  await writeProjectFile(root, "package.json", JSON.stringify({ scripts: { "lint:python": "ruff check ." } }));
+  await makeTool(root, "ruff", { marker: "unsafe-invocation\n" });
+
+  // Act
+  const result = await verifyProjectLint({
+    cwd: root,
+    changedPaths: ["src/task.py"],
+    env: { ...process.env, PATH: `${join(root, "tools")}:${process.env.PATH}` },
+  });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /script is not a supported non-fixing command/);
+  await assert.rejects(access(join(root, "invocations.log")));
+});
