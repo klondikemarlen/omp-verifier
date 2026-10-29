@@ -384,8 +384,9 @@ function resultFromOutput(check, output) {
 
   try {
     if (!result || typeof result !== "object" || Array.isArray(result)) throw new Error("result must be an object");
-    if (!STATUSES.has(result.status)) throw new Error("status must be PASS, FAIL, or BLOCKED");
     const summary = validString(result.summary, "summary");
+    if (result.status === "N/A") return null;
+    if (!STATUSES.has(result.status)) throw new Error("status must be PASS, FAIL, BLOCKED, or N/A");
     const evidence = result.evidence === undefined ? undefined : validString(result.evidence, "evidence", false);
     const nextCheck = result.nextCheck === undefined ? undefined : validString(result.nextCheck, "nextCheck", false);
     return { id: check.id, status: result.status, summary, ...(evidence ? { evidence } : {}), ...(nextCheck ? { nextCheck } : {}) };
@@ -435,7 +436,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
   } catch (error) {
     if (typeof error?.code === "number" && !error.stderr) {
       const result = resultFromOutput(check, String(error.stdout || "").trim());
-      if (result.status === "FAIL" || result.status === "BLOCKED") return result;
+      if (result?.status === "FAIL" || result?.status === "BLOCKED") return result;
     }
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return blocked(check.id, "Verification output exceeded the limit");
     if (error?.killed || error?.signal === "SIGTERM") return blocked(check.id, "Verification timed out");
@@ -454,7 +455,7 @@ export async function runVerificationChecks(checks, cwd, ids = [], maxSourceByte
   const unknown = requestedIds.filter(id => !byId.has(id)).map(id => blocked(id, "Verification check is not installed"));
   return [
     ...unknown,
-    ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd, undefined, maxSourceBytes)))),
+    ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd, undefined, maxSourceBytes)))).filter(Boolean),
   ];
 }
 
@@ -462,7 +463,7 @@ export async function runInstalledVerificationChecks({ cwd, ids = [], packageDir
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
   const selectedBlocked = ids.length === 0 ? blockedResults : blockedResults.filter(result => ids.includes(result.id));
   const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids, maxSourceBytes))];
-  if (results.length === 0) {
+  if (results.length === 0 && checks.length === 0) {
     results.push(blocked("verifier", "No verification checks are installed"));
   }
   return results;
@@ -577,8 +578,10 @@ export async function runAutomaticVerification({
       });
     }
     if (unsuppressedMatches.length === 0) continue;
+    const result = await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot, maxSourceBytes);
+    if (!result) continue;
     results.push({
-      ...(await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot, maxSourceBytes)),
+      ...result,
       matches: unsuppressedMatches,
     });
   }
