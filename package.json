@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "description": "OMP advisor-triggered programmatic verification with evidence-first check results.",
   "type": "module",
   "license": "MIT",
@@ -33,6 +33,20 @@
   },
   "omp": {
     "extensions": ["./omp-plugin/index.js"],
+    "verifications": [{
+      "id": "verifier:project-lint",
+      "label": "Project Lint",
+      "description": "Discover and run existing project linters for JavaScript/TypeScript, Ruby, Go, Python, and Shell without provisioning tools.",
+      "entry": "./omp-plugin/project-lint-check.mjs",
+      "timeoutMs": 120000,
+      "pathTriggers": [
+        "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.vue",
+        "**/*.rb", "**/*.rake", "**/*.gemspec", "**/*.go", "**/*.py", "**/*.pyi", "**/*.sh", "**/*.bash", "**/*.ksh",
+        "**/package.json", "**/Gemfile", "**/Rakefile", "**/go.mod",
+        "**/eslint.config.*", "**/.eslintrc", "**/.eslintrc.*", "**/.rubocop.yml", "**/.golangci.yml", "**/.golangci.yaml",
+        "**/ruff.toml", "**/.ruff.toml", "**/pyproject.toml", "**/.shellcheckrc", "**/.omp-verifier.json"
+      ]
+    }],
     "lifecycle": {
       "uninstall": "./omp-plugin/index.js"
     }
@@ -44,7 +58,7 @@
     }
   },
   "scripts": {
-    "check": "node --check bin/omp-verifier.js && node --check omp-plugin/index.js && node --check omp-plugin/reporters.js && node --check omp-plugin/verifications.js && node --check test/verifier-plugin.test.js",
+    "check": "node --check bin/omp-verifier.js && node --check omp-plugin/index.js && node --check omp-plugin/reporters.js && node --check omp-plugin/verifications.js && node --check omp-plugin/project-lint-check.mjs && node --check test/verifier-plugin.test.js",
     "lint": "eslint . --max-warnings 0",
     "test": "node --test test/*.test.js",
     "release:check": "npm run lint && npm run check && npm test",
