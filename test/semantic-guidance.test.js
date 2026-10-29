@@ -244,7 +244,7 @@ test("when a changed guide is deleted, its historical source cannot replace curr
   }
 });
 
-test("when required guidance exceeds the total evidence budget after explicit context, evaluation is BLOCKED", async () => {
+test("when required guidance crosses the ordinary budget after explicit context, one expanded assessment retains it", async () => {
   // Arrange
   const guidance = `${"Owning guidance. ".repeat(900)}\n`;
   const fixture = await createSemanticFixture();
@@ -273,12 +273,11 @@ test("when required guidance exceeds the total evidence budget after explicit co
 
     // Assert
     const context = prepared.reviewRequest.context;
-    const rejectedGuidance = context.evidenceBudget.rejections.find(record => record.path === "README.md");
-    assert.equal(completed.status, "BLOCKED");
-    assert.ok(context.missingGuidancePaths.includes("README.md"));
+    assert.equal(completed.status, "PASS");
+    assert.equal(context.evidenceBudget.maxBytes, 1_024_000);
+    assert.deepEqual(context.missingGuidancePaths, []);
+    assert.equal(context.projectGuidance.find(record => record.path === "README.md").content, guidance);
     assert.ok(context.evidenceBudget.records.some(record => record.path === "src/context-0.js"));
-    assert.equal(rejectedGuidance.bytes, Buffer.byteLength(guidance));
-    assert.ok(context.evidenceBudget.usedBytes + rejectedGuidance.bytes > context.evidenceBudget.maxBytes);
     assert.ok(context.guidanceRequirements.some(record =>
       record.path === "README.md" && record.requiredBy.includes("src/helper.js")));
   } finally {

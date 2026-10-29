@@ -340,6 +340,15 @@ function addRecord(records, record, budget) {
     && existing.content === record.content)) return true;
 
   const bytes = Buffer.byteLength(record.content);
+
+  // Required records are admitted before optional discovery. Grow only for
+  // actual required bytes, including recovered chunks and authenticated deletions.
+  const required = record.source !== "callers" && record.source !== "siblings";
+  if (required && budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES) {
+    budget.maxFiles = MAX_LARGE_SCOPE_EVIDENCE_FILES;
+    budget.maxBytes = MAX_LARGE_SCOPE_EVIDENCE_BYTES;
+  }
+
   const exceedsFiles = !budget.paths.has(record.path) && budget.paths.size >= budget.maxFiles;
   const exceedsBytes = budget.used + bytes > budget.maxBytes;
   if (exceedsFiles || exceedsBytes) {
