@@ -191,7 +191,122 @@ test("when combined changed source exceeds 128 KB but fits the total budget, one
   }
 });
 
-test("when confirmed deletions exceed the remaining total budget, deleted source is accounted and BLOCKED", async () => {
+test("when eight byte-heavy documents require less than 40 paths, one complete assessment admits the original shape", async () => {
+  // Arrange
+  const sizes = {
+    "CHANGELOG.md": 41_214,
+    "docs/references/code-organization-reference.md": 132_304,
+    "docs/workflows/feature-workflow.md": 38_599,
+    "docs/workflows/hands-off-agentic-coding-workflow.md": 25_232,
+    "docs/workflows/pull-request-management-workflow.md": 26_142,
+    "skills/feature/workflow.md": 34_762,
+    "skills/hands-off-agentic-coding/workflow.md": 23_222,
+    "skills/pull-request-management/workflow.md": 26_483,
+  };
+  const sources = Object.fromEntries(Object.entries(sizes).map(([path, bytes]) => [path, sourceWithByteLength(bytes)]));
+  const changedPaths = Object.keys(sources).sort();
+  const fixture = await createSemanticFixture({ initialSources: sources });
+
+  try {
+    // Act
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+      maxSourceBytes: 256_000,
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor(changedPaths[0], sources[changedPaths[0]])),
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    assert.ok(context.evidenceBudget.requiredFiles < 40);
+    assert.equal(context.evidenceBudget.maxBytes, 1_024_000);
+    assert.equal(context.evidenceBudget.maxFiles, 256);
+    assert.equal(context.evidenceBudget.maxSourceBytes, 256_000);
+    assert.deepEqual(context.missingChangedPaths, []);
+    assert.deepEqual(context.missingGuidancePaths, []);
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    for (const path of changedPaths) {
+      const record = context.changedCode.find(record => record.path === path);
+      assert.equal(record.content, sources[path]);
+      assert.equal(record.sha256, sha256(sources[path]));
+    }
+    assert.equal(completed.status, "PASS");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when optional siblings exhaust the ordinary byte budget, discovery does not expand a small required scope", async () => {
+  // Arrange
+  const changedPath = "src/boundary.js";
+  const source = sourceWithByteLength(15_700);
+  const optionalSources = Object.fromEntries(Array.from({ length: 20 }, (_, index) =>
+    [`src/sibling-${index}.js`, source]));
+  const fixture = await createSemanticFixture({ initialSources: { [changedPath]: source, ...optionalSources } });
+
+  try {
+    // Act
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: [changedPath],
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    assert.equal(context.evidenceBudget.maxBytes, 256_000);
+    assert.equal(context.evidenceBudget.maxFiles, 40);
+    assert.equal(context.evidenceBudget.maxSourceBytes, 16_000);
+    assert.ok(context.evidenceBudget.rejections.some(record => record.source === "siblings" || record.source === "callers"));
+    assert.deepEqual(context.missingChangedPaths, []);
+    assert.equal(context.changedCode.find(record => record.path === changedPath).content, source);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when few required documents exceed the larger byte ceiling, a partial capture cannot PASS", async () => {
+  // Arrange
+  const source = sourceWithByteLength(210_000);
+  const changedPaths = Array.from({ length: 5 }, (_, index) => `docs/boundary-${index}.md`);
+  const fixture = await createSemanticFixture({
+    initialSources: Object.fromEntries(changedPaths.map(path => [path, source])),
+  });
+
+  try {
+    // Act
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths,
+      maxSourceBytes: 256_000,
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor(changedPaths[0], source)),
+    });
+
+    // Assert
+    const context = prepared.reviewRequest.context;
+    assert.ok(context.evidenceBudget.requiredFiles < 40);
+    assert.equal(context.evidenceBudget.maxBytes, 1_024_000);
+    assert.ok(context.evidenceBudget.usedBytes <= context.evidenceBudget.maxBytes);
+    assert.ok(context.missingChangedPaths.includes(changedPaths.at(-1)));
+    assert.ok(context.evidenceBudget.rejections.some(record =>
+      record.path === changedPaths.at(-1) && record.reason.includes("1024000-byte evidence limit")));
+    assert.equal(completed.status, "BLOCKED");
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when confirmed deletions cross the ordinary byte budget, one expanded assessment retains their source", async () => {
   // Arrange
   const source = sourceWithByteLength(15_700);
   const deletedPaths = Array.from({ length: 16 }, (_, index) =>
@@ -237,27 +352,20 @@ test("when confirmed deletions exceed the remaining total budget, deleted source
     const presentRecord = context.changedCode.find(record => record.path === presentPath);
     const admittedDeleted = context.changedCode.filter(record =>
       deletedPaths.includes(record.path) && record.state === "deleted");
-    const rejectedPath = deletedPaths.at(-1);
-    const rejectedDeletion = context.evidenceBudget.rejections.find(record => record.path === rejectedPath);
-    assert.ok(rejectedDeletion);
     assert.equal(presentRecord.state, "present");
     assert.equal(presentRecord.source, "changed-code");
     assert.equal(presentRecord.sha256, sha256(presentSource));
-    assert.equal(admittedDeleted.length, deletedPaths.length - 1);
+    assert.equal(admittedDeleted.length, deletedPaths.length);
     assert.ok(admittedDeleted.every(record =>
       record.source === "changed-code" && record.previousSha256 === sha256(source)));
     assert.ok(context.evidenceBudget.records.some(record =>
       record.path === presentPath && record.bytes === 15_700));
     const admittedDeletedBudgetRecords = context.evidenceBudget.records.filter(record =>
       deletedPaths.includes(record.path));
-    assert.equal(admittedDeletedBudgetRecords.length, deletedPaths.length - 1);
-    assert.equal(rejectedDeletion.source, "changed-code");
-    assert.equal(rejectedDeletion.bytes, 15_700);
-    assert.ok(context.evidenceBudget.usedBytes >= deletedPaths.length * 15_700);
-    assert.ok(context.evidenceBudget.usedBytes + rejectedDeletion.bytes > context.evidenceBudget.maxBytes);
-    assert.ok(context.missingChangedPaths.includes(rejectedPath));
-    assert.equal(context.changedCode.find(record => record.path === rejectedPath).state, "unavailable");
-    assert.equal(completed.status, "BLOCKED");
+    assert.equal(admittedDeletedBudgetRecords.length, deletedPaths.length);
+    assert.equal(context.evidenceBudget.maxBytes, 1_024_000);
+    assert.deepEqual(context.missingChangedPaths, []);
+    assert.equal(completed.status, "PASS");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

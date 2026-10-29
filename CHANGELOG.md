@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2 - 2026-10-29
+
+- Admit byte-heavy required semantic scopes in the existing bounded 256-file / 1,024,000-byte tier, even when fewer than 40 files are required.
+- Preserve ordinary small-scope limits and prevent optional caller/sibling discovery from raising them; keep complete coverage, source identity, freshness, citation, paging, and overflow safeguards.
+
 ## 0.12.1 - 2026-10-29
 
 - Add project-local ESLint checks, locked development dependencies, and reproducible CI setup; run non-fixing lint with zero allowed warnings as part of `npm run release:check`.
