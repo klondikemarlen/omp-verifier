@@ -110,7 +110,7 @@ An entry without `mode` is a package-relative `.mjs` module. The verifier execut
 }
 ```
 
-`PASS`, `FAIL`, and `BLOCKED` are the only valid statuses. Valid structured `FAIL` and `BLOCKED` results survive nonzero exits when stderr is empty. Invalid manifests, duplicate IDs, path traversal, missing entries, timeouts, other non-zero exits, oversized output, malformed JSON, and missing prerequisites fail closed as `BLOCKED`; none may become `PASS`.
+`PASS`, `FAIL`, and `BLOCKED` are final verdicts. A deterministic entry may return `N/A` with a non-empty summary and exit `0` to identify inapplicable work; the coordinator removes it from both manual and automatic result arrays rather than treating it as approval. Nonzero `N/A` exits remain execution `BLOCKED`. Valid structured `FAIL` and `BLOCKED` results survive nonzero exits when stderr is empty. Invalid manifests, duplicate IDs, path traversal, missing entries, timeouts, other non-zero exits, oversized output, malformed JSON, and missing prerequisites fail closed as `BLOCKED`; none may become `PASS`. This deterministic non-verdict does not extend the semantic assessment status vocabulary.
 
 “All checks” means all valid checks explicitly declared by installed plugin manifests. It does not mean scanning remote repositories, guessing from tool names, or running package-maintainer `scripts/verify-*.mjs` files. Verification entries are trusted installed code, not a sandbox; the verifier accepts no model-supplied command or executable path.
 
@@ -122,9 +122,44 @@ The public commands are:
 /verifier verify <check-id...>
 ```
 
-With no compatible manifests installed, `/verifier checks` reports `none installed` and `/verifier verify` returns `BLOCKED`. Existing `/verifier`, `/verifier status`, `/verifier uninstall`, advisor setup, and guidance ownership remain independent of this optional capability.
+Verifier itself declares the project-lint manifest. An isolated package directory without compatible manifests reports `none installed` from `checks` and `BLOCKED` from `verify`; installed checks with no applicable work produce an empty result array. Existing `/verifier`, `/verifier status`, `/verifier uninstall`, advisor setup, and guidance ownership remain independent.
 
 The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. By default, `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. Both commands also support `--reporter text`. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
+
+## Project Lint Catalog
+
+`verifier:project-lint` separates discovery from execution. Its initial maintained catalog targets five language families evidenced in the maintainer's projects, not every available linter:
+
+| Family | Initial tool | Existing project signals |
+| --- | --- | --- |
+| JavaScript/TypeScript | ESLint | ESLint configuration or `package.json` `eslintConfig`; existing simple lint scripts |
+| Ruby | RuboCop | `.rubocop.yml` or a Gemfile declaring RuboCop |
+| Go | golangci-lint | `.golangci.yml` or `.golangci.yaml`, owned by the Go module/project |
+| Python | Ruff | `ruff.toml`, `.ruff.toml`, or a `pyproject.toml` Ruff section |
+| Shell | ShellCheck | Shell source plus an installed ShellCheck; optional `.shellcheckrc` |
+
+Automatic calls use only the coordinator's explicit changed paths, including new untracked source. Deleted files and unrelated extensions do not select lint work. Named manual verification uses the current Git working-tree changes; a clean working tree is not approval of committed history. Use the supported `automatic <changed-path...>` interface to check an explicit committed delivery scope. Source/config changes stay in their owning checkout and nested project; configuration edits select that project's current source. An ignored ESLint path is inapplicable, and empty effective ESLint rules cannot establish PASS.
+
+Discovery prefers project-installed tools and environments, then existing PATH tools. Simple supported non-fixing package lint scripts run through the existing package manager rather than being replaced with a different linter command or warning policy. Native execution uses non-fixing tool modes; Ruby projects with a Gemfile use Bundler. Vue is supported only through the project's configured ESLint support; CSS/style linting and alternative tools are outside this initial catalog.
+
+If a project has a `bin/dev` or `dev` wrapper, Verifier does not guess its arguments or bypass it with a host command. The project may declare the existing trusted command in `.omp-verifier.json`, for example:
+
+```json
+{
+  "lint": {
+    "commands": {
+      "javascript": {
+        "tool": "eslint",
+        "command": ["./bin/dev", "lint"]
+      }
+    }
+  }
+}
+```
+
+Bindings are argv arrays owned by the repository; they execute from the declaring configuration's directory. They attest which supported linter the wrapper runs and must preserve its non-fixing scope, rules, warning policy, and exit-code contract. Verifier cannot inspect tooling inside an opaque container wrapper; its invocation result establishes availability. Command strings, shell evaluation, installer/download commands, and fixing flags are unsupported. Unknown wrapper or complex/quoted script syntax requires an explicit existing command binding rather than automatic configuration changes.
+
+Missing or unsupported tooling/configuration and invocation prerequisites are `BLOCKED`; known lint-violation exits are `FAIL`; executed applicable success is `PASS`. Combined evidence retains each language/project outcome: any FAIL wins, otherwise a BLOCKED prerequisite wins, otherwise applicable commands pass. No applicable work returns the deterministic `N/A` non-verdict and therefore no selected result. Diagnostic output is bounded, retaining all group status headings and marking shortened detail. Discovery never installs tools, creates configuration, starts services, or changes model routing. Extend the small catalog when a concrete project requires another tool, not by assuming unsupported tooling is absent.
 
 ## Agentic Standards Contract
 
