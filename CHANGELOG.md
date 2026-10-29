@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0 - 2026-10-29
+
+- Add a bounded, programmatic project-lint catalog for JavaScript/TypeScript (ESLint), Ruby (RuboCop), Go (golangci-lint), Python (Ruff), and Shell (ShellCheck).
+- Discover existing project tooling, preserve non-fixing scripts and explicit wrapper commands, and report missing prerequisites separately from lint violations without installing or configuring linters.
+- Keep mixed-language outcomes and owning-project scope explicit; normalize successful deterministic `N/A` entries to no selected results rather than lint approval.
+
 ## 0.12.2 - 2026-10-29
 
 - Admit byte-heavy required semantic scopes in the existing bounded 256-file / 1,024,000-byte tier, even when fewer than 40 files are required.

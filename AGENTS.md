@@ -1,6 +1,6 @@
 # OMP Verifier Agent Notes
 
-This repo ships an OMP plugin whose only product feature is injecting verifier guidance as an OMP advisor.
+This repo ships an OMP plugin that injects verifier guidance and dispatches declared checks, including a bounded project-lint catalog.
 
 ## Local workflow
 
@@ -17,7 +17,7 @@ npm run reinstall
 
 ## Project lint requirement
 
-- Check id `project:lint`. When any JavaScript source/test, `eslint.config.js`, `package.json`, or `package-lock.json` changes, run `npm run lint` from this checkout. The quality standard is that all maintained JavaScript passes the configured recommended ESLint rules with zero warnings; PASS requires observed exit 0. Report violations as FAIL with the actual diagnostics. Missing dependencies/configuration or an unexecuted check is BLOCKED; restore the documented development setup before retrying. This is a project-specific executable requirement, not an installed manifest check or permission to provision linters in other repositories.
+- Advisor lint feedback uses the declared `verifier:project-lint` check with the actual changed paths; it discovers this checkout's existing `npm run lint` command. Do not duplicate it as a separate `project:lint` requirement or replace scoped automatic selection with a clean-worktree manual check. Development/readiness still requires observed `npm run lint` exit 0 for all maintained JavaScript and module entries, with zero warnings. Violations are FAIL; missing dependencies/configuration or an unexecuted check is BLOCKED. Restore the documented setup before retrying, and do not provision linters in consumer repositories.
 
 ## Product rule
 
@@ -36,6 +36,7 @@ Current scope:
 
 - `/verifier` and `/verifier status` report global and project advisor rosters.
 - `/verifier checks` and `/verifier verify` expose explicit manifest checks.
+- The installed `verifier:project-lint` manifest discovers and executes existing lint tooling for JavaScript/TypeScript, Ruby, Go, Python, and Shell; it does not provision tools.
 - `/verifier uninstall` removes only the marked verifier advisor block.
 - Plugin load preserves or restores OMP's stock `default` advisor, then inserts `verifier` second with `bash`.
 - Plugin load refreshes `<agent-dir>/verifier/WATCHDOG.md` with the coordinator path derived from the installed package.
