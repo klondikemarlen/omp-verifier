@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "OMP advisor-triggered programmatic verification with evidence-first check results.",
   "type": "module",
   "license": "MIT",
@@ -9,7 +9,14 @@
     "url": "https://github.com/klondikemarlen/omp-verifier/issues"
   },
   "qna": false,
-  "keywords": ["omp", "oh-my-pi", "plugin", "advisor", "watchdog", "verification"],
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "plugin",
+    "advisor",
+    "watchdog",
+    "verification"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/klondikemarlen/omp-verifier.git"
@@ -32,27 +39,61 @@
     "omp-verifier": "./bin/omp-verifier.js"
   },
   "omp": {
-    "extensions": ["./omp-plugin/index.js"],
-    "verifications": [{
-      "id": "verifier:project-lint",
-      "label": "Project Lint",
-      "description": "Discover and run existing project linters for JavaScript/TypeScript, Ruby, Go, Python, and Shell without provisioning tools.",
-      "entry": "./omp-plugin/project-lint-check.mjs",
-      "timeoutMs": 120000,
-      "pathTriggers": [
-        "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.vue",
-        "**/*.rb", "**/*.rake", "**/*.gemspec", "**/*.go", "**/*.py", "**/*.pyi", "**/*.sh", "**/*.bash", "**/*.ksh",
-        "**/package.json", "**/Gemfile", "**/Rakefile", "**/go.mod",
-        "**/eslint.config.*", "**/.eslintrc", "**/.eslintrc.*", "**/.rubocop.yml", "**/.golangci.yml", "**/.golangci.yaml",
-        "**/ruff.toml", "**/.ruff.toml", "**/pyproject.toml", "**/.shellcheckrc", "**/.omp-verifier.json"
-      ]
-    }],
+    "extensions": [
+      "./omp-plugin/index.js"
+    ],
+    "verifications": [
+      {
+        "id": "verifier:project-lint",
+        "label": "Project Lint",
+        "description": "Discover and run existing project linters for JavaScript/TypeScript, Ruby, Go, Python, and Shell without provisioning tools.",
+        "entry": "./omp-plugin/project-lint-check.mjs",
+        "timeoutMs": 120000,
+        "pathTriggers": [
+          "**/*.js",
+          "**/*.jsx",
+          "**/*.mjs",
+          "**/*.cjs",
+          "**/*.ts",
+          "**/*.tsx",
+          "**/*.mts",
+          "**/*.cts",
+          "**/*.vue",
+          "**/*.rb",
+          "**/*.rake",
+          "**/*.gemspec",
+          "**/*.go",
+          "**/*.py",
+          "**/*.pyi",
+          "**/*.sh",
+          "**/*.bash",
+          "**/*.ksh",
+          "**/package.json",
+          "**/Gemfile",
+          "**/Rakefile",
+          "**/go.mod",
+          "**/eslint.config.*",
+          "**/.eslintrc",
+          "**/.eslintrc.*",
+          "**/.rubocop.yml",
+          "**/.golangci.yml",
+          "**/.golangci.yaml",
+          "**/ruff.toml",
+          "**/.ruff.toml",
+          "**/pyproject.toml",
+          "**/.shellcheckrc",
+          "**/.omp-verifier.json"
+        ]
+      }
+    ],
     "lifecycle": {
       "uninstall": "./omp-plugin/index.js"
     }
   },
   "pi": {
-    "extensions": ["./omp-plugin/index.js"],
+    "extensions": [
+      "./omp-plugin/index.js"
+    ],
     "lifecycle": {
       "uninstall": "./omp-plugin/index.js"
     }
