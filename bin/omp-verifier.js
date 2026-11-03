@@ -70,20 +70,11 @@ async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) 
   }
 }
 
-async function automaticResults(paths, worktree, maxSourceBytes) {
-  if (worktree) {
-    return runCurrentAutomaticVerification({ cwd, maxSourceBytes });
-  }
+async function automaticResults(paths, worktree, baseRef, maxSourceBytes) {
+  if (worktree) return runCurrentAutomaticVerification({ cwd, maxSourceBytes });
+  if (paths.length === 0 && baseRef === undefined) return [];
 
-  if (paths.length === 0) {
-    return [];
-  }
-
-  return runAutomaticVerificationForPaths({
-    cwd,
-    changedPaths: paths,
-    maxSourceBytes,
-  });
+  return runAutomaticVerificationForPaths({ cwd, changedPaths: paths, baseRef, maxSourceBytes });
 }
 
 try {
@@ -92,9 +83,10 @@ try {
     allowPositionals: true,
     options: {
       reporter: { type: "string", default: "json" },
+      "max-source-bytes": { type: "string" },
       "failures-only": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
-      "max-source-bytes": { type: "string" },
+      base: { type: "string" },
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
@@ -116,6 +108,9 @@ try {
   const failuresOnly = values["failures-only"];
   const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0 || values["remove-context"].length > 0;
   const hasSemanticOptions = values.assessment !== undefined || hasContextOptions;
+  const baseRef = values.base;
+  if (baseRef !== undefined && command !== "automatic") throw new Error("--base is only supported by automatic");
+  if (baseRef !== undefined && values.worktree) throw new Error("--base cannot be combined with --worktree");
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -169,11 +164,11 @@ try {
       maxSourceBytes,
     }), { reporter, failuresOnly });
   } else if (command === "automatic" && (!values.worktree || positionals.length === 0) && !hasSemanticOptions) {
-    await writeResults(await automaticResults(positionals, values.worktree, maxSourceBytes), { reporter, failuresOnly });
+    await writeResults(await automaticResults(positionals, values.worktree, baseRef, maxSourceBytes), { reporter, failuresOnly });
   } else {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
