@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0 - 2026-11-02
+
+- Verify complete committed PR scope against an explicit actual base with `automatic --base`, including earlier commits and stacked-parent boundaries, without selecting unrelated dirty files.
+- Add opt-in `appendPaths: true` to existing lint bindings, forwarding validated sources as individual cwd-relative arguments while preserving fixed argv, broader configuration scope, and empty/deleted-only non-applicability.
+- Teach the verifier advisor to use the current PR's evidenced base and report missing base prerequisites honestly rather than guessing a branch or falling back to full-project lint.
+
 ## 0.14.0 - 2026-11-02
 
 - Compose supported non-fixing npm lint scripts with a package-local `lint.executionWrapper` argv prefix, keeping container routing and runtime setup owned by the project.

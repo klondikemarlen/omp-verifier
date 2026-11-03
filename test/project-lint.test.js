@@ -27,7 +27,7 @@ async function writeProjectFile(root, path, content) {
   await writeFile(file, content);
 }
 
-async function bindLint(root, language, command) {
+async function bindLint(root, language, command, options = {}) {
   const manifestPath = join(root, ".omp-verifier.json");
   let manifest = {};
   try {
@@ -36,7 +36,7 @@ async function bindLint(root, language, command) {
     if (error.code !== "ENOENT") throw error;
   }
   const tool = { javascript: "eslint", ruby: "rubocop", go: "golangci-lint", python: "ruff", shell: "shellcheck" }[language];
-  manifest.lint = { ...manifest.lint, commands: { ...manifest.lint?.commands, [language]: { tool, command } } };
+  manifest.lint = { ...manifest.lint, commands: { ...manifest.lint?.commands, [language]: { tool, command, ...options } } };
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
@@ -338,6 +338,95 @@ test("when npm lint is delegated, API and web use their own cwd, rules, and inta
   assert.match(failing.evidence, /javascript \(api\): PASS/);
   assert.match(failing.evidence, /javascript \(web\): FAIL/);
   assert.match(failing.evidence, /eqeqeq/);
+});
+
+test("when a binding appends selected JavaScript paths, real ESLint scopes to intact nested-cwd arguments", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  const nested = join(root, "web");
+  await writeProjectFile(root, "web/src/selected file.js", "export const selected = true;\n");
+  await writeProjectFile(root, "web/-selected.js", "export const optionLookingName = true;\n");
+  await writeProjectFile(root, "web/src/unrelated.js", "const unused = true;\n");
+  await writeProjectFile(root, "web/eslint.config.js", `export default [{ files: ["**/*.js"], rules: { "no-unused-vars": "error" } }];\n`);
+  await writeProjectFile(root, "web/tools/lint-wrapper.mjs", `
+import { spawnSync } from "node:child_process";
+const result = spawnSync(process.argv[2], process.argv.slice(3), { cwd: process.cwd(), stdio: "inherit" });
+process.exit(result.status ?? 2);
+`);
+  await installProjectEslint(nested);
+  await bindLint(nested, "javascript", [process.execPath, "tools/lint-wrapper.mjs", join(nested, "node_modules/.bin/eslint"), "--no-fix", "--max-warnings", "0"], { appendPaths: true });
+
+  // Act
+  const selected = await verifyProjectLint({ cwd: root, changedPaths: ["web/src/selected file.js", "web/-selected.js"] });
+  const violating = await verifyProjectLint({ cwd: root, changedPaths: ["web/src/unrelated.js"] });
+
+  // Assert
+  assert.equal(selected.status, "PASS");
+  assert.equal(violating.status, "FAIL");
+  assert.match(violating.evidence, /no-unused-vars/);
+});
+
+test("when an append-path binding changes, it still checks the owning project's broader source", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "src/selected.js", "export const selected = true;\n");
+  await writeProjectFile(root, "src/unrelated.js", "const unused = true;\n");
+  await writeProjectFile(root, "eslint.config.mjs", `export default [{ files: ["**/*.js"], rules: { "no-unused-vars": "error" } }];\n`);
+  await installProjectEslint(root);
+  await bindLint(root, "javascript", [join(root, "node_modules/.bin/eslint"), "--no-fix", "--"], { appendPaths: true });
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: [".omp-verifier.json"] });
+
+  // Assert
+  assert.equal(result.status, "FAIL");
+  assert.match(result.evidence, /unrelated\.js/);
+});
+
+test("when a selected binding path escapes the checkout, verification blocks rather than invoking the wrapper", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "src/selected.js", "export const selected = true;\n");
+  await bindLint(root, "javascript", [process.execPath, "--version"], { appendPaths: true });
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["../selected.js"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /outside the owning checkout/);
+});
+
+test("when a binding appendPaths value is not boolean, verification blocks before execution", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "src/policy.js", "export const policy = true;\n");
+  await bindLint(root, "javascript", ["node", "--version"], { appendPaths: "true" });
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["src/policy.js"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /appendPaths/);
+});
+
+test("when a binding does not append paths, its fixed full-project command still checks baseline violations", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  const nested = join(root, "web");
+  await writeProjectFile(root, "web/src/selected file.js", "export const selected = true;\n");
+  await writeProjectFile(root, "web/src/unrelated.js", "const unused = true;\n");
+  await writeProjectFile(root, "web/eslint.config.js", `export default [{ files: ["**/*.js"], rules: { "no-unused-vars": "error" } }];\n`);
+  await installProjectEslint(nested);
+  await bindLint(nested, "javascript", [join(nested, "node_modules/.bin/eslint"), "--no-fix"]);
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["web/src/selected file.js"] });
+
+  // Assert
+  assert.equal(result.status, "FAIL");
+  assert.match(result.evidence, /unrelated\.js/);
 });
 
 test("when wrapper configuration changes, the npm script retains its broader project scope", async t => {

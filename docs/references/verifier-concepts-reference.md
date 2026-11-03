@@ -138,7 +138,7 @@ The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash
 | Python | Ruff | `ruff.toml`, `.ruff.toml`, or a `pyproject.toml` Ruff section |
 | Shell | ShellCheck | Shell source plus an installed ShellCheck; optional `.shellcheckrc` |
 
-Automatic calls use only the coordinator's explicit changed paths, including new untracked source. Deleted files and unrelated extensions do not select lint work. Named manual verification uses the current Git working-tree changes; a clean working tree is not approval of committed history. Use the supported `automatic <changed-path...>` interface to check an explicit committed delivery scope. Source/config changes stay in their owning checkout and nested project; configuration edits select that project's current source. An ignored ESLint path is inapplicable, and empty effective ESLint rules cannot establish PASS.
+Automatic calls use the coordinator's explicit changed paths, including new untracked source. For PR verification, `automatic --base <actual-PR-base> [<current-edited-path>...]` unions the complete committed merge-base-to-HEAD changes with those current edits; it does not scan other dirty/untracked paths or guess a target branch. Resolve the actual parent for a stacked PR. The base and HEAD are resolved to commit identities before comparison; an unavailable base, unrelated history, or bounded diff failure is BLOCKED rather than a partial check. Renames select the old deletion and new destination; lint only executes existing supported sources, so deleted-only and empty applicable scope invoke no linter and never fall back to a full-project command. Named manual verification retains current Git working-tree selection; a clean worktree is not approval of committed history. `--base` is specific to `automatic` and cannot combine with `--worktree`. Source/config changes stay in their owning checkout and nested project; configuration edits select that project's current source. An ignored ESLint path is inapplicable, and empty effective ESLint rules cannot establish PASS.
 
 Discovery prefers project-installed tools and environments, then existing PATH tools. Simple supported non-fixing package lint scripts run through the existing package manager rather than being replaced with a different linter command or warning policy. Native execution uses non-fixing tool modes; Ruby projects with a Gemfile use Bundler. Vue is supported only through the project's configured ESLint support; CSS/style linting and alternative tools are outside this initial catalog.
 
@@ -160,6 +160,28 @@ If a project has a `bin/dev` or `dev` wrapper, Verifier does not guess its argum
 ```
 
 Bindings are argv arrays owned by the repository; they execute from the declaring configuration's directory. They attest which supported linter the wrapper runs and must preserve its non-fixing scope, rules, warning policy, and exit-code contract. Verifier cannot inspect tooling inside an opaque container wrapper; its invocation result establishes availability. Command strings, shell evaluation, installer/download commands, and fixing flags are unsupported. Unknown wrapper or complex/quoted script syntax requires an explicit existing command binding rather than automatic configuration changes.
+
+### Selected Paths Through Existing Bindings
+
+Opt a trusted binding into path forwarding with `appendPaths: true`. For example, an API package's `.omp-verifier.json` can declare:
+
+```json
+{
+  "lint": {
+    "commands": {
+      "javascript": {
+        "tool": "eslint",
+        "command": ["../bin/dev", "lint", "api", "--"],
+        "appendPaths": true
+      }
+    }
+  }
+}
+```
+
+Each selected existing source is appended as one argv entry relative to the declaring configuration's directory, which is also the command's cwd. Thus repository path `api/src/selected file.ts` reaches that API binding as the single argument `src/selected file.ts`. An inherited root binding instead receives `api/src/selected file.ts` from the repository root. Option-looking relative filenames receive a `./` prefix. Paths outside the owning checkout are rejected before invocation. Verifier does not insert a delimiter into opaque wrapper syntax: the trailing `--` above is a project-declared argument, and the wrapper must support it.
+
+The wrapper must preserve non-fixing rules and warnings and run only the supplied sources; appending filenames to `eslint .` does not narrow scope. Missing prerequisites remain BLOCKED and selected-file violations remain FAIL. Configuration edits still expand to current owning-project sources, and an empty/deleted-only selection invokes nothing. Omitted or false `appendPaths` preserves the existing fixed argv; other values are invalid. Existing full-project bindings, npm execution wrappers, and the project's explicit full-scope lint command remain available for deliberately broader checks. `appendPaths` does not alter `lint.executionWrapper` scripts or provision runtime tools.
 
 ### Composing npm Scripts with an Execution Wrapper
 
