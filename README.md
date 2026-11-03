@@ -89,7 +89,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 ```text
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
-omp-verifier automatic [--base <actual-PR-base>] <changed-path...> [--max-source-bytes <bytes>]
+omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--max-source-bytes <bytes>]
 omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
