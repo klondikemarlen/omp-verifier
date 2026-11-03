@@ -114,11 +114,10 @@ test("when automatic CLI receives explicit paths, ignores stale worktree paths u
     const worktree = runAutomatic(["--worktree"]);
 
     // Assert
-    assert.deepEqual({ exitCode: unrelated.exitCode, results: JSON.parse(unrelated.output) }, { exitCode: 0, results: [] });
-    assert.deepEqual({ exitCode: current.exitCode, matches: JSON.parse(current.output)[0].matches }, {
-      exitCode: 1,
-      matches: [{ path: "src/current.ts", trigger: "**/*.ts" }],
-    });
+    assert.equal(unrelated.exitCode, 0);
+    assert.deepEqual(JSON.parse(unrelated.output), []);
+    assert.equal(current.exitCode, 1);
+    assert.deepEqual(JSON.parse(current.output)[0].matches, [{ path: "src/current.ts", trigger: "**/*.ts" }]);
     assert.equal(JSON.parse(worktree.output)[0].matches.some(match => match.path === "src/stale.ts"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
