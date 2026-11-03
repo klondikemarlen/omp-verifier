@@ -161,6 +161,24 @@ If a project has a `bin/dev` or `dev` wrapper, Verifier does not guess its argum
 
 Bindings are argv arrays owned by the repository; they execute from the declaring configuration's directory. They attest which supported linter the wrapper runs and must preserve its non-fixing scope, rules, warning policy, and exit-code contract. Verifier cannot inspect tooling inside an opaque container wrapper; its invocation result establishes availability. Command strings, shell evaluation, installer/download commands, and fixing flags are unsupported. Unknown wrapper or complex/quoted script syntax requires an explicit existing command binding rather than automatic configuration changes.
 
+### Composing npm Scripts with an Execution Wrapper
+
+When the repository wrapper can execute a supplied command, declare `lint.executionWrapper` in the owning package's `.omp-verifier.json` instead of repeating npm's lint invocation in a language binding. For example, `api/.omp-verifier.json` can contain:
+
+```json
+{
+  "lint": {
+    "executionWrapper": ["../bin/dev", "exec", "api"]
+  }
+}
+```
+
+For a supported ESLint `lint` script, Verifier invokes `../bin/dev exec api npm run lint -- --no-fix` with cwd `api/`. The wrapper receives each prefix argument followed by `npm`, `run`, the discovered `lint` or `lint:*` script name, and ESLint's `--`, `--no-fix` arguments as separate argv entries, never shell text. The executable is resolved relative to the owning package; remaining relative arguments and the script's paths use that same working directory. A web package declares its own prefix, such as `["../bin/dev", "exec", "web"]`, and runs from `web/`. Declarations are not inherited from an ancestor package.
+
+The project must supply that command-execution entrypoint; `exec` and service names above are examples, not discovered Docker syntax. The wrapper owns container routing, working-directory mapping, and existing non-fixing execution; Verifier neither starts application dependencies nor requires host npm, host ESLint, or container configuration inspection. The discovered script must directly invoke the catalog's supported tool without fixing flags or shell composition. The existing stricter Ruff/golangci-lint script requirements still apply. This composition currently supports npm only; other package managers remain BLOCKED rather than silently switching runtimes.
+
+Fixed `lint.commands.<family>` bindings retain precedence and their original argv meaning. Execution wrappers preserve the package script's existing source scope, rules, warning policy, and exit codes; they do not append selected paths or turn `eslint .` into changed-file lint. Editing the declaration selects the owning project's current source. The declaration is a repository attestation that the delegated environment retains meaningful lint configuration and does not fix files, including npm lifecycle scripts. Missing wrappers or delegated prerequisites remain BLOCKED, lint exit 1 remains FAIL, and exit 0 is PASS. Projects needing a fixed `bin/dev lint` entrypoint rather than command execution can keep the binding above.
+
 Missing or unsupported tooling/configuration and invocation prerequisites are `BLOCKED`; known lint-violation exits are `FAIL`; executed applicable success is `PASS`. Combined evidence retains each language/project outcome: any FAIL wins, otherwise a BLOCKED prerequisite wins, otherwise applicable commands pass. No applicable work returns the deterministic `N/A` non-verdict and therefore no selected result. Diagnostic output is bounded, retaining all group status headings and marking shortened detail. Discovery never installs tools, creates configuration, starts services, or changes model routing. Extend the small catalog when a concrete project requires another tool, not by assuming unsupported tooling is absent.
 
 ## Agentic Standards Contract

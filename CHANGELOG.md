@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.0 - 2026-11-02
+
+- Compose supported non-fixing npm lint scripts with a package-local `lint.executionWrapper` argv prefix, keeping container routing and runtime setup owned by the project.
+- Execute from each owning package, preserve fixed-argv binding precedence and existing script scope, and classify delegated lint findings and missing prerequisites without host-runtime fallback.
+
 ## 0.13.0 - 2026-10-29
 
 - Add a bounded, programmatic project-lint catalog for JavaScript/TypeScript (ESLint), Ruby (RuboCop), Go (golangci-lint), Python (Ruff), and Shell (ShellCheck).
