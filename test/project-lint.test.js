@@ -298,6 +298,116 @@ test("when a nested project owns changed source, its lint command runs from that
   assert.deepEqual(discovered.plans[0].paths, ["web/src/app.js"]);
 });
 
+async function wrappedNpmProjects(t) {
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "tools/lint wrapper.mjs", `
+import { spawnSync } from "node:child_process";
+import { basename } from "node:path";
+const [route, command, ...args] = process.argv.slice(2);
+if (route !== basename(process.cwd()) + " service") process.exit(2);
+if (command !== "npm" || JSON.stringify(args) !== JSON.stringify(["run", "lint", "--", "--no-fix"])) process.exit(2);
+const result = spawnSync(command, args, { stdio: "inherit" });
+process.exit(result.status ?? 2);
+`);
+  for (const name of ["api", "web"]) {
+    await writeProjectFile(root, `${name}/package.json`, JSON.stringify({ type: "module", scripts: { lint: "eslint src --max-warnings 0" } }));
+    await writeProjectFile(root, `${name}/.omp-verifier.json`, JSON.stringify({
+      lint: { executionWrapper: [process.execPath, "../tools/lint wrapper.mjs", `${name} service`] },
+    }));
+    await writeProjectFile(root, `${name}/eslint.config.js`, `export default [{ files: ["**/*.js"], rules: ${JSON.stringify(name === "api" ? { "no-unused-vars": "error" } : { eqeqeq: "error" })} }];\n`);
+    await writeProjectFile(root, `${name}/src/selected file.js`, "export const selected = true;\n");
+    await installProjectEslint(join(root, name));
+  }
+  await writeProjectFile(root, "bin/dev", "#!/bin/sh\nexit 2\n");
+  return root;
+}
+
+test("when npm lint is delegated, API and web use their own cwd, rules, and intact wrapper arguments", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await writeProjectFile(root, "api/src/selected file.js", "export const equal = value => value == 1;\n");
+
+  // Act
+  const passing = await verifyProjectLint({ cwd: root, changedPaths: ["api/src/selected file.js", "web/src/selected file.js"] });
+  await writeProjectFile(root, "web/src/selected file.js", "export const equal = value => value == 1;\n");
+  const failing = await verifyProjectLint({ cwd: root, changedPaths: ["api/src/selected file.js", "web/src/selected file.js"] });
+
+  // Assert
+  assert.equal(passing.status, "PASS");
+  assert.equal(failing.status, "FAIL");
+  assert.match(failing.evidence, /javascript \(api\): PASS/);
+  assert.match(failing.evidence, /javascript \(web\): FAIL/);
+  assert.match(failing.evidence, /eqeqeq/);
+});
+
+test("when wrapper configuration changes, the npm script retains its broader project scope", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await writeProjectFile(root, "api/src/unrelated.js", "const unused = true;\n");
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["api/.omp-verifier.json"] });
+
+  // Assert
+  assert.equal(result.status, "FAIL");
+  assert.match(result.evidence, /unrelated\.js/);
+  assert.match(result.evidence, /no-unused-vars/);
+});
+
+test("when the delegated linter cannot load its configuration, verification stays BLOCKED", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await writeProjectFile(root, "api/eslint.config.js", "throw new Error('missing container lint prerequisite');\n");
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["api/src/selected file.js"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /missing container lint prerequisite/);
+});
+
+test("when an execution wrapper or its discovered script is unsafe or unavailable, host lint is not substituted", async t => {
+  for (const { wrapper, script = "eslint src", packageManager } of [
+    { wrapper: ["./missing-wrapper"] },
+    { wrapper: [] },
+    { wrapper: "bin/dev lint" },
+    { wrapper: ["sh", "-c", "npm run lint"] },
+    { wrapper: ["npm", "install"] },
+    { wrapper: [process.execPath], script: "eslint src --fix" },
+    { wrapper: [process.execPath], script: "eslint src && echo ok" },
+    { wrapper: [process.execPath], script: "echo ok" },
+    { wrapper: [process.execPath], packageManager: "pnpm@10.0.0" },
+  ]) {
+    // Arrange
+    const root = await projectFixture(t);
+    await writeProjectFile(root, "src/app.js", "export const app = true;\n");
+    await writeProjectFile(root, "package.json", JSON.stringify({ scripts: { lint: script }, packageManager }));
+    await writeProjectFile(root, ".omp-verifier.json", JSON.stringify({ lint: { executionWrapper: wrapper } }));
+    await makeTool(root, "eslint", { marker: "should-not-run\n" });
+
+    // Act
+    const result = await verifyProjectLint({ cwd: root, changedPaths: ["src/app.js"], env: { ...process.env, PATH: `${join(root, "tools")}:${process.env.PATH}` } });
+
+    // Assert
+    assert.equal(result.status, "BLOCKED");
+    await assert.rejects(access(join(root, "invocations.log")));
+  }
+});
+
+test("when a fixed binding also has an execution wrapper, the existing fixed command keeps precedence", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await bindLint(join(root, "api"), "javascript", ["./missing-fixed-command"]);
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["api/src/selected file.js"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /declared project lint command is unavailable/);
+});
+
 test("when a project wrapper exists without an explicit safe binding, host lint is not bypassed", async t => {
   // Arrange
   const root = await projectFixture(t);

@@ -201,6 +201,24 @@ async function lintPlan(group, repositoryRoot, env) {
     return { plan: { language: family.id, tool: family.tool, cwd: binding.directory, command: [program, ...command.slice(1)], paths, configuration: "project binding" } };
   }
 
+  const executionWrapper = (await readJson(join(root, ".omp-verifier.json")))?.lint?.executionWrapper;
+  if (executionWrapper !== undefined) {
+    if (!Array.isArray(executionWrapper) || executionWrapper.length === 0 || unsafeArguments(executionWrapper)) {
+      return { result: blocked(family.id, root, "Invalid or fixing lint.executionWrapper", "Declare a non-fixing executable argv prefix; shell evaluation and installers are not supported.") };
+    }
+    const pkg = await readJson(join(root, "package.json"));
+    const script = Object.entries(pkg?.scripts ?? {}).find(([name, value]) =>
+      (name === "lint" || name.startsWith("lint:")) && scriptMatches(value, family));
+    if (!script) return { result: blocked(family.id, root, "The execution wrapper requires a supported non-fixing package lint script", `Expected an existing lint or lint:* script invoking ${family.tool}; host lint will not bypass this wrapper.`) };
+    const manager = pkg.packageManager?.split("@")[0] ?? (await fileExists(join(root, "pnpm-lock.yaml")) ? "pnpm" : await fileExists(join(root, "yarn.lock")) ? "yarn" : "npm");
+    if (manager !== "npm") return { result: blocked(family.id, root, "The execution wrapper currently supports npm scripts only", manager) };
+    const program = await executable(executionWrapper[0], root, repositoryRoot, env);
+    if (!program) return { result: blocked(family.id, root, "The declared execution wrapper is unavailable", executionWrapper[0]) };
+    const command = [program, ...executionWrapper.slice(1), "npm", "run", script[0]];
+    if (family.tool === "eslint") command.push("--", "--no-fix");
+    return { plan: { language: family.id, tool: family.tool, cwd: root, command, paths, wholeProject, configuration: "project execution wrapper" } };
+  }
+
   const wrapper = await wrapperIn(root, repositoryRoot);
   if (wrapper) return { result: blocked(family.id, root, "Project wrapper syntax is not declared for linting", `${wrapper}: declare lint.commands.${family.id} = {tool, command: [executable, ...args]} in .omp-verifier.json; host lint will not bypass this wrapper.`) };
 
@@ -259,11 +277,11 @@ export async function discoverProjectLinters({ cwd, changedPaths, env = process.
       if (candidates.length === 0) continue;
       if (!await fileExists(absolute)) continue;
       if (!inside(repositoryRoot, await realpath(absolute))) throw new Error(`Changed source resolves outside the owning checkout: ${path}`);
-      const bindings = name === ".omp-verifier.json" ? (await readJson(absolute))?.lint?.commands : undefined;
+      const lintConfig = name === ".omp-verifier.json" ? (await readJson(absolute))?.lint : undefined;
       for (const family of candidates) {
         const source = family.sources.includes(extname(path));
         const configuration = [...family.configs, ...PROJECT_MARKERS[family.id]].includes(path.split("/").at(-1));
-        const verifierConfig = bindings?.[family.id] !== undefined;
+        const verifierConfig = lintConfig?.commands?.[family.id] !== undefined || lintConfig?.executionWrapper !== undefined;
         if (!source && !configuration && !verifierConfig) continue;
         const root = await owningProject(repositoryRoot, absolute, family);
         const key = `${family.id}\0${root}`;
