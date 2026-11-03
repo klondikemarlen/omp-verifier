@@ -588,12 +588,21 @@ export async function runAutomaticVerification({
   return results;
 }
 
-export async function runAutomaticVerificationForPaths({ cwd, changedPaths, packageDirectory, maxSourceBytes }) {
+export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes }) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
+    if (baseRef !== undefined) return [blocked("verifier:auto-selection", "Could not inspect base changes", root.error)];
     const { checks } = await discoverVerificationChecks({ packageDirectory });
     if (!checks.some(check => check.pathTriggers)) return [];
     return [blocked("verifier:auto-selection", "Could not inspect changed paths", root.error)];
+  }
+  if (baseRef !== undefined) {
+    try {
+      const comparisonPaths = await changedPathsSinceBase(root.repositoryRoot, baseRef);
+      changedPaths = [...comparisonPaths, ...changedPaths.map(path => projectPath(path, "changed path"))];
+    } catch (error) {
+      return [blocked("verifier:auto-selection", "Could not inspect base changes", error.message)];
+    }
   }
   return runAutomaticVerification({
     cwd,
@@ -620,6 +629,27 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory, m
     repositoryRoot: changeSet.repositoryRoot,
     maxSourceBytes,
   });
+}
+
+async function changedPathsSinceBase(repositoryRoot, baseRef) {
+  const resolveCommit = async ref => {
+    const { stdout } = await execFileAsync("git", ["-C", repositoryRoot, "rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], {
+      maxBuffer: MAX_OUTPUT_BYTES,
+    });
+    return stdout.trim();
+  };
+  const base = await resolveCommit(baseRef);
+  const head = await resolveCommit("HEAD");
+  const { stdout: mergeBaseOutput } = await execFileAsync("git", ["-C", repositoryRoot, "merge-base", base, head], {
+    maxBuffer: MAX_OUTPUT_BYTES,
+  });
+  const mergeBase = mergeBaseOutput.trim();
+  if (!mergeBase) throw new Error(`Base ${baseRef} and HEAD have no common ancestry`);
+
+  const { stdout } = await execFileAsync("git", [
+    "-C", repositoryRoot, "diff", "--name-only", "--no-renames", "-z", `${mergeBase}..${head}`, "--",
+  ], { maxBuffer: MAX_OUTPUT_BYTES });
+  return stdout.split("\0").filter(Boolean);
 }
 
 async function projectRepositoryRoot(cwd) {

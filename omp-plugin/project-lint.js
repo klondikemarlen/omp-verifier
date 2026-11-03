@@ -193,12 +193,17 @@ async function lintPlan(group, repositoryRoot, env) {
   const binding = await projectBinding(root, repositoryRoot, family);
   if (binding) {
     const command = binding.binding?.command;
-    if (binding.binding?.tool !== family.tool || !Array.isArray(command) || command.length === 0 || unsafeArguments(command)) {
-      return { result: blocked(family.id, root, `Invalid or fixing lint.commands.${family.id} binding`, "Declare a supported tool and a non-fixing command argv array; shell evaluation and installers are not supported.") };
+    const appendPaths = binding.binding?.appendPaths;
+    if (binding.binding?.tool !== family.tool || !Array.isArray(command) || command.length === 0 || unsafeArguments(command) || (appendPaths !== undefined && typeof appendPaths !== "boolean")) {
+      return { result: blocked(family.id, root, `Invalid or fixing lint.commands.${family.id} binding`, "Declare a supported tool and a non-fixing command argv array; appendPaths, when present, must be boolean; shell evaluation and installers are not supported.") };
     }
     const program = await executable(command[0], binding.directory, repositoryRoot, env);
     if (!program) return { result: blocked(family.id, root, "The declared project lint command is unavailable", command[0]) };
-    return { plan: { language: family.id, tool: family.tool, cwd: binding.directory, command: [program, ...command.slice(1)], paths, configuration: "project binding" } };
+    const sourceArguments = appendPaths ? paths.map(path => {
+      const argument = relative(binding.directory, join(repositoryRoot, path));
+      return argument.startsWith("-") ? `./${argument}` : argument;
+    }) : [];
+    return { plan: { language: family.id, tool: family.tool, cwd: binding.directory, command: [program, ...command.slice(1), ...sourceArguments], paths, wholeProject, configuration: "project binding" } };
   }
 
   const executionWrapper = (await readJson(join(root, ".omp-verifier.json")))?.lint?.executionWrapper;
