@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.1 - 2026-11-04
+
+- Keep explicit ESLint wrapper failures BLOCKED unless their output contains recognized lint findings, rather than treating startup failures as source violations.
+- Preserve command and prerequisite diagnostics, genuine lint FAIL, and successful PASS without provisioning tools or changing lint rules.
+
 ## 0.15.0 - 2026-11-02
 
 - Verify complete committed PR scope against an explicit actual base with `automatic --base`, including earlier commits and stacked-parent boundaries, without selecting unrelated dirty files.

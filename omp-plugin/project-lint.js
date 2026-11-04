@@ -4,7 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
 import { changedProjectPaths } from "#root/omp-plugin/verifications.js";
@@ -203,7 +203,7 @@ async function lintPlan(group, repositoryRoot, env) {
       const argument = relative(binding.directory, join(repositoryRoot, path));
       return argument.startsWith("-") ? `./${argument}` : argument;
     }) : [];
-    return { plan: { language: family.id, tool: family.tool, cwd: binding.directory, command: [program, ...command.slice(1), ...sourceArguments], paths, wholeProject, configuration: "project binding" } };
+    return { plan: { language: family.id, tool: family.tool, cwd: binding.directory, command: [program, ...command.slice(1), ...sourceArguments], paths, wholeProject, configuration: "project binding", requiresEslintDiagnostics: family.tool === "eslint" } };
   }
 
   const executionWrapper = (await readJson(join(root, ".omp-verifier.json")))?.lint?.executionWrapper;
@@ -221,7 +221,7 @@ async function lintPlan(group, repositoryRoot, env) {
     if (!program) return { result: blocked(family.id, root, "The declared execution wrapper is unavailable", executionWrapper[0]) };
     const command = [program, ...executionWrapper.slice(1), "npm", "run", script[0]];
     if (family.tool === "eslint") command.push("--", "--no-fix");
-    return { plan: { language: family.id, tool: family.tool, cwd: root, command, paths, wholeProject, configuration: "project execution wrapper" } };
+    return { plan: { language: family.id, tool: family.tool, cwd: root, command, paths, wholeProject, configuration: "project execution wrapper", requiresEslintDiagnostics: family.tool === "eslint" } };
   }
 
   const wrapper = await wrapperIn(root, repositoryRoot);
@@ -418,6 +418,23 @@ function executeLint(plan, env, timeout) {
   });
 }
 
+function hasEslintDiagnostics(output) {
+  // Explicit commands may fail before ESLint starts. Recognize findings, not exit 1 alone.
+  const text = stripVTControlCharacters(output);
+  if (/^\s+\d+:\d+\s+(?:error|warning)\s+\S.+$/m.test(text)) return true;
+
+  try {
+    const report = JSON.parse(text);
+    const results = Array.isArray(report) ? report : report?.results;
+    return Array.isArray(results) && results.some(result =>
+      typeof result.filePath === "string" && Array.isArray(result.messages) &&
+      result.messages.some(message => (message.severity === 1 || message.severity === 2) &&
+        typeof message.message === "string" && message.message.length > 0));
+  } catch {
+    return false;
+  }
+}
+
 export async function verifyProjectLint({ cwd, changedPaths, env = process.env }) {
   const deadline = Date.now() + EXECUTION_BUDGET_MS;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
@@ -435,8 +452,15 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env }
       const { stdout, stderr } = await executeLint(plan, env, remaining);
       outcomes.push({ language: plan.language, root: plan.cwd, status: "PASS", summary: "The existing non-fixing lint command exited 0", evidence: [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ") });
     } catch (error) {
-      const status = error.code === 1 ? "FAIL" : "BLOCKED";
-      outcomes.push({ language: plan.language, root: plan.cwd, status, summary: status === "FAIL" ? `${plan.tool} reported lint violations` : `${plan.tool} could not complete`, evidence: [error.stdout, error.stderr, error.message].filter(Boolean).join("\n") });
+      const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
+      const unprovenEslintFailure = plan.requiresEslintDiagnostics && !hasEslintDiagnostics(output);
+      const status = error.code === 1 && !unprovenEslintFailure ? "FAIL" : "BLOCKED";
+      const summary = status === "FAIL"
+        ? `${plan.tool} reported lint violations`
+        : unprovenEslintFailure
+          ? "The declared command failed without recognized ESLint diagnostics; lint execution is unverified"
+          : `${plan.tool} could not complete`;
+      outcomes.push({ language: plan.language, root: plan.cwd, status, summary, evidence: [plan.command.join(" "), output, error.message].filter(Boolean).join("\n") });
     }
   }
   return combinedResult(outcomes, discovery.repositoryRoot);

@@ -172,7 +172,7 @@ test("when explicit changed paths cover mixed configured languages, lint failure
   await writeProjectFile(root, "src/policy.js", "export const policy = true;\n");
   await writeProjectFile(root, "src/task.py", "value = 1\n");
   await bindLint(root, "javascript", ["eslint", "--no-fix"]);
-  await makeTool(root, "eslint", { exitCode: 1, marker: "eslint\n", stderr: "src/policy.js: error\n" });
+  await makeTool(root, "eslint", { exitCode: 1, marker: "eslint\n", stderr: "src/policy.js\n  1:1  error  Unexpected value  no-unused-vars\n" });
 
   // Act
   const result = await verifyProjectLint({
@@ -339,6 +339,51 @@ test("when npm lint is delegated, API and web use their own cwd, rules, and inta
   assert.match(failing.evidence, /javascript \(web\): FAIL/);
   assert.match(failing.evidence, /eqeqeq/);
 });
+
+for (const binding of ["commands", "executionWrapper"]) {
+  for (const diagnostic of [
+    "Error response from daemon: all predefined address pools have been fully subnetted",
+    "Service unavailable",
+    "",
+  ]) {
+    test(`when ${binding} exits before ESLint with ${diagnostic || "no output"}, lint remains unverified`, async t => {
+      // Arrange
+      const root = await projectFixture(t);
+      await writeProjectFile(root, "source.js", "export const source = true;\n");
+      await writeProjectFile(root, "package.json", JSON.stringify({ scripts: { lint: "eslint source.js" } }));
+      await writeProjectFile(root, "wrapper.mjs", `console.error(${JSON.stringify(diagnostic)}); process.exitCode = 1;\n`);
+      const command = [process.execPath, "wrapper.mjs"];
+      if (binding === "commands") await bindLint(root, "javascript", command);
+      else await writeProjectFile(root, ".omp-verifier.json", JSON.stringify({ lint: { executionWrapper: command } }));
+
+      // Act
+      const result = await verifyProjectLint({ cwd: root, changedPaths: ["source.js"] });
+
+      // Assert
+      assert.equal(result.status, "BLOCKED");
+      if (diagnostic) assert.ok(result.evidence.includes(diagnostic));
+      assert.match(result.evidence, /wrapper\.mjs/);
+      assert.doesNotMatch(result.evidence, /reported lint violations/);
+    });
+  }
+}
+
+for (const format of ["stylish", "json", "json-with-metadata"]) {
+  test(`when a bound ESLint command reports real findings as ${format}, violations remain FAIL`, async t => {
+    // Arrange
+    const root = await wrappedNpmProjects(t);
+    const project = join(root, "api");
+    await writeProjectFile(root, "api/src/selected file.js", "const unused = true;\n");
+    await bindLint(project, "javascript", [join(project, "node_modules/.bin/eslint"), "src", "--format", format]);
+
+    // Act
+    const result = await verifyProjectLint({ cwd: root, changedPaths: ["api/src/selected file.js"] });
+
+    // Assert
+    assert.equal(result.status, "FAIL");
+    assert.match(result.evidence, /no-unused-vars/);
+  });
+}
 
 test("when a binding appends selected JavaScript paths, real ESLint scopes to intact nested-cwd arguments", async t => {
   // Arrange
