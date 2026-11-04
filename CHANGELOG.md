@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.2 - 2026-11-04
+
+- Bind native Verifier advice to its own current check execution, keeping quoted reports and nested QA results out of outer-review blocker delivery.
+- Keep completion-only updates silent after review completion, and leave project repairs to the primary so genuine current FAIL/BLOCKED results are reported rather than repaired by the reviewer.
+
 ## 0.15.1 - 2026-11-04
 
 - Keep explicit ESLint wrapper failures BLOCKED unless their output contains recognized lint findings, rather than treating startup failures as source violations.
