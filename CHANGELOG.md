@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.3 - 2026-11-04
+
+- Require semantic verdicts to follow the completed assessment, resolving contradictions among status, summary, rationale, citations, and next check before submission.
+- Preserve genuine assertion violations and missing-evidence blockers while keeping compliant navigation assessments private; runtime validation remains structural and evidence-based, not a semantic truth guarantee.
+
 ## 0.15.2 - 2026-11-04
 
 - Bind native Verifier advice to its own current check execution, keeping quoted reports and nested QA results out of outer-review blocker delivery.
