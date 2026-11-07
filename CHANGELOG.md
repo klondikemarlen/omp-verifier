@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.4 - 2026-11-06
+
+- Keep valid semantic requests actionable after premature PASS/FAIL assessments with incomplete caller retrieval, preserving PENDING recovery instead of reporting the request as unavailable.
+- Retain explicit BLOCKED assessments for genuinely unavailable material evidence, alongside scope, freshness, paging, and citation safeguards.
+
 ## 0.15.3 - 2026-11-04
 
 - Require semantic verdicts to follow the completed assessment, resolving contradictions among status, summary, rationale, citations, and next check before submission.

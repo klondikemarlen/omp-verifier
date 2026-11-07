@@ -641,6 +641,15 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
         };
       }
 
+      if (stored.payload.missingContext.length
+        && (assessment?.status === "PASS" || assessment?.status === "FAIL")) {
+        const nonCallerRequirements = stored.payload.standard.requiredContext.filter(required => required !== "callers");
+        const otherMissingContext = semanticContextMissing(nonCallerRequirements, { context: stored.payload.context });
+        if (otherMissingContext.length === 0) {
+          return requestEnvelope(stored.payload, target.absoluteRequestPath);
+        }
+      }
+
       const result = normalizedAssessment(assessment, stored.payload);
       if (result.status === "FAIL" && !result.citations.length) {
         throw new Error("FAIL assessments require an actual source location citation");
