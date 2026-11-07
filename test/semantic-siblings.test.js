@@ -116,7 +116,7 @@ test("when unrelated source exceeds the global inventory limit, complete empty s
   }
 });
 
-test("when empty siblings are complete but caller coverage is missing, assessment remains BLOCKED", async () => {
+test("when empty siblings are complete but caller coverage is missing, assessment retains its pending recovery handle", async () => {
   // Arrange
   const fixture = await createEmptySiblingFixture();
 
@@ -140,7 +140,8 @@ test("when empty siblings are complete but caller coverage is missing, assessmen
     // Assert
     assert.equal(prepared.reviewRequest.context.sourceInventory.complete, false);
     assert.ok(prepared.reviewRequest.context.callerRetrieval.omittedFiles > 0);
-    assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.status, "PENDING");
+    assert.equal(completed.reviewRequest.path, prepared.reviewRequest.path);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

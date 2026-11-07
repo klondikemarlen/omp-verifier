@@ -82,12 +82,17 @@ test("when a runner discovers tests without filename references, explicit runtim
     const prepared = cli(fixture, "automatic", "tests/policy.test.js");
 
     // Act
+    const premature = cli(fixture, "evaluate", prepared.reviewRequest.path, "--assessment", assessment(prepared.reviewRequest.requestId));
     const recovered = cli(fixture, "review", prepared.reviewRequest.path, "--caller-context", "package.json");
     const completed = cli(fixture, "evaluate", recovered.reviewRequest.path, "--assessment", assessment(recovered.reviewRequest.requestId, [
       { path: "package.json", line: 2, quote: '  "scripts": { "test": "node --test tests/*.test.js" }' },
     ]));
 
     // Assert
+    assert.equal(premature.status, "PENDING");
+    assert.equal(premature.reviewRequest.path, prepared.reviewRequest.path);
+    assert.equal(premature.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.deepEqual(premature.reviewRequest.scope.changedPaths, ["tests/policy.test.js"]);
     assert.notEqual(recovered.reviewRequest.requestId, prepared.reviewRequest.requestId);
     assert.equal(recovered.reviewRequest.context.sourceInventory.complete, false);
     assert.deepEqual(recovered.reviewRequest.missingContext, []);
@@ -100,7 +105,7 @@ test("when a runner discovers tests without filename references, explicit runtim
   }
 });
 
-test("when a real caller is outside the inventory, missing evidence remains BLOCKED until that caller is recovered", async () => {
+test("when a real caller is outside the inventory, premature assessment stays actionable until that caller is recovered", async () => {
   // Arrange
   const fixture = await createCallerFixture();
 
@@ -110,12 +115,16 @@ test("when a real caller is outside the inventory, missing evidence remains BLOC
     const prepared = cli(fixture, "automatic", "tests/policy.test.js");
 
     // Act
-    const premature = cli(fixture, "evaluate", prepared.reviewRequest.path, "--assessment", assessment(prepared.reviewRequest.requestId));
+    const premature = cli(fixture, "evaluate", prepared.reviewRequest.path, "--assessment", JSON.stringify({
+      ...JSON.parse(assessment(prepared.reviewRequest.requestId)),
+      status: "FAIL",
+    }));
     const recovered = cli(fixture, "review", prepared.reviewRequest.path, "--context", "zz/material.js");
     const completed = cli(fixture, "evaluate", recovered.reviewRequest.path, "--assessment", assessment(recovered.reviewRequest.requestId));
 
     // Assert
-    assert.equal(premature.status, "BLOCKED");
+    assert.equal(premature.status, "PENDING");
+    assert.equal(premature.reviewRequest.path, prepared.reviewRequest.path);
     assert.ok(prepared.reviewRequest.context.callerRetrieval.omittedPathExamples.includes("zz/material.js"));
     assert.deepEqual(recovered.reviewRequest.missingContext, []);
     assert.equal(completed.status, "PASS");
@@ -133,11 +142,21 @@ test("when requested runtime caller source is unavailable, an entrypoint claim c
 
     // Act
     const recovered = cli(fixture, "review", prepared.reviewRequest.path, "--caller-context", "missing.config.js");
-    const completed = cli(fixture, "evaluate", recovered.reviewRequest.path, "--assessment", assessment(recovered.reviewRequest.requestId));
+    const premature = cli(fixture, "evaluate", recovered.reviewRequest.path, "--assessment", assessment(recovered.reviewRequest.requestId));
+    const completed = cli(fixture, "evaluate", recovered.reviewRequest.path, "--assessment", JSON.stringify({
+      requestId: recovered.reviewRequest.requestId,
+      status: "BLOCKED",
+      summary: "Required runner configuration is unavailable.",
+      rationale: "The requested missing.config.js does not exist; its runtime discovery relationship cannot be assessed.",
+    }));
 
     // Assert
     assert.deepEqual(recovered.reviewRequest.context.missingContextPaths, ["missing.config.js"]);
+    assert.equal(premature.status, "BLOCKED");
+    assert.match(premature.evidence, /missing.config.js/);
     assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.reviewRequest, undefined);
+    assert.match(completed.evidence, /missing.config.js does not exist/);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
