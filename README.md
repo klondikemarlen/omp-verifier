@@ -90,6 +90,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
 omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--max-source-bytes <bytes>]
+omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
@@ -99,6 +100,8 @@ JSON remains the default reporter; `--reporter json` selects it explicitly. `che
 Use `review <request-file> --reporter text` to inspect a semantic request. Follow its page-footer commands until the complete scope has been reviewed and assessed; retrieval success alone is not PASS. The [semantic protocol reference](docs/references/verifier-concepts-reference.md#agentic-standards-contract) owns page delivery, request identity, recovery, and citation details.
 
 For an explicitly authorized one-off larger changed-source capture, start `automatic` or `verify` with `--max-source-bytes`; see the [capture-limit contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for supported bounds and request-local behavior.
+
+For slow whole-project lint, use the standalone `lint` command with an explicit bounded budget and the complete original lint-selected path list. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint). Automatic budgets and existing project wrappers remain unchanged.
 
 The advisor runs, for example:
 

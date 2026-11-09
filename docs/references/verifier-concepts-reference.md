@@ -205,6 +205,22 @@ For explicit ESLint bindings and execution wrappers, exit 1 alone does not prove
 
 Missing or unsupported tooling/configuration and invocation prerequisites are `BLOCKED`; known lint-violation exits are `FAIL`; executed applicable success is `PASS`. Combined evidence retains each language/project outcome: any FAIL wins, otherwise a BLOCKED prerequisite wins, otherwise applicable commands pass. No applicable work returns the deterministic `N/A` non-verdict and therefore no selected result. Diagnostic output is bounded, retaining all group status headings and marking shortened detail. Discovery never installs tools, creates configuration, starts services, or changes model routing. Extend the small catalog when a concrete project requires another tool, not by assuming unsupported tooling is absent.
 
+### Recovering Slow Whole-Project Lint
+
+Automatic project lint shares a 100-second execution budget across discovery and sequential project commands; its manifest has a 120-second outer timeout. A later project's command receives only the remaining budget. Increasing the calling shell's timeout alone does not extend that internal budget.
+
+For an explicitly requested longer run, use the packaged CLI directly from the same owning checkout with the complete original lint-selected path list:
+
+```sh
+omp-verifier lint --budget-ms 300000 api/src/changed.ts web/src/changed.vue --reporter text
+```
+
+Replace the example paths with every path selected for the original lint check, including relevant configuration edits. The budget is an integer from 1 through 600000 milliseconds, shared by the entire recovery invocation. Both the budget and explicit paths are required. Give the calling shell enough time to allow the requested budget plus discovery/startup overhead. This standalone command avoids the manifest's outer timeout without changing automatic verification, persistent configuration, or `/verifier verify`.
+
+Recovery reuses existing discovery, fixed argv bindings, and npm execution wrappers. It does not bypass `bin/dev`, provision tools, change rules/warnings, append paths to whole-project commands, or convert selected-file checks into full-project proof. A fixed `bin/dev lint api` / `bin/dev lint web` binding or `eslint .` script still checks its whole project; `appendPaths` and native changed-file commands retain their narrower scope. This is an explicit lint execution, not automatic requirement/suppression selection. It reruns the supplied selection rather than caching an earlier project's PASS or resuming a killed process.
+
+JSON result arrays and text use `verifier:project-lint`. Completed project outcomes remain in combined evidence alongside the failed/timed-out command. Budget exhaustion and unavailable prerequisites stay BLOCKED; recognized lint findings stay FAIL; PASS requires successful completion of all applicable commands. `--failures-only` hides successful results, and no applicable work produces no result, not PASS. A later recovery result is new evidence for that checkout and scope; it does not rewrite the earlier timeout.
+
 ## Agentic Standards Contract
 
 An entry may instead declare `mode: "agentic"` and a package-relative JSON `contract`, with no dummy executable. The [README declaration](../../README.md#supplied-standards-verification) shows the manifest shape. Contract version 1 requires:
