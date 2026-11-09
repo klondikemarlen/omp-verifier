@@ -82,6 +82,8 @@ Automatic selection reconciles later reversals before invocation. When a candida
 
 Changed paths retain their edit-owned checkout: the advisor resolves transcript tool paths and working directories before invoking the coordinator, groups changes by Git root, and runs each complete group from its owning checkout. The session's startup directory or a same-named file in another worktree is not source identity. Recovery stays in the validated request root; an incorrect initial root requires a fresh complete-group request, not context from a neighboring checkout. Unresolved checkout ownership is BLOCKED rather than guessed.
 
+Before removing a clean committed delivery worktree whose final review is still outstanding, prepare a [delivery handoff](docs/references/verifier-concepts-reference.md#delivery-handoff): `omp-verifier handoff prepare --base <actual-delivery-base>`. Preserve its returned path in the transcript. The verifier can recover that exact source into a private detached checkout and run fresh checks after normal cleanup. Recovery is not approval; missing execution prerequisites still produce BLOCKED. Uncommitted work must remain in its original checkout.
+
 The installed Verifier package supplies its own lint manifest; additional plugins may supply other checks. In an isolated package directory with no compatible manifests, `checks` reports `none installed` and `verify` reports `BLOCKED`. Installed but inapplicable checks return no selected results. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
 
 The `bash`-only advisor can discover and run named checks using the packaged CLI:
