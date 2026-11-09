@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.0 - 2026-11-09
+
+- Promote the existing declared-check and supplied-standard workflow to the first major release for everyday development; no command, configuration, or result-format migration is required.
+- Preserve all current check failures while completing semantic assessments, then deliver them together; a later PASS or empty response must not hide an earlier lint failure.
+- Clarify routine use and known native-advisor limits: verification assists development but does not guarantee a completion gate, automatic repair reassessment, lossless model relay, or unlimited review context.
+
 ## 0.17.3 - 2026-11-09
 
 - Separate automatic check eligibility from provider execution: one pure policy owns trigger/requirement merging, bounded suppressions, and missing-provider decisions while preserving selected paths and result ordering.
