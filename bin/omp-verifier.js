@@ -2,6 +2,11 @@
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
+import {
+  prepareDeliveryHandoff,
+  recoverDeliveryHandoff,
+  releaseDeliveryHandoff,
+} from "#root/omp-plugin/delivery-handoff.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
@@ -78,6 +83,33 @@ async function automaticResults(paths, worktree, baseRef, maxSourceBytes) {
   return runAutomaticVerificationForPaths({ cwd, changedPaths: paths, baseRef, maxSourceBytes });
 }
 
+async function handoffCommand(positionals, values, reporter) {
+  const [action, handoffPath] = positionals;
+  const prepare = action === "prepare" && positionals.length === 1 && values.base !== undefined;
+  const recover = action === "recover" && positionals.length === 2 && values.base === undefined;
+  const release = action === "release" && positionals.length === 2 && values.base === undefined;
+  const cancel = action === "cancel" && positionals.length === 2 && values.base === undefined && values.reason?.trim();
+  if (!(prepare || recover || release || cancel) || (values.reason !== undefined && !cancel)) {
+    throw new Error("Use handoff prepare --base <base>, handoff recover|release <handoff-file>, or handoff cancel <handoff-file> --reason <reason>");
+  }
+
+  try {
+    let result;
+    if (prepare) result = await prepareDeliveryHandoff({ cwd, baseRef: values.base });
+    else if (recover) result = await recoverDeliveryHandoff({ handoffPath });
+    else result = await releaseDeliveryHandoff({ handoffPath, cancellationReason: values.reason });
+    process.stdout.write(`${JSON.stringify(result, null, reporter === "text" ? 2 : undefined)}\n`);
+  } catch (error) {
+    await writeResults([{
+      id: "verifier:delivery-handoff",
+      status: "BLOCKED",
+      summary: "Delivery source handoff could not complete",
+      evidence: error.message,
+      nextCheck: "Resolve the named source or handoff prerequisite; do not substitute another checkout or treat cleanup as verification.",
+    }], { reporter, failuresOnly: false });
+  }
+}
+
 try {
   const { values, positionals } = parseArgs({
     args,
@@ -94,6 +126,7 @@ try {
       "caller-context": { type: "string", multiple: true, default: [] },
       "remove-context": { type: "string", multiple: true, default: [] },
       page: { type: "string" },
+      reason: { type: "string" },
     },
   });
   let budgetMs;
@@ -117,8 +150,11 @@ try {
   const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0 || values["remove-context"].length > 0;
   const hasSemanticOptions = values.assessment !== undefined || hasContextOptions;
   const baseRef = values.base;
-  if (baseRef !== undefined && command !== "automatic") throw new Error("--base is only supported by automatic");
+  if (baseRef !== undefined && command !== "automatic" && command !== "handoff") {
+    throw new Error("--base is only supported by automatic or handoff prepare");
+  }
   if (baseRef !== undefined && values.worktree) throw new Error("--base cannot be combined with --worktree");
+  if (values.reason !== undefined && command !== "handoff") throw new Error("--reason is only supported by handoff cancel");
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -138,7 +174,9 @@ try {
     throw new Error("Context recovery must start at page 0; read later pages from the renewed request without context options");
   }
 
-  if (command === "checks" && positionals.length === 0 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
+  if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
+    await handoffCommand(positionals, values, reporter);
+  } else if (command === "checks" && positionals.length === 0 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     const { checks, blockedResults } = await discoverVerificationChecks();
     const inventory = {
       checks: checks.map(({ id, label, description, pathTriggers, mode }) => ({
@@ -180,6 +218,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

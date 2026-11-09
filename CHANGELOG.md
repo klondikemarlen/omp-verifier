@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.0 - 2026-11-09
+
+- Preserve committed delivery source across worktree cleanup with an explicit repository-bound handoff, private exact-revision recovery, and owned release/cancellation.
+- Guide primary cleanup and native final-yield review through fresh checks in the recovered checkout without changing model routes, cadence, or FAIL/BLOCKED semantics.
+
 ## 0.16.0 - 2026-11-09
 
 - Add standalone bounded lint recovery with an explicit budget up to ten minutes and the original selected paths, preserving whole-project wrapper commands and per-project outcomes.

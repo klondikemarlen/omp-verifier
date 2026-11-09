@@ -1,3 +1,5 @@
+import { fileURLToPath } from "node:url";
+
 import {
   buildGlobalVerifierStatus,
   installGlobalVerifier,
@@ -13,6 +15,7 @@ const SUBCOMMANDS = [
   { name: "verify", description: "Run installed verification checks" },
   { name: "uninstall", description: "Remove the verifier advisor" },
 ];
+const COORDINATOR = `'${fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url)).replaceAll("'", "'\"'\"'")}'`;
 
 async function buildChecks(packageDirectory) {
   return formatVerificationInventory(await discoverVerificationChecks({ packageDirectory }));
@@ -41,6 +44,13 @@ export default async function verifierPlugin(pi) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
     }
   });
+
+  pi.on("before_agent_start", async (event) => ({
+    systemPrompt: [
+      ...event.systemPrompt,
+      `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. Leave the handoff for the verifier to recover, freshly check, and release; preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
+    ],
+  }));
 
   pi.registerCommand("verifier", {
     description: "Show verifier setup or run installed checks",

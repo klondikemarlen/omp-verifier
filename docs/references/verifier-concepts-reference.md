@@ -40,6 +40,26 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
 
+### Delivery Handoff
+
+Cleanup may remove an edit-owning checkout before native final-yield review starts. The source-lifetime handoff binds a clean committed delivery to its original repository, immutable base/tip, and complete changed paths (including deletions). It does not schedule a reviewer, certify a merge or waiver, transfer semantic requests, or copy dependencies.
+
+```text
+omp-verifier handoff prepare --base <actual-delivery-base>
+omp-verifier handoff recover <handoff-file>
+omp-verifier handoff release <handoff-file>
+omp-verifier handoff cancel <handoff-file> --reason <explicit-user-reason>
+```
+
+The primary receives cleanup guidance through `before_agent_start`. Run `prepare` in the clean delivery checkout before removing it, using the actual ancestor base, and preserve the returned `handoffPath` and identity in the transcript. Preparation rejects uncommitted/untracked source; ignored dependencies are not retained. Keep the original checkout if preparation fails.
+
+Preparation pins the delivered tip under a unique Git ref and writes a private handoff record. `recover` validates repository identity, pinned commits, and full scope, then creates or reuses only the handoff's private detached checkout. A same-named dirty primary checkout is never used. Run existing `automatic --base <baseCommit> <changed-path...>` in the returned `checkoutPath`, freshly discovering installed standards and capturing every applicable request there. Old request handles remain bound to their old root and are not portable. Missing tools, services, or ignored environment files remain BLOCKED; the handoff never provisions them.
+
+The reviewer releases its handoff after all applicable assessments finish, before private completion or blocker delivery. Recoverable context is not completion. `release` removes only the owned clean verification checkout and pin; dirty evidence is preserved for investigation. The small receipt remains. Active handoffs have no automatic expiry, so interrupted reviews retain recoverable source until resumed or explicitly cancelled. Only an explicit user waiver/cancellation permits `cancel`; its reason is recorded and neither it nor a merge is a PASS. Released/cancelled records cannot be recovered, and completion-only updates do not reopen finished review.
+
+Successful lifecycle operations return JSON objects with non-verdict statuses `PREPARED`, `RECOVERED`, `RELEASED`, or `CANCELLED` and exit 0 (`--reporter text` pretty-prints the same object). Invalid command syntax exits 2; unavailable source/ownership prerequisites return structured `BLOCKED verifier:delivery-handoff` and exit 1. Real check FAIL/BLOCKED remains reportable even if disposal also fails. If no matching handoff exists after checkout removal, source recovery remains unavailable rather than falling back to another checkout.
+
+
 ## Requirement Contract
 
 A quality standard names the expected engineering outcome or invariant and the evidence that establishes it. Diligent verification, correctness, security, and readability are complementary concerns, not a fixed universal ranking or additional checks inferred by Verifier.
