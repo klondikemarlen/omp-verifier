@@ -435,8 +435,11 @@ function hasEslintDiagnostics(output) {
   }
 }
 
-export async function verifyProjectLint({ cwd, changedPaths, env = process.env }) {
-  const deadline = Date.now() + EXECUTION_BUDGET_MS;
+export async function verifyProjectLint({ cwd, changedPaths, env = process.env, budgetMs = EXECUTION_BUDGET_MS }) {
+  if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > 600_000) {
+    throw new RangeError("Project lint budget must be a whole number between 1 and 600000 milliseconds");
+  }
+  const deadline = Date.now() + budgetMs;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
   const outcomes = [...discovery.results];
   for (const plan of discovery.plans) {

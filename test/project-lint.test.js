@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -298,7 +298,7 @@ test("when a nested project owns changed source, its lint command runs from that
   assert.deepEqual(discovered.plans[0].paths, ["web/src/app.js"]);
 });
 
-async function wrappedNpmProjects(t) {
+async function wrappedNpmProjects(t, { webDelayMs = 0 } = {}) {
   const root = await projectFixture(t);
   await writeProjectFile(root, "tools/lint wrapper.mjs", `
 import { spawnSync } from "node:child_process";
@@ -306,6 +306,7 @@ import { basename } from "node:path";
 const [route, command, ...args] = process.argv.slice(2);
 if (route !== basename(process.cwd()) + " service") process.exit(2);
 if (command !== "npm" || JSON.stringify(args) !== JSON.stringify(["run", "lint", "--", "--no-fix"])) process.exit(2);
+if (route === "web service") await new Promise(resolve => setTimeout(resolve, ${webDelayMs}));
 const result = spawnSync(command, args, { stdio: "inherit" });
 process.exit(result.status ?? 2);
 `);
@@ -630,4 +631,86 @@ test("when a Ruff script can enable fixes from configuration, discovery blocks b
   assert.equal(result.status, "BLOCKED");
   assert.match(result.evidence, /script is not a supported non-fixing command/);
   await assert.rejects(access(join(root, "invocations.log")));
+});
+
+function recoverLint(root, budget, paths, options = []) {
+  return spawnSync(process.execPath, [
+    fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url)),
+    "lint", "--budget-ms", String(budget), ...options, ...paths,
+  ], { cwd: root, encoding: "utf8", timeout: 15_000 });
+}
+
+test("when a later project's lint exceeds the shared budget, bounded recovery completes both whole-project commands", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t, { webDelayMs: 3_000 });
+  const paths = ["api/src/selected file.js", "web/src/selected file.js"];
+
+  // Act
+  const timedOut = recoverLint(root, 2_000, paths);
+  const recovered = recoverLint(root, 10_000, paths);
+
+  // Assert
+  assert.equal(timedOut.status, 1);
+  const [blocked] = JSON.parse(timedOut.stdout);
+  assert.equal(blocked.status, "BLOCKED");
+  assert.match(blocked.evidence, /javascript \(api\): PASS/);
+  assert.match(blocked.evidence, /javascript \(web\): BLOCKED/);
+  assert.match(blocked.evidence, /web service npm run lint -- --no-fix/);
+  assert.match(blocked.evidence, /overall time budget/);
+  assert.equal(recovered.status, 0, recovered.stderr);
+  const [passed] = JSON.parse(recovered.stdout);
+  assert.equal(passed.id, "verifier:project-lint");
+  assert.equal(passed.status, "PASS");
+  assert.match(passed.evidence, /javascript \(api\): PASS/);
+  assert.match(passed.evidence, /javascript \(web\): PASS/);
+});
+
+test("when recovery finds a violation outside selected files, full-project lint still fails", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await writeProjectFile(root, "web/src/baseline.js", "export const equal = value => value == 1;\n");
+
+  // Act
+  const result = recoverLint(root, 10_000, ["api/src/selected file.js", "web/src/selected file.js"], ["--reporter", "text"]);
+
+  // Assert
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /FAIL verifier:project-lint/);
+  assert.match(result.stdout, /javascript \(api\): PASS/);
+  assert.match(result.stdout, /javascript \(web\): FAIL/);
+  assert.match(result.stdout, /baseline\.js/);
+  assert.match(result.stdout, /eqeqeq/);
+});
+
+test("when recovery cannot start the declared wrapper, it remains blocked instead of using host lint", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await rm(join(root, "tools/lint wrapper.mjs"));
+
+  // Act
+  const result = recoverLint(root, 10_000, ["web/src/selected file.js"]);
+
+  // Assert
+  assert.equal(result.status, 1);
+  const [blocked] = JSON.parse(result.stdout);
+  assert.equal(blocked.status, "BLOCKED");
+  assert.match(blocked.evidence, /Cannot find module/);
+});
+
+test("when a recovery budget is invalid or scope is absent, the CLI rejects it before lint execution", async t => {
+  // Arrange
+  const root = await wrappedNpmProjects(t);
+  await writeProjectFile(root, "tools/lint wrapper.mjs", 'throw new Error("must not execute");\n');
+  const paths = ["web/src/selected file.js"];
+
+  // Act
+  const rejected = ["0", "-1", "600001", "Infinity", "1.5", ""].map(budget => recoverLint(root, budget, paths));
+  const unscoped = recoverLint(root, 10_000, []);
+
+  // Assert
+  for (const result of [...rejected, unscoped]) {
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout, "");
+    assert.doesNotMatch(result.stderr, /must not execute/);
+  }
 });

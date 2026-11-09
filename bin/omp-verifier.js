@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
 
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
+import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import {
   discoverVerificationChecks,
@@ -84,6 +85,7 @@ try {
     options: {
       reporter: { type: "string", default: "json" },
       "max-source-bytes": { type: "string" },
+      "budget-ms": { type: "string" },
       "failures-only": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       base: { type: "string" },
@@ -94,6 +96,12 @@ try {
       page: { type: "string" },
     },
   });
+  let budgetMs;
+  if (values["budget-ms"] !== undefined) {
+    if (command !== "lint") throw new Error("--budget-ms is only supported by lint");
+    if (!/^\d+$/.test(values["budget-ms"])) throw new Error("--budget-ms must be a whole number between 1 and 600000");
+    budgetMs = Number(values["budget-ms"]);
+  }
   let maxSourceBytes;
   if (values["max-source-bytes"] !== undefined) {
     if (command !== "automatic" && command !== "verify") {
@@ -157,6 +165,9 @@ try {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
     const assessment = JSON.parse(assessmentText);
     await writeResults([await completeSemanticEvaluation({ cwd, requestPath: positionals[0], assessment })], { reporter, failuresOnly });
+  } else if (command === "lint" && positionals.length > 0 && budgetMs !== undefined && !values.worktree && !hasSemanticOptions) {
+    const result = await verifyProjectLint({ cwd, changedPaths: positionals, budgetMs });
+    await writeResults(result.status === "N/A" ? [] : [{ id: "verifier:project-lint", ...result }], { reporter, failuresOnly });
   } else if (command === "verify" && !values.worktree && !hasSemanticOptions) {
     await writeResults(await runInstalledVerificationChecks({
       cwd,
@@ -169,6 +180,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

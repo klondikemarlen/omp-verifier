@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.0 - 2026-11-09
+
+- Add standalone bounded lint recovery with an explicit budget up to ten minutes and the original selected paths, preserving whole-project wrapper commands and per-project outcomes.
+- Keep automatic lint budgets unchanged; recovery retains BLOCKED timeouts, FAIL findings, and successful-completion requirements for PASS.
+
 ## 0.15.4 - 2026-11-06
 
 - Keep valid semantic requests actionable after premature PASS/FAIL assessments with incomplete caller retrieval, preserving PENDING recovery instead of reporting the request as unavailable.
