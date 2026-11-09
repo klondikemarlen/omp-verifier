@@ -21,6 +21,8 @@ The model selects applicable checks and evaluates supported supplied rubrics; it
 
 Verifier checks code adherence, not whether a human correction has been recorded. Learner owns that coverage decision; the policy owner maintains the tracked rule and its supplied verification contract. See [ownership boundaries](docs/references/verifier-concepts-reference.md#ownership-boundaries) for the distinction and a correction/recheck example.
 
+For routine development, use current check results to guide repairs and request a fresh scoped recheck after fixing a reported problem. Silence alone is not proof that a check ran. Verifier is an advisory development aid, not a fail-closed completion gate: [automatic repair reassessment](https://github.com/klondikemarlen/omp-verifier/issues/150), [literal evidence relay](https://github.com/klondikemarlen/omp-verifier/issues/171), and [context exhaustion during long reviews](https://github.com/klondikemarlen/omp-verifier/issues/206) remain known native-advisor limitations. Missing prerequisites remain BLOCKED, not approval.
+
 ## Install
 
 ```bash
