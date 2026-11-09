@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
+import { planAutomaticVerification } from "#root/omp-plugin/automatic-selection.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_TIMEOUT_MS = 120_000;
@@ -50,29 +51,6 @@ function globPattern(value, name, { bounded = false } = {}) {
     throw new Error(`${name} must not match the entire project`);
   }
   return pattern;
-}
-
-function matchesGlob(path, pattern) {
-  let expression = "^";
-  for (let index = 0; index < pattern.length; index += 1) {
-    const character = pattern[index];
-    if (character === "*" && pattern[index + 1] === "*") {
-      if (pattern[index + 2] === "/") {
-        expression += "(?:.*/)?";
-        index += 2;
-      } else {
-        expression += ".*";
-        index += 1;
-      }
-    } else if (character === "*") {
-      expression += "[^/]*";
-    } else if (character === "?") {
-      expression += "[^/]";
-    } else {
-      expression += "\\^$+?.()|{}[]".includes(character) ? `\\${character}` : character;
-    }
-  }
-  return new RegExp(`${expression}$`).test(path);
 }
 
 function verificationPathTriggers(entry) {
@@ -122,7 +100,7 @@ function manifestRequirement(entry, configDirectory) {
   };
 }
 
-async function discoverSuppressions(root, changedPaths) {
+async function discoverProjectPolicy(root, changedPaths) {
   const directories = new Set([root]);
   for (const changedPath of changedPaths) {
     let directory = dirname(changedPath);
@@ -175,15 +153,6 @@ async function discoverSuppressions(root, changedPaths) {
     }
   }
   return { suppressions, requirements, blockedResults };
-}
-
-function suppressionFor(checkId, root, changedPath, suppressions) {
-  return suppressions.find(suppression => {
-    if (suppression.id !== checkId) return false;
-    const scopedPath = relative(suppression.configDirectory, resolve(root, changedPath));
-    if (!scopedPath || scopedPath.startsWith("..") || isAbsolute(scopedPath)) return false;
-    return matchesGlob(scopedPath.replaceAll("\\", "/"), suppression.path);
-  });
 }
 
 async function registeredPluginDirectories(packageDirectory) {
@@ -469,17 +438,6 @@ export async function runInstalledVerificationChecks({ cwd, ids = [], packageDir
   return results;
 }
 
-export function selectAutomaticVerificationChecks(checks, changedPaths) {
-  return checks.flatMap(check => {
-    if (!check.pathTriggers) return [];
-    const matches = changedPaths.flatMap(path => {
-      const trigger = check.pathTriggers.find(pattern => matchesGlob(path, pattern));
-      return trigger ? [{ path, trigger }] : [];
-    });
-    return matches.length === 0 ? [] : [{ check, matches }];
-  });
-}
-
 export async function runAutomaticVerification({
   cwd,
   changedPaths,
@@ -495,94 +453,25 @@ export async function runAutomaticVerification({
   }
 
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
-  const { suppressions, requirements, blockedResults: suppressionBlocks } = await discoverSuppressions(repositoryRoot, paths);
-  const installedIds = new Set(checks.map(check => check.id));
-  const declaredRequirementIds = new Set(requirements.map(requirement => requirement.id));
-  const blockedCheckIds = new Set(blockedResults.map(result => result.id));
-  const unknownSuppressionBlocks = suppressions
-    .filter(suppression => !installedIds.has(suppression.id) && !declaredRequirementIds.has(suppression.id))
-    .map(suppression => blocked(suppression.id, "Invalid verification suppression configuration", "suppression id is not installed or declared as a requirement"));
-  const results = [...blockedResults, ...suppressionBlocks, ...unknownSuppressionBlocks];
-  const checksById = new Map(checks.map(check => [check.id, check]));
-  const selectedById = new Map();
-  const missingProviders = new Map();
-  const seenRequirementPaths = new Set();
-  const addSelection = (check, match) => {
-    const selected = selectedById.get(check.id) || { check, matches: [] };
-    if (!selected.matches.some(existing => existing.path === match.path)) selected.matches.push(match);
-    selectedById.set(check.id, selected);
-  };
+  const { suppressions, requirements, blockedResults: policyBlocks } = await discoverProjectPolicy(repositoryRoot, paths);
+  const plan = planAutomaticVerification({
+    checks,
+    changedPaths: paths,
+    repositoryRoot,
+    requirements,
+    suppressions,
+    blockedResults,
+  });
+  const results = [...blockedResults, ...policyBlocks, ...plan.results];
 
-  for (const selected of selectAutomaticVerificationChecks(checks, paths)) {
-    for (const match of selected.matches) addSelection(selected.check, match);
-  }
-
-  for (const requirement of requirements) {
-    for (const path of paths) {
-      const pathFromConfig = relative(requirement.configDirectory, resolve(repositoryRoot, path));
-      if (!pathFromConfig || pathFromConfig.startsWith("..") || isAbsolute(pathFromConfig)) continue;
-      const normalizedPath = pathFromConfig.replaceAll("\\", "/");
-      if (!matchesGlob(normalizedPath, requirement.path)) continue;
-
-      const dedupeKey = `${requirement.id}\\0${path}`;
-      if (seenRequirementPaths.has(dedupeKey)) continue;
-      seenRequirementPaths.add(dedupeKey);
-      const match = { path, trigger: requirement.path };
-      const check = checksById.get(requirement.id);
-      if (check) {
-        addSelection(check, match);
-        continue;
-      }
-      if (blockedCheckIds.has(requirement.id)) continue;
-
-      const suppression = suppressionFor(requirement.id, repositoryRoot, path, suppressions);
-      if (suppression) {
-        results.push({
-          id: requirement.id,
-          status: "SUPPRESSED",
-          summary: "Automatic verification suppressed",
-          evidence: `${path} matched ${suppression.path}: ${suppression.reason}`,
-          matches: [match],
-        });
-        continue;
-      }
-
-      const missing = missingProviders.get(requirement.id) || [];
-      missing.push(match);
-      missingProviders.set(requirement.id, missing);
-    }
-  }
-
-  for (const [id, matches] of missingProviders) {
-    const matchingPaths = matches.map(match => match.path).join(", ");
-    results.push({
-      ...blocked(id, "Required verification provider is not installed", `Declared requirement applies to ${matchingPaths}; no installed manifest provides ${id}.`),
-      matches,
-    });
-  }
-
-  for (const { check, matches } of selectedById.values()) {
-    const unsuppressedMatches = [];
-    for (const match of matches) {
-      const suppression = suppressionFor(check.id, repositoryRoot, match.path, suppressions);
-      if (!suppression) {
-        unsuppressedMatches.push(match);
-        continue;
-      }
-      results.push({
-        id: check.id,
-        status: "SUPPRESSED",
-        summary: "Automatic verification suppressed",
-        evidence: `${match.path} matched ${suppression.path}: ${suppression.reason}`,
-        matches: [match],
-      });
-    }
-    if (unsuppressedMatches.length === 0) continue;
-    const result = await runVerificationCheckWithRoot(check, cwd, unsuppressedMatches.map(match => match.path), repositoryRoot, maxSourceBytes);
+  for (const { check, matches, suppressedResults } of plan.selections) {
+    results.push(...suppressedResults);
+    if (matches.length === 0) continue;
+    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes);
     if (!result) continue;
     results.push({
       ...result,
-      matches: unsuppressedMatches,
+      matches,
     });
   }
   return results;
