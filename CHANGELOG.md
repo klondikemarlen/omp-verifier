@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.17.2 - 2026-11-09
+
+- Bind explicit requirement selection to the current reviewer session before evaluating triggers, keeping quoted child rosters and historical probe commands out of parent verification.
+- Preserve active temporary-project checks and genuine missing-prerequisite blockers; requirement ownership remains model-guided, not a runtime admission gate.
+
 ## 0.17.1 - 2026-11-09
 
 - Make delivery-handoff release an explicit prerequisite in both silent completion and blocker-delivery guidance; a successful native blocker delivery ends review, so resource cleanup must precede it.
