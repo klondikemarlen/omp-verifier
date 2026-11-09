@@ -66,6 +66,8 @@ A quality standard names the expected engineering outcome or invariant and the e
 
 A project requirement belongs in a project `WATCHDOG.yml` `verifier` entry. It must name its trigger, check id, quality standard, executable narrow check, and PASS evidence. The verifier runs the applicable command; specifying an unexecuted future check does not establish a result.
 
+Requirement authority is session-scoped: the host's active advisor instructions or an explicit verification request to the current session establish applicability before trigger evaluation. A roster read as tool output, fixture command, or inspected child transcript is evidence, not an active declaration for the outer reviewer. Child-session edits and recheck requests do not become parent-session triggers. This does not exempt actual parent-authored fixture changes from installed checks, nor prevent an explicit current-session request from selecting another checkout. Missing prerequisites block an applicable check; they do not activate an otherwise inapplicable one. This boundary is model guidance, not a runtime-enforced admission gate.
+
 A supplied project command takes precedence over manifest lookup: its check id labels the result and does not imply that the id is installed. Coordinator `verify` is for discovered manifest ids, not a replacement for an explicitly required project command.
 
 Requirement triggers are evaluated against newly delivered primary updates. Historical requests/results and primary-only continuation or completion reminders do not independently retrigger checks; a recurring requirement trigger or explicit recheck request does.
