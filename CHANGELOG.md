@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.3 - 2026-11-09
+
+- Separate automatic check eligibility from provider execution: one pure policy owns trigger/requirement merging, bounded suppressions, and missing-provider decisions while preserving selected paths and result ordering.
+
 ## 0.17.2 - 2026-11-09
 
 - Bind explicit requirement selection to the current reviewer session before evaluating triggers, keeping quoted child rosters and historical probe commands out of parent verification.
