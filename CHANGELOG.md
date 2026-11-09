@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1 - 2026-11-09
+
+- Make delivery-handoff release an explicit prerequisite in both silent completion and blocker-delivery guidance; a successful native blocker delivery ends review, so resource cleanup must precede it.
+
 ## 0.17.0 - 2026-11-09
 
 - Preserve committed delivery source across worktree cleanup with an explicit repository-bound handoff, private exact-revision recovery, and owned release/cancellation.
