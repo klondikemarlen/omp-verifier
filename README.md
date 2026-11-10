@@ -95,7 +95,7 @@ omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
 omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--max-source-bytes <bytes>]
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
-omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
+omp-verifier review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 ```
 

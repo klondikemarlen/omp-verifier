@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0 - 2026-11-10
+
+- Admit explicitly selected, commit-pinned public GitHub contracts into semantic review with bounded retrieval, source hashes, original-line citations, and request integrity.
+- Distinguish external evidence from missing project files; preserve local confinement and BLOCKED results for unavailable material contracts without requiring permanent documentation copies.
+
 ## 1.1.0 - 2026-11-10
 
 - Verify existing Pyflakes and Oxlint commands without substituting Ruff or ESLint, including explicitly declared wrapper routes and selected-source forwarding.
