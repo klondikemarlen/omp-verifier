@@ -659,12 +659,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
         });
 
         if (otherMissingContext.length === 0) {
-          return {
-            ...requestEnvelope(stored.payload, target.absoluteRequestPath),
-            ...(context.missingChangedPaths.length ? {
-              nextCheck: "Use review --remove-context '<exact-retained-selector>' to replace invalid or oversized selectors; add smaller --context '<path#Lstart-Lend>' ranges covering every omitted original line in changedCodeCoverage, including the final line. Preserve the complete changed scope and limits, read every renewed page, then submit one assessment. If supported recovery cannot obtain required evidence, submit explicit BLOCKED with that prerequisite.",
-            } : {}),
-          };
+          return requestEnvelope(stored.payload, target.absoluteRequestPath);
         }
       }
 

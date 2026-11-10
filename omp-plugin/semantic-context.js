@@ -784,6 +784,9 @@ export function semanticContextMissing(requiredContext, captured) {
     if (context.changedPaths.length === 0) missing.push("changed-code scope was not supplied");
     if (context.missingChangedPaths.length) {
       missing.push(`could not capture changed files: ${context.missingChangedPaths.join(", ")}`);
+      if (context.changedCode.some(record => record.rangeRecovery)) {
+        missing.push("Changed-source range recovery remains available. Before adding replacements, remove each oversized or invalid retained selector from scope.contextPaths with review --remove-context '<exact-selector>'; do not retain the failed selection alongside smaller overlaps. Add bounded --context '<path#Lstart-Lend>' replacements and every omitted line in changedCodeCoverage, including the final line. Keep the complete changed scope and limits, inspect all renewed pages, then submit one assessment. If supported recovery cannot obtain the required evidence, submit explicit BLOCKED naming the prerequisite.");
+      }
     }
   }
 
