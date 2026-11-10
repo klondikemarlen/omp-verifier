@@ -248,6 +248,7 @@ async function captureRequest({
   changedPaths,
   contextPaths,
   callerContextPaths = [],
+  externalContextPaths = [],
   previousContext,
   maxSourceBytes,
 }) {
@@ -258,6 +259,7 @@ async function captureRequest({
     changedPaths,
     contextPaths,
     callerContextPaths,
+    externalContextPaths,
     previousContext,
     maxSourceBytes: sourceByteLimit,
   });
@@ -285,6 +287,7 @@ async function captureRequest({
       changedPaths: captured.context.changedPaths,
       contextPaths: [...contextPaths],
       callerContextPaths: [...callerContextPaths],
+      ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
       maxSourceBytes: sourceByteLimit,
     },
     context: captured.context,
@@ -366,6 +369,8 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     changedPaths: payload.scope.changedPaths,
     contextPaths: payload.scope.contextPaths,
     callerContextPaths: payload.scope.callerContextPaths,
+    externalContextPaths: payload.scope.externalContextPaths,
+    externalSnapshot: payload.context.externalContext,
     previousContext: payload.context,
     maxSourceBytes: sourceByteLimit,
     legacyRequest: usesLegacySourceLimit,
@@ -450,7 +455,7 @@ export async function prepareSemanticEvaluation({
   }
 }
 
-export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [], removeContextPaths = [] }) {
+export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [], removeContextPaths = [] }) {
   let target;
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
@@ -468,10 +473,12 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
       if (!Array.isArray(callerContextPaths)) throw new Error("callerContextPaths must be an array of project-relative paths");
+      if (!Array.isArray(externalContextPaths)) throw new Error("externalContextPaths must be an array of pinned external selectors");
       if (!Array.isArray(removeContextPaths)) throw new Error("removeContextPaths must be an array of retained selectors");
       const previousContextPaths = stored.payload.scope.contextPaths;
       const previousCallerContext = stored.payload.scope.callerContextPaths ?? [];
-      const retainedSelectors = new Set([...previousContextPaths, ...previousCallerContext]);
+      const previousExternalContext = stored.payload.scope.externalContextPaths ?? [];
+      const retainedSelectors = new Set([...previousContextPaths, ...previousCallerContext, ...previousExternalContext]);
       const removedSelectors = new Set(removeContextPaths);
       for (const selector of removedSelectors) {
         if (!retainedSelectors.has(selector)) throw new Error(`context selector is not retained: ${selector}`);
@@ -484,9 +491,14 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         ...previousCallerContext.filter(selector => !removedSelectors.has(selector)),
         ...callerContextPaths,
       ])];
+      const additionalExternalContext = [...new Set([
+        ...previousExternalContext.filter(selector => !removedSelectors.has(selector)),
+        ...externalContextPaths,
+      ])];
       const hasContextChanges = removedSelectors.size > 0
         || additionalContextPaths.length !== previousContextPaths.length
-        || additionalCallerContext.length !== previousCallerContext.length;
+        || additionalCallerContext.length !== previousCallerContext.length
+        || additionalExternalContext.length !== previousExternalContext.length;
       if (!hasContextChanges) return requestEnvelope(stored.payload, target.absoluteRequestPath);
 
       const check = {
@@ -502,6 +514,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         changedPaths: stored.payload.scope.changedPaths,
         contextPaths: additionalContextPaths,
         callerContextPaths: additionalCallerContext,
+        externalContextPaths: additionalExternalContext,
         maxSourceBytes: stored.payload.scope.maxSourceBytes,
         previousContext: stored.payload.context,
       });

@@ -3,6 +3,9 @@ import { execFile } from "node:child_process";
 import { opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
+
+import { pinnedExternalSource, readExternalText } from "#root/omp-plugin/external-context.js";
+
 const execFileAsync = promisify(execFile);
 const MAX_INVENTORY_FILES = 1_200;
 const MAX_INVENTORY_READ_BYTES = 8_000_000;
@@ -40,6 +43,9 @@ export function validateSourceByteLimit(value = DEFAULT_MAX_SOURCE_BYTES) {
 
 function normalizedProjectPath(value, name) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty project-relative path`);
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+    throw new Error(`${name} is external evidence, not a project file; use review --external-context with a commit-pinned raw GitHub URL. Project-path capture never fetches URLs.`);
+  }
   const path = value.replaceAll("\\", "/").replace(/^\.\//, "");
   if (!path || path === "." || isAbsolute(path) || path.startsWith("//") || /^[a-zA-Z]:/.test(path) || path.split("/").includes("..")) {
     throw new Error(`${name} must stay inside the project`);
@@ -388,6 +394,7 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
     sourceInventory: context.sourceInventory,
     callerContextPaths: context.callerContextPaths,
   };
+  if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
   return sha256(JSON.stringify(fingerprint));
 }
@@ -397,6 +404,8 @@ export async function captureSemanticContext({
   changedPaths,
   contextPaths = [],
   callerContextPaths = [],
+  externalContextPaths = [],
+  externalSnapshot,
   previousContext,
   maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
   legacyRequest = false,
@@ -413,8 +422,12 @@ export async function captureSemanticContext({
     ...context,
     path: normalizedProjectPath(context.path, "context path"),
   }));
-  if (selectors.length > MAX_CONTEXT_PATHS) {
-    throw new Error(`contextPaths must not exceed ${MAX_CONTEXT_PATHS} selectors`);
+  const externalSelectors = [...new Set(externalContextPaths)].map(selector => {
+    const range = contextRange(selector);
+    return { selector, ...range, ...pinnedExternalSource(range.path) };
+  });
+  if (selectors.length + externalSelectors.length > MAX_CONTEXT_PATHS) {
+    throw new Error(`local and external context must not exceed ${MAX_CONTEXT_PATHS} selectors`);
   }
   const requestedContext = selectors.filter(context =>
     context.startLine || !selectors.some(other => other.path === context.path && other.startLine));
@@ -456,7 +469,7 @@ export async function captureSemanticContext({
     availableText.set(path, result.content);
   }
 
-  const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths]);
+  const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths, ...externalSelectors.map(source => source.url)]);
   const largeScope = requiredEvidencePaths.size > MAX_EVIDENCE_FILES;
   const budget = {
     maxFiles: largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES,
@@ -651,6 +664,26 @@ export async function captureSemanticContext({
     }
   }
 
+  const externalContext = [];
+  for (const source of externalSelectors) {
+    // Stored requests are integrity-checked before reuse. Immutable remote snapshots
+    // need no network access during page reads or final local-source freshness checks.
+    const snapshot = externalSnapshot?.find(record => record.selector === source.selector);
+    let record = snapshot;
+    if (!record) {
+      const result = await readExternalText(source, source.startLine ? source : undefined);
+      const identity = { path: source.url, selector: source.selector, revision: source.revision, source: "external-context" };
+      record = result.error
+        ? { ...identity, state: "unavailable", reason: result.error }
+        : { ...recordFor(source.url, result, "external-context"), ...identity };
+    }
+    if (record.state === "unavailable") {
+      externalContext.push(record);
+    } else if (!addRecord(externalContext, record, budget)) {
+      externalContext.push({ path: source.url, selector: source.selector, revision: source.revision, source: "external-context", state: "unavailable", reason: "context evidence limit reached" });
+    }
+  }
+
   const callers = [];
   const siblings = [];
   const capturedOptionalPaths = new Set(targetedContext.filter(record => typeof record.content === "string").map(record => record.path));
@@ -732,6 +765,7 @@ export async function captureSemanticContext({
     projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },
     guidanceRequirements,
     targetedContext: targetedContext.length ? targetedContext : [],
+    ...(externalContext.length ? { externalContext } : {}),
     sourceInventory,
     callerContextPaths: [...callerSourcePaths].sort(),
     callerRetrieval: {
@@ -776,7 +810,7 @@ export function semanticContextMissing(requiredContext, captured) {
   const requiredRejections = evidenceBudget.rejections.filter(record =>
     (record.source === "changed-code" && requiredContext.includes("changed-code"))
     || (record.source === "project-guidance" && requiredContext.includes("project-guidance"))
-    || record.source === "targeted-context" || record.source === "caller-context");
+    || ["targeted-context", "caller-context", "external-context"].includes(record.source));
   if (requiredRejections.length && evidenceBudget.requiredFiles > evidenceBudget.maxFiles) {
     missing.push(`required-scope capacity exceeded: ${evidenceBudget.requiredFiles} distinct required paths cannot fit the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte evidence budget. Smaller excerpts cannot reduce required file cardinality; no supported within-request recovery exists. Keep the complete scope BLOCKED rather than splitting it or dropping required evidence.`);
   } else if (requiredRejections.length) {
@@ -837,13 +871,18 @@ export function semanticContextMissing(requiredContext, captured) {
   if (context.missingContextPaths.length) {
     missing.push(`could not capture targeted context: ${context.missingContextPaths.join(", ")}`);
   }
+  for (const record of context.externalContext ?? []) {
+    if (record.state === "unavailable") {
+      missing.push(`could not capture external evidence ${record.selector}: ${record.reason}. This is an evidence prerequisite, not a proved source defect.`);
+    }
+  }
   return missing;
 }
 
 export function validateSemanticCitations(citations, context) {
   if (!Array.isArray(citations) || citations.length === 0) throw new Error("PASS and FAIL assessments require at least one citation");
   const records = new Map();
-  for (const group of [context.changedCode, context.callers, context.siblings, context.projectGuidance, context.targetedContext]) {
+  for (const group of [context.changedCode, context.callers, context.siblings, context.projectGuidance, context.targetedContext, context.externalContext]) {
     if (Array.isArray(group)) {
       for (const record of group) {
         if (!record.content) continue;
@@ -858,7 +897,9 @@ export function validateSemanticCitations(citations, context) {
     if (!citation || typeof citation !== "object" || Array.isArray(citation)) {
       throw new Error(`citations[${index}] must be an object`);
     }
-    const path = normalizedProjectPath(citation.path, `citations[${index}].path`);
+    const path = context.externalContext?.some(record => record.path === citation.path)
+      ? citation.path
+      : normalizedProjectPath(citation.path, `citations[${index}].path`);
     if (!Number.isInteger(citation.line) || citation.line < 1) {
       throw new Error(`citations[${index}].line must be a positive integer`);
     }

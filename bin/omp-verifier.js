@@ -124,6 +124,7 @@ try {
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
+      "external-context": { type: "string", multiple: true, default: [] },
       "remove-context": { type: "string", multiple: true, default: [] },
       page: { type: "string" },
       reason: { type: "string" },
@@ -147,7 +148,8 @@ try {
   }
   const reporter = values.reporter;
   const failuresOnly = values["failures-only"];
-  const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0 || values["remove-context"].length > 0;
+  const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0
+    || values["external-context"].length > 0 || values["remove-context"].length > 0;
   const hasSemanticOptions = values.assessment !== undefined || hasContextOptions;
   const baseRef = values.base;
   if (baseRef !== undefined && command !== "automatic" && command !== "handoff") {
@@ -197,6 +199,7 @@ try {
       requestPath: positionals[0],
       contextPaths: values.context,
       callerContextPaths: values["caller-context"],
+      externalContextPaths: values["external-context"],
       removeContextPaths: values["remove-context"],
     })], { reporter, failuresOnly, pageIndex });
   } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && !hasContextOptions && values.assessment !== undefined) {
@@ -218,6 +221,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
