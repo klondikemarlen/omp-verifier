@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2 - 2026-11-10
+
+- Stop requiring authenticated deleted guides as live project guidance while retaining their historical source, surviving guidance requirements, and evidence limits.
+
 ## 1.0.1 - 2026-11-10
 
 - Keep recoverable changed-document capture actionable after premature PASS/FAIL assessments, preserving request identity, complete scope, limits, and page accounting.
