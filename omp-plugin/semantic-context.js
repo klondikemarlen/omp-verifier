@@ -194,7 +194,11 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
 
   const sourceLimit = range ? MAX_INVENTORY_FILE_BYTES : maxBytes;
   if (fileStat.size > sourceLimit) {
-    return { error: `file exceeds the ${sourceLimit}-byte context limit`, sizeLimitExceeded: true };
+    return {
+      error: `file exceeds the ${sourceLimit}-byte context limit`,
+      sizeLimitExceeded: true,
+      ...(fileStat.size <= MAX_INVENTORY_FILE_BYTES ? { rangeRecovery: true } : {}),
+    };
   }
 
   let contents;
@@ -212,12 +216,12 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
   const allLines = fullContent.split(/\r?\n/);
   const startLine = range.startLine;
   const endLine = range.endLine ?? Math.min(allLines.length, startLine + 119);
-  if (startLine > allLines.length) return { error: `requested line ${startLine} is beyond end of file` };
-  if (endLine > allLines.length) return { error: `requested line ${endLine} is beyond end of file` };
+  if (startLine > allLines.length) return { error: `requested line ${startLine} is beyond end of file`, rangeRecovery: true };
+  if (endLine > allLines.length) return { error: `requested line ${endLine} is beyond end of file`, rangeRecovery: true };
 
   const content = allLines.slice(startLine - 1, endLine).join("\n");
   if (Buffer.byteLength(content) > MAX_FILE_EVIDENCE_BYTES) {
-    return { error: `excerpt exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte evidence limit; request a smaller line range` };
+    return { error: `excerpt exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte evidence limit; request a smaller line range`, rangeRecovery: true };
   }
   return {
     content,
@@ -507,19 +511,21 @@ export async function captureSemanticContext({
       const selectorsForPath = requestedContext.filter(selector => selector.path === path && selector.startLine);
       if (selectorsForPath.length) changedSelectors.set(path, true);
       if (!selectorsForPath.length) {
-        changedCode.push({ path, state: "unavailable", reason: result.error });
+        changedCode.push({ path, state: "unavailable", reason: result.error, ...(result.rangeRecovery ? { rangeRecovery: true } : {}) });
         missingChangedPaths.push(path);
         continue;
       }
       const chunks = [];
       let failed = false;
       let failureReason;
+      let rangeRecovery = false;
       let identity;
       for (const [startLine, endLine] of disjointLineRanges(selectorsForPath)) {
         const chunk = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine, endLine });
         if (chunk.error || chunk.missing) {
           failed = true;
           failureReason = chunk.error ?? "source disappeared while selected ranges were being captured";
+          rangeRecovery = chunk.rangeRecovery === true;
           break;
         }
         if (identity && (identity.sha256 !== chunk.sha256 || identity.size !== chunk.size || identity.lineCount !== chunk.lineCount)) {
@@ -531,7 +537,12 @@ export async function captureSemanticContext({
         chunks.push({ chunk, startLine, endLine });
       }
       if (failed || !identity) {
-        changedCode.push({ path, state: "unavailable", reason: failureReason ?? "selected changed source ranges could not be captured consistently" });
+        changedCode.push({
+          path,
+          state: "unavailable",
+          reason: failureReason ?? "selected changed source ranges could not be captured consistently",
+          ...(rangeRecovery ? { rangeRecovery: true } : {}),
+        });
         missingChangedPaths.push(path);
         changedCodeCoverage.push({ path, lineCount: identity?.lineCount ?? null, coveredRanges: [], omittedRanges: identity?.lineCount ? [[1, identity.lineCount]] : [], complete: false });
         continue;
@@ -557,6 +568,7 @@ export async function captureSemanticContext({
           path,
           state: "unavailable",
           reason: admissionFailed ? "context evidence limit reached" : "selected ranges do not cover the complete changed source",
+          ...(!admissionFailed ? { rangeRecovery: true } : {}),
         });
         missingChangedPaths.push(path);
       }
@@ -772,6 +784,9 @@ export function semanticContextMissing(requiredContext, captured) {
     if (context.changedPaths.length === 0) missing.push("changed-code scope was not supplied");
     if (context.missingChangedPaths.length) {
       missing.push(`could not capture changed files: ${context.missingChangedPaths.join(", ")}`);
+      if (context.changedCode.some(record => record.rangeRecovery)) {
+        missing.push("Changed-source range recovery remains available. Before adding replacements, remove each oversized or invalid retained selector from scope.contextPaths with review --remove-context '<exact-selector>'; do not retain the failed selection alongside smaller overlaps. Add bounded --context '<path#Lstart-Lend>' replacements and every omitted line in changedCodeCoverage, including the final line. Keep the complete changed scope and limits, inspect all renewed pages, then submit one assessment. If supported recovery cannot obtain the required evidence, submit explicit BLOCKED naming the prerequisite.");
+      }
     }
   }
 

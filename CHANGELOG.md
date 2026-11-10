@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 - 2026-11-10
+
+- Keep recoverable changed-document capture actionable after premature PASS/FAIL assessments, preserving request identity, complete scope, limits, and page accounting.
+- Guide replacement of oversized retained selectors and recovery of every omitted original line before one complete assessment; genuinely unavailable evidence remains BLOCKED.
+
 ## 1.0.0 - 2026-11-09
 
 - Promote the existing declared-check and supplied-standard workflow to the first major release for everyday development; no command, configuration, or result-format migration is required.

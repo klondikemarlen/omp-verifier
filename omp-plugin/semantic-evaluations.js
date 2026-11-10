@@ -643,8 +643,21 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
       if (stored.payload.missingContext.length
         && (assessment?.status === "PASS" || assessment?.status === "FAIL")) {
-        const nonCallerRequirements = stored.payload.standard.requiredContext.filter(required => required !== "callers");
-        const otherMissingContext = semanticContextMissing(nonCallerRequirements, { context: stored.payload.context });
+        const { context, standard } = stored.payload;
+        const recoverablePaths = new Set(context.changedCode
+          .filter(record => record.rangeRecovery)
+          .map(record => record.path));
+        const nonCallerRequirements = standard.requiredContext.filter(required => required !== "callers");
+
+        // Range recovery permits another capture attempt, not a source verdict.
+        // Keep capacity failures and every other required-evidence guard intact.
+        const otherMissingContext = semanticContextMissing(nonCallerRequirements, {
+          context: {
+            ...context,
+            missingChangedPaths: context.missingChangedPaths.filter(path => !recoverablePaths.has(path)),
+          },
+        });
+
         if (otherMissingContext.length === 0) {
           return requestEnvelope(stored.payload, target.absoluteRequestPath);
         }
