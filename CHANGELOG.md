@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.0 - 2026-11-10
+
+- Verify existing Pyflakes and Oxlint commands without substituting Ruff or ESLint, including explicitly declared wrapper routes and selected-source forwarding.
+- Preserve explicit tool selection and warning policy; keep ambiguous selection and wrapper/startup failures BLOCKED with truthful recovery advice.
+
 ## 1.0.2 - 2026-11-10
 
 - Stop requiring authenticated deleted guides as live project guidance while retaining their historical source, surviving guidance requirements, and evidence limits.

@@ -714,3 +714,123 @@ test("when a recovery budget is invalid or scope is absent, the CLI rejects it b
     assert.doesNotMatch(result.stderr, /must not execute/);
   }
 });
+
+for (const [language, tool, source] of [["python", "pyflakes", "task.py"], ["javascript", "oxlint", "source.ts"]]) {
+  test(`when a ${tool} wrapper fails before linting, the failure remains BLOCKED`, async t => {
+    // Arrange
+    const root = await projectFixture(t);
+    await writeProjectFile(root, source, language === "python" ? "value = 1\n" : "export const value = 1;\n");
+    await bindLint(root, language, [process.execPath, "missing-wrapper.mjs"], { tool, appendPaths: true });
+
+    // Act
+    const result = await verifyProjectLint({ cwd: root, changedPaths: [source] });
+
+    // Assert
+    assert.equal(result.status, "BLOCKED");
+    assert.match(result.evidence, /MODULE_NOT_FOUND/);
+    assert.doesNotMatch(result.evidence, /reported lint violations/);
+  });
+
+  test(`when a ${tool} binding is unavailable, empty and deleted scopes still invoke nothing`, async t => {
+    // Arrange
+    const root = await projectFixture(t);
+    await writeProjectFile(root, source, "value = 1\n");
+    await bindLint(root, language, ["./missing-linter"], { tool, appendPaths: true });
+
+    // Act
+    const unavailable = await verifyProjectLint({ cwd: root, changedPaths: [source] });
+    await rm(join(root, source));
+    const deleted = await verifyProjectLint({ cwd: root, changedPaths: [source] });
+    const empty = await verifyProjectLint({ cwd: root, changedPaths: [] });
+
+    // Assert
+    assert.equal(unavailable.status, "BLOCKED");
+    assert.match(unavailable.evidence, /declared project lint command is unavailable/);
+    assert.equal(deleted.status, "N/A");
+    assert.equal(empty.status, "N/A");
+  });
+}
+
+test("when Python scripts select Ruff and Pyflakes, discovery does not silently drop a tool", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "task.py", "import os\n");
+  await writeProjectFile(root, "package.json", JSON.stringify({ scripts: { lint: "ruff check --no-fix .", "lint:python": "pyflakes task.py" } }));
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["task.py"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /Multiple lint tools/);
+});
+
+test("when JavaScript has both linter configurations without a selection, neither is silently preferred", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "source.ts", "const unused = 1;\n");
+  await writeProjectFile(root, "eslint.config.js", "export default [];\n");
+  await writeProjectFile(root, ".oxlintrc.json", "{}\n");
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["source.ts"] });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /Multiple lint tools/);
+});
+
+test("when Pyflakes is merely available on PATH, it does not replace unconfigured Python tooling", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "task.py", "import os\n");
+  await makeTool(root, "pyflakes", { marker: "unexpected\n" });
+
+  // Act
+  const result = await verifyProjectLint({ cwd: root, changedPaths: ["task.py"], env: { ...process.env, PATH: `${join(root, "tools")}:${process.env.PATH}` } });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  await assert.rejects(access(join(root, "invocations.log")));
+});
+
+for (const argument of ["--fix-suggestions", "--fix-dangerously", "--init", "--print-config", "--debug=files"]) {
+  test(`when an Oxlint binding requests ${argument}, verification rejects mutation or non-lint execution`, async t => {
+    // Arrange
+    const root = await projectFixture(t);
+    await writeProjectFile(root, "source.ts", "const unused = 1;\n");
+    await bindLint(root, "javascript", ["oxlint", argument], { tool: "oxlint", appendPaths: true });
+    await makeTool(root, "oxlint", { marker: "unexpected\n" });
+
+    // Act
+    const result = await verifyProjectLint({ cwd: root, changedPaths: ["source.ts"], env: { ...process.env, PATH: `${join(root, "tools")}:${process.env.PATH}` } });
+
+    // Assert
+    assert.equal(result.status, "BLOCKED");
+    await assert.rejects(access(join(root, "invocations.log")));
+  });
+}
+
+for (const [tool, output] of [
+  ["pyflakes", "source.py:1:1: 'os' imported but unused\n"],
+  ["oxlint", "source.ts:1:7: warning eslint(no-unused-vars): Variable 'unused' is declared but never used.\n"],
+  ["oxlint", "  ! eslint(no-unused-vars): Variable 'unused' is declared but never used.\n   ,-[source.ts:1:7]\nFound 1 warning and 0 errors.\n"],
+  ["oxlint", JSON.stringify({ diagnostics: [{ filename: "source.ts", severity: "warning", message: "Variable 'unused' is declared but never used." }] })],
+]) {
+  test(`when ${tool} emits supported findings in ${output.startsWith("{") ? "JSON" : output.startsWith(" ") ? "default" : "line"} format, exit 1 is FAIL`, async t => {
+    // Arrange
+    const root = await projectFixture(t);
+    const language = tool === "pyflakes" ? "python" : "javascript";
+    const source = tool === "pyflakes" ? "source.py" : "source.ts";
+    await writeProjectFile(root, source, tool === "pyflakes" ? "import os\n" : "const unused = 1;\n");
+    const command = await makeTool(root, tool, { exitCode: 1, stdout: output });
+    await bindLint(root, language, [command], { tool, appendPaths: true });
+
+    // Act
+    const result = await verifyProjectLint({ cwd: root, changedPaths: [source] });
+
+    // Assert
+    assert.equal(result.status, "FAIL");
+    assert.match(result.evidence, new RegExp(`${tool} reported lint violations`));
+  });
+}
