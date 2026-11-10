@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "OMP advisor-triggered programmatic verification with evidence-first check results.",
   "type": "module",
   "license": "MIT",
@@ -43,7 +43,7 @@
         "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs", "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.vue",
         "**/*.rb", "**/*.rake", "**/*.gemspec", "**/*.go", "**/*.py", "**/*.pyi", "**/*.sh", "**/*.bash", "**/*.ksh",
         "**/package.json", "**/Gemfile", "**/Rakefile", "**/go.mod",
-        "**/eslint.config.*", "**/.eslintrc", "**/.eslintrc.*", "**/.rubocop.yml", "**/.golangci.yml", "**/.golangci.yaml",
+        "**/eslint.config.*", "**/.eslintrc", "**/.eslintrc.*", "**/.oxlintrc.json", "**/.rubocop.yml", "**/.golangci.yml", "**/.golangci.yaml",
         "**/ruff.toml", "**/.ruff.toml", "**/pyproject.toml", "**/.shellcheckrc", "**/.omp-verifier.json"
       ]
     }],
