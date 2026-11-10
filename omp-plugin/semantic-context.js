@@ -621,12 +621,15 @@ export async function captureSemanticContext({
   }
 
   const projectGuidance = [];
-  const guidanceRequirements = guidancePaths.map(path => ({
-    path,
-    requiredBy: boundaryPaths.filter(boundary => relevantGuidance(path, [boundary])),
-  }));
+  // Authenticated deletions remain changed-source evidence, never live instructions.
+  const guidanceRequirements = guidancePaths
+    .filter(path => !changedCode.some(record => record.path === path && record.state === "deleted"))
+    .map(path => ({
+      path,
+      requiredBy: boundaryPaths.filter(boundary => relevantGuidance(path, [boundary])),
+    }));
   const missingGuidancePaths = [];
-  for (const path of guidancePaths) {
+  for (const { path } of guidanceRequirements) {
     if (targetedContext.some(record => record.path === path && record.content)) continue;
     // A complete changed guide is already admitted; partial source cannot discharge its guidance requirement.
     if (!missingChangedPaths.includes(path)

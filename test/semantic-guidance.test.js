@@ -209,35 +209,119 @@ test("when only part of a changed guide is admitted, a guidance-only contract ca
   }
 });
 
-test("when a changed guide is deleted, its historical source cannot replace current project guidance", async () => {
+for (const deletion of ["cached", "working-tree", "committed"]) {
+  test(`when a guide deletion is ${deletion}, historical evidence does not require live guidance at its removed path`, async () => {
+    // Arrange
+    const fixture = await createSemanticFixture({ requiredContext: ["changed-code", "project-guidance"] });
+    const guidance = "Preserve current boundary ownership.\n";
+    const changedPaths = ["WATCHDOG.md", "src/helper.js"];
+
+    try {
+      await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
+      const check = await discoverSemanticCheck(fixture);
+      if (deletion === "cached") {
+        await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths });
+      } else {
+        execFileSync("git", ["add", "WATCHDOG.md"], { cwd: fixture.root });
+        execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "add guide"], { cwd: fixture.root });
+      }
+      await rm(join(fixture.root, "WATCHDOG.md"));
+      if (deletion === "committed") {
+        execFileSync("git", ["add", "-u"], { cwd: fixture.root });
+        execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "remove guide"], { cwd: fixture.root });
+      }
+
+      // Act
+      const deleted = await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths });
+      const completed = await completeSemanticEvaluation({
+        cwd: fixture.root,
+        requestPath: deleted.reviewRequest.path,
+        assessment: passAssessment(deleted.reviewRequest.requestId, citationFor("WATCHDOG.md", guidance, 1)),
+      });
+
+      // Assert
+      const context = deleted.reviewRequest.context;
+      assert.deepEqual(deleted.reviewRequest.scope.changedPaths, changedPaths);
+      assert.equal(context.changedCode.find(record => record.path === "WATCHDOG.md").state, "deleted");
+      assert.equal(context.changedCode.find(record => record.path === "WATCHDOG.md").content, guidance);
+      assert.deepEqual(context.guidanceRequirements, [{
+        path: "AGENTS.md",
+        requiredBy: changedPaths,
+      }]);
+      assert.equal(context.projectGuidance.find(record => record.path === "AGENTS.md").content,
+        "Keep meaningful policy ownership at module boundaries.\n");
+      assert.deepEqual(deleted.reviewRequest.missingContext, []);
+      assert.equal(completed.status, "PASS");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const source of ["unknown", "oversized"]) {
+  test(`when deleted guidance has ${source} historical source, it cannot bypass required evidence`, async () => {
+    // Arrange
+    const fixture = await createSemanticFixture({ requiredContext: ["changed-code", "project-guidance"] });
+
+    try {
+      if (source === "oversized") {
+        await writeFile(join(fixture.root, "WATCHDOG.md"), "Required policy.\n".repeat(1_100));
+        execFileSync("git", ["add", "WATCHDOG.md"], { cwd: fixture.root });
+        execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "add large guide"], { cwd: fixture.root });
+        await rm(join(fixture.root, "WATCHDOG.md"));
+      }
+
+      // Act
+      const prepared = await prepareSemanticEvaluation({
+        check: await discoverSemanticCheck(fixture),
+        cwd: fixture.root,
+        changedPaths: ["WATCHDOG.md", "src/helper.js"],
+      });
+      const completed = await completeSemanticEvaluation({
+        cwd: fixture.root,
+        requestPath: prepared.reviewRequest.path,
+        assessment: passAssessment(prepared.reviewRequest.requestId),
+      });
+
+      // Assert
+      assert.deepEqual(prepared.reviewRequest.context.missingChangedPaths, ["WATCHDOG.md"]);
+      assert.deepEqual(prepared.reviewRequest.context.missingGuidancePaths, ["WATCHDOG.md"]);
+      assert.equal(completed.status, "BLOCKED");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("when a guide is deleted but surviving guidance is unreadable, assessment remains blocked", async () => {
   // Arrange
-  const fixture = await createSemanticFixture({ requiredContext: ["project-guidance"] });
+  const fixture = await createSemanticFixture({ requiredContext: ["changed-code", "project-guidance"] });
+  const guidance = "Preserve current boundary ownership.\n";
+  const changedPaths = ["WATCHDOG.md"];
 
   try {
-    await writeFile(join(fixture.root, "WATCHDOG.md"), "Preserve current boundary ownership.\n");
     const check = await discoverSemanticCheck(fixture);
-    await prepareSemanticEvaluation({
-      check,
-      cwd: fixture.root,
-      changedPaths: ["WATCHDOG.md", "src/helper.js"],
-    });
+    await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
+    await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths });
     await rm(join(fixture.root, "WATCHDOG.md"));
+    await rm(join(fixture.root, "AGENTS.md"));
+    await mkdir(join(fixture.root, "AGENTS.md"));
 
     // Act
-    const deleted = await prepareSemanticEvaluation({
+    const prepared = await prepareSemanticEvaluation({
       check,
       cwd: fixture.root,
-      changedPaths: ["WATCHDOG.md", "src/helper.js"],
+      changedPaths,
     });
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
-      requestPath: deleted.reviewRequest.path,
-      assessment: passAssessment(deleted.reviewRequest.requestId),
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId, citationFor("WATCHDOG.md", guidance, 1)),
     });
 
     // Assert
-    assert.equal(deleted.reviewRequest.context.changedCode.find(record => record.path === "WATCHDOG.md").state, "deleted");
-    assert.ok(deleted.reviewRequest.context.missingGuidancePaths.includes("WATCHDOG.md"));
+    assert.equal(prepared.reviewRequest.context.changedCode.find(record => record.path === "WATCHDOG.md").state, "deleted");
+    assert.deepEqual(prepared.reviewRequest.context.missingGuidancePaths, ["AGENTS.md"]);
     assert.equal(completed.status, "BLOCKED");
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
