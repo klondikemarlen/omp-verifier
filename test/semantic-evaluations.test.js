@@ -137,7 +137,7 @@ function sourceRangeSelectors(path, lineCount, chunkSize = 180) {
   return selectors;
 }
 
-test("when changed source exceeds the per-record limit, an unrequested assessment remains BLOCKED", async () => {
+test("when readable changed source exceeds the per-record limit, premature assessment retains its recovery request", async () => {
   // Arrange
   const source = oversizedHelperSource();
   const fixture = await createSemanticFixture({ helperSource: source });
@@ -162,13 +162,15 @@ test("when changed source exceeds the per-record limit, an unrequested assessmen
     assert.ok(Buffer.byteLength(source) > 16_000);
     assert.equal(changedSource.state, "unavailable");
     assert.ok(prepared.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
-    assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.status, "PENDING");
+    assert.equal(completed.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.equal(completed.reviewRequest.path, prepared.reviewRequest.path);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
 
-test("when only part of oversized changed source is recovered, a cited assessment remains BLOCKED", async () => {
+test("when only part of oversized changed source is recovered, a cited assessment remains pending", async () => {
   // Arrange
   const source = oversizedHelperSource();
   const fixture = await createSemanticFixture({ helperSource: source });
@@ -199,7 +201,8 @@ test("when only part of oversized changed source is recovered, a cited assessmen
     assert.ok(coverage.omittedRanges.length > 0);
     assert.equal(coverage.complete, false);
     assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
-    assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.status, "PENDING");
+    assert.equal(completed.reviewRequest.requestId, recovered.reviewRequest.requestId);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

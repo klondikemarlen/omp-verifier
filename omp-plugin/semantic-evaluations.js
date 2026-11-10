@@ -643,10 +643,28 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
       if (stored.payload.missingContext.length
         && (assessment?.status === "PASS" || assessment?.status === "FAIL")) {
-        const nonCallerRequirements = stored.payload.standard.requiredContext.filter(required => required !== "callers");
-        const otherMissingContext = semanticContextMissing(nonCallerRequirements, { context: stored.payload.context });
+        const { context, standard } = stored.payload;
+        const recoverablePaths = new Set(context.changedCode
+          .filter(record => record.rangeRecovery)
+          .map(record => record.path));
+        const nonCallerRequirements = standard.requiredContext.filter(required => required !== "callers");
+
+        // Range recovery permits another capture attempt, not a source verdict.
+        // Keep capacity failures and every other required-evidence guard intact.
+        const otherMissingContext = semanticContextMissing(nonCallerRequirements, {
+          context: {
+            ...context,
+            missingChangedPaths: context.missingChangedPaths.filter(path => !recoverablePaths.has(path)),
+          },
+        });
+
         if (otherMissingContext.length === 0) {
-          return requestEnvelope(stored.payload, target.absoluteRequestPath);
+          return {
+            ...requestEnvelope(stored.payload, target.absoluteRequestPath),
+            ...(context.missingChangedPaths.length ? {
+              nextCheck: "Use review --remove-context '<exact-retained-selector>' to replace invalid or oversized selectors; add smaller --context '<path#Lstart-Lend>' ranges covering every omitted original line in changedCodeCoverage, including the final line. Preserve the complete changed scope and limits, read every renewed page, then submit one assessment. If supported recovery cannot obtain required evidence, submit explicit BLOCKED with that prerequisite.",
+            } : {}),
+          };
         }
       }
 
