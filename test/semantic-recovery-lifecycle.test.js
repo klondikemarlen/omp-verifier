@@ -78,16 +78,6 @@ function assessment(result, source, path = "src/deleted.js") {
   };
 }
 
-function assertComplete(result) {
-  assert.equal(result.status, "PENDING");
-  assert.deepEqual(result.reviewRequest.scope.sourceRecovery, SOURCE_RECOVERY);
-  assert.deepEqual(result.reviewRequest.scope.contextPaths, []);
-  assert.deepEqual(result.reviewRequest.missingContext, []);
-  assert.deepEqual(result.reviewRequest.context.missingChangedPaths, []);
-  assert.equal(result.reviewRequest.context.changedCodeCoverage.length, 2);
-  assert.ok(result.reviewRequest.context.changedCodeCoverage.every(record => record.complete));
-}
-
 async function deliverPages(cwd, result, start = 0) {
   const count = buildSemanticReviewPage(result).count;
   for (let index = start; index < count; index += 1) {
@@ -114,11 +104,23 @@ for (const withBase of [true, false]) {
     // Assert
     assert.equal(results.length, 1, "one check remains one review obligation");
     assert.equal(prepared.id, CHECK_ID);
-    assertComplete(prepared);
+    assert.equal(prepared.status, "PENDING");
+    assert.deepEqual(prepared.reviewRequest.scope.sourceRecovery, SOURCE_RECOVERY);
+    assert.deepEqual(prepared.reviewRequest.scope.contextPaths, []);
+    assert.deepEqual(prepared.reviewRequest.missingContext, []);
+    assert.deepEqual(prepared.reviewRequest.context.missingChangedPaths, []);
+    assert.equal(prepared.reviewRequest.context.changedCodeCoverage.length, 2);
+    assert.ok(prepared.reviewRequest.context.changedCodeCoverage.every(record => record.complete));
     assert.equal(Boolean(prepared.reviewRequest.scope.automatic), withBase);
     assert.deepEqual(stored.payload.scope.sourceRecovery, SOURCE_RECOVERY);
     assert.equal(reread.reviewRequest.requestId, prepared.reviewRequest.requestId);
-    assertComplete(reread);
+    assert.equal(reread.status, "PENDING");
+    assert.deepEqual(reread.reviewRequest.scope.sourceRecovery, SOURCE_RECOVERY);
+    assert.deepEqual(reread.reviewRequest.scope.contextPaths, []);
+    assert.deepEqual(reread.reviewRequest.missingContext, []);
+    assert.deepEqual(reread.reviewRequest.context.missingChangedPaths, []);
+    assert.equal(reread.reviewRequest.context.changedCodeCoverage.length, 2);
+    assert.ok(reread.reviewRequest.context.changedCodeCoverage.every(record => record.complete));
     assert.ok(pages > 1, "automatic source recovery still requires a complete paged review");
     assert.equal(completed.status, "PASS");
     assert.match(completed.evidence, /src\/deleted\.js:439 \(deleted\)/);
@@ -146,7 +148,13 @@ test("when automatic evidence changes, renewal retains recovery policy and rejec
   });
 
   // Assert
-  assertComplete(renewed);
+  assert.equal(renewed.status, "PENDING");
+  assert.deepEqual(renewed.reviewRequest.scope.sourceRecovery, SOURCE_RECOVERY);
+  assert.deepEqual(renewed.reviewRequest.scope.contextPaths, []);
+  assert.deepEqual(renewed.reviewRequest.missingContext, []);
+  assert.deepEqual(renewed.reviewRequest.context.missingChangedPaths, []);
+  assert.equal(renewed.reviewRequest.context.changedCodeCoverage.length, 2);
+  assert.ok(renewed.reviewRequest.context.changedCodeCoverage.every(record => record.complete));
   assert.notEqual(renewed.reviewRequest.requestId, prepared.reviewRequest.requestId);
   assert.equal(renewed.evaluation.supersededBy, renewed.reviewRequest.requestId);
   assert.equal(rejected.status, "BLOCKED");
@@ -167,7 +175,13 @@ test("when explicit no-base automatic evidence changes, the stale request invali
   // Assert
   assert.equal(stale.status, "BLOCKED");
   assert.match(stale.evidence, /captured source or project context changed/);
-  assertComplete(recaptured);
+  assert.equal(recaptured.status, "PENDING");
+  assert.deepEqual(recaptured.reviewRequest.scope.sourceRecovery, SOURCE_RECOVERY);
+  assert.deepEqual(recaptured.reviewRequest.scope.contextPaths, []);
+  assert.deepEqual(recaptured.reviewRequest.missingContext, []);
+  assert.deepEqual(recaptured.reviewRequest.context.missingChangedPaths, []);
+  assert.equal(recaptured.reviewRequest.context.changedCodeCoverage.length, 2);
+  assert.ok(recaptured.reviewRequest.context.changedCodeCoverage.every(record => record.complete));
   assert.notEqual(recaptured.reviewRequest.requestId, prepared.reviewRequest.requestId);
 });
 

@@ -35,18 +35,6 @@ function sizedLines(bytes, count) {
   return Array.from({ length: count - 1 }, (_, index) => "x".repeat(width + (index < remainder ? 1 : 0))).join("\n") + "\n";
 }
 
-function assertComplete(context, path, content, state = "present") {
-  const records = context.changedCode.filter(record => record.path === path && typeof record.content === "string");
-  assert.ok(records.length > 1);
-  assert.equal(records.map(record => record.content).join("\n"), content);
-  assert.ok(records.every(record => Buffer.byteLength(record.content) <= sourceRecovery.chunkBytes));
-  assert.ok(records.every(record => record.state === state && record.sha256 === hash(content)));
-  const coverage = context.changedCodeCoverage.find(record => record.path === path);
-  assert.deepEqual(coverage, { path, lineCount: content.split("\n").length, coveredRanges: [[1, content.split("\n").length]], omittedRanges: [], complete: true });
-  assert.deepEqual(context.missingChangedPaths, []);
-  return records;
-}
-
 test("when automatic capture receives a 34208-byte 144-line guide, every line including final empty is recovered", async t => {
   // Arrange
   const content = sizedLines(34_208, 144);
@@ -58,7 +46,13 @@ test("when automatic capture receives a 34208-byte 144-line guide, every line in
   // Assert
   assert.equal(Buffer.byteLength(content), 34_208);
   assert.equal(content.split("\n").length, 144);
-  const records = assertComplete(captured.context, "AGENTS.md", content);
+  const records = captured.context.changedCode.filter(record => record.path === "AGENTS.md" && typeof record.content === "string");
+  assert.ok(records.length > 1);
+  assert.equal(records.map(record => record.content).join("\n"), content);
+  assert.ok(records.every(record => Buffer.byteLength(record.content) <= sourceRecovery.chunkBytes));
+  assert.ok(records.every(record => record.state === "present" && record.sha256 === hash(content)));
+  assert.deepEqual(captured.context.changedCodeCoverage, [{ path: "AGENTS.md", lineCount: 144, coveredRanges: [[1, 144]], omittedRanges: [], complete: true }]);
+  assert.deepEqual(captured.context.missingChangedPaths, []);
   assert.equal(records.at(-1).content.split("\n").at(-1), "");
   assert.deepEqual(semanticContextMissing(["changed-code", "project-guidance"], captured), []);
   assert.deepEqual(captured.context.sourceRecovery, sourceRecovery);
@@ -75,7 +69,13 @@ test("when a nested directory is deleted in Git, historical source and deleted c
   // Act
   const { context } = await capture(["nested/removed/helper.js"]);
   // Assert
-  const records = assertComplete(context, "nested/removed/helper.js", content, "deleted");
+  const records = context.changedCode.filter(record => record.path === "nested/removed/helper.js" && typeof record.content === "string");
+  assert.ok(records.length > 1);
+  assert.equal(records.map(record => record.content).join("\n"), content);
+  assert.ok(records.every(record => Buffer.byteLength(record.content) <= sourceRecovery.chunkBytes));
+  assert.ok(records.every(record => record.state === "deleted" && record.sha256 === hash(content)));
+  assert.deepEqual(context.changedCodeCoverage, [{ path: "nested/removed/helper.js", lineCount: 90, coveredRanges: [[1, 90]], omittedRanges: [], complete: true }]);
+  assert.deepEqual(context.missingChangedPaths, []);
   assert.ok(records.every(record => record.previousSha256 === hash(content) && /^[a-f0-9]+\^:nested\/removed\/helper\.js$/.test(record.reference)));
   assert.ok(context.siblingInventory.every(record => record.complete));
   const line = records[1].startLine;
@@ -90,7 +90,13 @@ test("when source contains multibyte characters, chunks preserve characters, lin
   // Act
   const { context } = await capture(["helper.js"]);
   // Assert
-  const records = assertComplete(context, "helper.js", content);
+  const records = context.changedCode.filter(record => record.path === "helper.js" && typeof record.content === "string");
+  assert.ok(records.length > 1);
+  assert.equal(records.map(record => record.content).join("\n"), content);
+  assert.ok(records.every(record => Buffer.byteLength(record.content) <= sourceRecovery.chunkBytes));
+  assert.ok(records.every(record => record.state === "present" && record.sha256 === hash(content)));
+  assert.deepEqual(context.changedCodeCoverage, [{ path: "helper.js", lineCount: 121, coveredRanges: [[1, 121]], omittedRanges: [], complete: true }]);
+  assert.deepEqual(context.missingChangedPaths, []);
   for (const record of records) {
     const line = record.startLine ?? 1;
     const quote = record.content.split("\n")[0];
@@ -221,7 +227,13 @@ test("when deleted source is cached, only complete authenticated cached chunks e
   const incomplete = await capture(["untracked.js"], { previousContext: partial.context });
 
   // Assert
-  assertComplete(cached.context, "untracked.js", content, "deleted");
+  const records = cached.context.changedCode.filter(record => record.path === "untracked.js" && typeof record.content === "string");
+  assert.ok(records.length > 1);
+  assert.equal(records.map(record => record.content).join("\n"), content);
+  assert.ok(records.every(record => Buffer.byteLength(record.content) <= sourceRecovery.chunkBytes));
+  assert.ok(records.every(record => record.state === "deleted" && record.sha256 === hash(content)));
+  assert.deepEqual(cached.context.changedCodeCoverage, [{ path: "untracked.js", lineCount: 144, coveredRanges: [[1, 144]], omittedRanges: [], complete: true }]);
+  assert.deepEqual(cached.context.missingChangedPaths, []);
   assert.deepEqual(incomplete.context.missingChangedPaths, ["untracked.js"]);
   assert.match(incomplete.context.changedCode[0].reason, /no prior source/);
 });
