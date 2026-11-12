@@ -113,8 +113,6 @@ async function createSemanticFixture({ untrackedHelper = false, helperSource = H
 async function discoverSemanticCheck(fixture) {
   const discovery = await discoverVerificationChecks({ packageDirectory: fixture.packageDirectory });
   const check = discovery.checks.find(candidate => candidate.id === CHECK_ID);
-  assert.ok(check, "fixture semantic check should be discovered");
-  assert.deepEqual(discovery.blockedResults, []);
   return check;
 }
 

@@ -263,19 +263,17 @@ for (const status of ["PASS", "FAIL", "BLOCKED"]) {
       ], { cwd: fixture.root, encoding: "utf8", input: JSON.stringify(conflicting) });
 
       // Assert
-      assert.deepEqual({
-        status: accepted.status,
-        retried,
-        recovered,
-        cliStatus: cli.status,
-        cliReport: status === "PASS" ? cli.stdout : cli.stdout.startsWith(`${status} publisher:alignment\n`),
-      }, {
-        status,
-        retried: accepted,
-        recovered: accepted,
-        cliStatus: status === "PASS" ? 0 : 1,
-        cliReport: status === "PASS" ? "" : true,
-      });
+      assert.equal(accepted.status, status);
+      assert.deepEqual(retried, accepted);
+      assert.deepEqual(recovered, accepted);
+      assert.equal(cli.status, status === "PASS" ? 0 : 1, cli.stderr);
+      if (status === "PASS") {
+        assert.equal(cli.stdout, "");
+      } else {
+        assert.match(cli.stdout, new RegExp(`^${status} publisher:alignment\\n`));
+        assert.ok(cli.stdout.includes(accepted.summary));
+        assert.doesNotMatch(cli.stdout, /Replacement draft/);
+      }
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }
@@ -324,14 +322,11 @@ for (const mutation of ["source", "standard", "request", "missing provider", "le
       const retried = await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment });
 
       // Assert
-      assert.deepEqual([recovered, retried].map(result => ({
-        status: result.status,
-        evidenceMatches: expectedEvidence[mutation].test(result.evidence),
-        request: result.reviewRequest,
-      })), [
-        { status: "BLOCKED", evidenceMatches: true, request: undefined },
-        { status: "BLOCKED", evidenceMatches: true, request: undefined },
-      ]);
+      for (const result of [recovered, retried]) {
+        assert.equal(result.status, "BLOCKED");
+        assert.match(result.evidence, expectedEvidence[mutation]);
+        assert.equal(result.reviewRequest, undefined);
+      }
     } finally {
       await rm(fixture.root, { recursive: true, force: true });
     }

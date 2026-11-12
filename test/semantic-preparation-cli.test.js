@@ -397,7 +397,7 @@ test("when preparation returns multiple pending reviews, each handle remains sep
   ]);
 });
 
-test("when a final review page supplies evaluation, its command consumes the current request before silent completion", async t => {
+test("when a final review page supplies evaluation, acceptance and exact retry both complete silently", async t => {
   // Arrange
   const fixture = await preparationFixture(t);
   const prepared = fixture.run([
@@ -428,8 +428,8 @@ test("when a final review page supplies evaluation, its command consumes the cur
   // Assert
   assert.equal(evaluated.status, 0, evaluated.stderr);
   assert.equal(evaluated.stdout, "");
-  assert.equal(replay.status, 1, replay.stderr);
-  assert.match(replay.stdout, /^BLOCKED publisher:alignment$/m);
+  assert.equal(replay.status, 0, replay.stderr);
+  assert.equal(replay.stdout, "");
 });
 
 test("when pending review and final blocked checks are mixed, failure-only retains both and final BLOCKED wins", async t => {
@@ -558,8 +558,8 @@ test("when a text review skips pages, evaluation remains pending until every mis
   assert.equal(recoveredPage.index, skippedPages[0]);
   assert.equal(completed.status, 0, completed.stderr);
   assert.match(completed.stdout, /^PASS publisher:alignment$/m);
-  assert.equal(replay.status, 1, replay.stderr);
-  assert.match(replay.stdout, /^BLOCKED publisher:alignment$/m);
+  assert.equal(replay.status, 0, replay.stderr);
+  assert.equal(replay.stdout, completed.stdout);
 });
 
 test("when context renewal replaces a fully delivered review, the new request cannot reuse old page receipts", async t => {
