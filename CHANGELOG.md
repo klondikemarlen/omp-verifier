@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1 - 2026-11-12
+
+- Recover sibling-directory evidence for working-tree, staged, and committed whole-directory deletions using authenticated Git inventories instead of requiring removed directories to exist.
+- Preserve missing-history, omitted-sibling, capture-limit, and freshness safeguards; historical inventory is evidence, not approval.
+
 ## 1.2.0 - 2026-11-10
 
 - Admit explicitly selected, commit-pinned public GitHub contracts into semantic review with bounded retrieval, source hashes, original-line citations, and request integrity.
