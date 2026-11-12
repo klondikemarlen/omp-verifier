@@ -47,6 +47,12 @@ The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on 
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it requests the coordinator's failure-only text reporter and passes that readable output unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
 
+## Request-sized work
+
+Start a request with `Verifier work level: quick tweak`, `Verifier work level: normal`, or `Verifier work level: rearchitecture` on its first line. The choice applies only to that request; the next request defaults to normal. The plugin emits a compact request-intent message for the native advisor. Quoted declarations elsewhere in a prompt do not select a mode.
+
+An eligible mechanical quick tweak omits optional automatic checks, not mandatory project requirements or explicitly requested verification. Public/serialized-field changes, authorization changes, and other behavioral changes require normal verification even with a quick prefix. Initial delivery and release gates remain effective. Normal follow-ups can reuse exact, freshness-validated semantic results; changed evidence requires fresh assessment. Skipping is not PASS, and current failures are not cleared. See [request intent and proof reuse](docs/references/verifier-concepts-reference.md#request-intent-and-proof-reuse) for the contract and host limitations.
+
 ## Project-specific verifier requirements
 
 Add a project `WATCHDOG.yml` entry named `verifier` when a repository needs a requirement beyond the default advisor:
