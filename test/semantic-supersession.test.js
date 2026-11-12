@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 import {
   completeSemanticEvaluation,

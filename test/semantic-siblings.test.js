@@ -10,7 +10,7 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 const CHECK_ID = "publisher:alignment";
 const HELPER_SOURCE = "export function helper(value) { if (!Number.isInteger(value)) throw new TypeError(\"Expected integer\"); return value; }\n";

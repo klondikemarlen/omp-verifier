@@ -12,7 +12,7 @@ import {
   recordSemanticReviewPage,
 } from "#root/omp-plugin/semantic-evaluations.js";
 import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 test("when documentation capture has an oversized retained selector and a final omitted line, premature verdicts preserve bounded recovery", async () => {
   // Arrange

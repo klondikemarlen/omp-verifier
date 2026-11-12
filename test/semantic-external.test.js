@@ -8,7 +8,7 @@ import test from "node:test";
 import { captureSemanticContext, semanticContextMissing, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
 import { completeSemanticEvaluation, prepareSemanticEvaluation, readSemanticEvaluation, recordSemanticReviewPage } from "#root/omp-plugin/semantic-evaluations.js";
 import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 const URL = "https://raw.githubusercontent.com/example/contracts/0123456789abcdef0123456789abcdef01234567/docs/approval.md";
 const SOURCE = "# Approval Contract\nAlways ask for restricted paths.\nHeadless requests are refused.\n";

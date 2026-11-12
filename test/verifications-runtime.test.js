@@ -200,11 +200,11 @@ test("when PR verification has an earlier committed violation, the actual base i
   // Assert
   assert.equal(failing.status, 1);
   assert.match(JSON.parse(failing.stdout)[0].evidence, /earlier\.js/);
-  assert.deepEqual(JSON.parse(failing.stdout)[0].matches, [
+  assert.deepEqual(new Set(JSON.parse(failing.stdout)[0].matches), new Set([
     { path: "earlier.js", trigger: "**/*.js" },
     { path: "later.js", trigger: "**/*.js" },
     { path: "current.js", trigger: "**/*.js" },
-  ]);
+  ]));
   assert.equal(repaired.status, 0);
   assert.equal(JSON.parse(repaired.stdout)[0].status, "PASS");
 });

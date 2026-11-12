@@ -10,7 +10,7 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 const CALLER_SOURCE = 'import { helper } from "./helper.js";\nexport const result = helper(1);\n';
 

@@ -11,7 +11,7 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 

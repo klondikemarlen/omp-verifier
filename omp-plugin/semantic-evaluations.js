@@ -6,6 +6,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
+import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
+import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import {
   captureSemanticContext,
   semanticContextMissing,
@@ -251,6 +253,7 @@ async function captureRequest({
   externalContextPaths = [],
   previousContext,
   maxSourceBytes,
+  automaticScope,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const definition = await currentDefinition(check);
@@ -289,6 +292,7 @@ async function captureRequest({
       callerContextPaths: [...callerContextPaths],
       ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
       maxSourceBytes: sourceByteLimit,
+      ...(automaticScope ? { automatic: automaticScope } : {}),
     },
     context: captured.context,
     missingContext,
@@ -388,26 +392,98 @@ function requestBlock(id, error) {
   return blocked(id || "semantic-evaluation", "Semantic request is unavailable", error);
 }
 
+async function reconcileAutomaticScope(target, current) {
+  const { payload, runtime } = current.stored;
+  const automatic = payload.scope.automatic;
+  if (!automatic) return undefined;
+  if (payload.scope.repositoryRoot !== target.repositoryRoot) {
+    throw new Error("request project root no longer matches the active project");
+  }
+
+  const delivery = await captureDeliveryScope({
+    repositoryRoot: target.repositoryRoot,
+    baseRef: automatic.delivery.baseRef,
+    candidatePaths: automatic.delivery.candidatePaths,
+  });
+  const plan = await discoverAutomaticVerification({
+    repositoryRoot: target.repositoryRoot,
+    changedPaths: delivery.changedPaths,
+    packageDirectory: automatic.packageDirectory,
+  });
+  const blockers = plan.results.filter(result => result.status === "BLOCKED");
+  if (blockers.length) {
+    throw new Error(blockers.map(result => `${result.id}: ${result.summary}${result.evidence ? `: ${result.evidence}` : ""}`).join("; "));
+  }
+  const selection = plan.selections.find(({ check }) => check.id === target.checkId);
+  if (!selection?.matches.length) {
+    return {
+      id: target.checkId,
+      status: "SUPERSEDED",
+      summary: "The automatic check no longer applies to the current delivery scope",
+      evaluation: { mode: "agentic", requestId: target.requestId },
+    };
+  }
+  if (selection.check.mode !== "agentic") {
+    throw new Error("the current provider now declares a deterministic check; rerun automatic verification against the delivery base");
+  }
+
+  const changedPaths = [...new Set(selection.matches.map(match => match.path))].sort();
+  const sameScope = JSON.stringify(delivery) === JSON.stringify(automatic.delivery)
+    && JSON.stringify(changedPaths) === JSON.stringify(payload.scope.changedPaths)
+    && selection.check.manifestPath === runtime.manifestPath;
+  if (sameScope) {
+    try {
+      await validateFreshness({ checkId: target.checkId, repositoryRoot: target.repositoryRoot, stored: current.stored });
+      return undefined;
+    } catch {
+      // Integrity was checked before this call. Changed evidence needs a new
+      // request, never the old assessment or its page-completion receipts.
+    }
+  }
+  const captured = await captureRequest({
+    check: selection.check,
+    repositoryRoot: target.repositoryRoot,
+    changedPaths,
+    contextPaths: payload.scope.contextPaths,
+    callerContextPaths: payload.scope.callerContextPaths,
+    externalContextPaths: payload.scope.externalContextPaths,
+    previousContext: payload.context,
+    maxSourceBytes: payload.scope.maxSourceBytes,
+    automaticScope: { packageDirectory: plan.packageDirectory, delivery },
+  });
+  const requestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, captured.requestId));
+  await persistRequest(target.cacheDirectory, target.checkId, requestPath, captured.stored);
+  return {
+    ...requestEnvelope(captured.payload, requestPath),
+    evaluation: { mode: "agentic", requestId: target.requestId, supersededBy: captured.requestId },
+  };
+}
+
 async function reconcileRequest(target) {
   const currentState = await readCurrentState(target.cacheDirectory, target.checkId);
   const isCurrent = currentState?.requestId === target.requestId;
-  if (!currentState || (isCurrent && !currentState.consumed)) return undefined;
+  if (!currentState) throw new Error("semantic request has been superseded");
 
   const current = await readStoredRequest(target.cacheDirectory, target.checkId, currentState.requestId, {
     requireCurrent: false,
   });
-  await validateFreshness({
-    checkId: target.checkId,
-    repositoryRoot: target.repositoryRoot,
-    stored: current.stored,
-  });
+  const automaticResult = await reconcileAutomaticScope(target, current);
+  if (automaticResult) return { result: automaticResult };
+  if (!current.stored.payload.scope.automatic) {
+    await validateFreshness({
+      checkId: target.checkId,
+      repositoryRoot: target.repositoryRoot,
+      stored: current.stored,
+    });
+  }
+  if (isCurrent && !currentState.consumed) return current;
   if (isCurrent) {
     const result = currentState.finalResult;
     if (result?.id !== target.checkId || result.evaluation?.requestId !== target.requestId
       || !STATUSES.has(result.status)) {
       throw new Error("completed semantic request has no retained final result; prepare fresh verification");
     }
-    return result;
+    return { result };
   }
 
   const evaluation = {
@@ -416,18 +492,18 @@ async function reconcileRequest(target) {
     supersededBy: currentState.requestId,
   };
   if (currentState.consumed) {
-    return {
+    return { result: {
       id: target.checkId,
       status: "SUPERSEDED",
       summary: "Obsolete semantic operation skipped; the current request has already been assessed",
       evaluation,
-    };
+    } };
   }
 
-  return {
+  return { result: {
     ...requestEnvelope(current.stored.payload, current.requestPath),
     evaluation,
-  };
+  } };
 }
 
 export async function prepareSemanticEvaluation({
@@ -437,6 +513,7 @@ export async function prepareSemanticEvaluation({
   repositoryRoot = cwd,
   contextPaths = [],
   maxSourceBytes,
+  automaticScope,
 }) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
     return blocked(check?.id || "semantic-evaluation", "Semantic verification check is not supported by this runtime");
@@ -455,6 +532,7 @@ export async function prepareSemanticEvaluation({
         contextPaths,
         previousContext: previous?.context,
         maxSourceBytes: sourceByteLimit,
+        automaticScope,
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
       await persistRequest(cacheDirectory, check.id, requestPath, result.stored);
@@ -475,11 +553,8 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-      const reconciled = await reconcileRequest(target);
+      const { result: reconciled, stored } = await reconcileRequest(target);
       if (reconciled) return reconciled;
-
-      const { stored } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
-      await validateFreshness({ checkId: target.checkId, repositoryRoot: target.repositoryRoot, stored });
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
       if (!Array.isArray(callerContextPaths)) throw new Error("callerContextPaths must be an array of project-relative paths");
@@ -527,6 +602,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         externalContextPaths: additionalExternalContext,
         maxSourceBytes: stored.payload.scope.maxSourceBytes,
         previousContext: stored.payload.context,
+        automaticScope: stored.payload.scope.automatic,
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));
       await persistRequest(target.cacheDirectory, target.checkId, nextRequestPath, result.stored);
@@ -644,15 +720,8 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-      const reconciled = await reconcileRequest(target);
+      const { result: reconciled, stored, currentState } = await reconcileRequest(target);
       if (reconciled) return reconciled;
-
-      const { stored, currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
-      await validateFreshness({
-        checkId: target.checkId,
-        repositoryRoot: target.repositoryRoot,
-        stored,
-      });
       const missingPages = missingReviewPages(currentState.pagePresentation);
       if (missingPages.length > 0) {
         return {
