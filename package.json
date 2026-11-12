@@ -1,6 +1,6 @@
 {
   "name": "omp-verifier",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "OMP advisor-triggered programmatic verification with evidence-first check results.",
   "type": "module",
   "license": "MIT",
