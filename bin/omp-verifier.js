@@ -11,6 +11,7 @@ import { formatVerificationInventory, formatVerificationResults } from "#root/om
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
@@ -76,11 +77,31 @@ async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) 
   }
 }
 
-async function automaticResults(paths, worktree, baseRef, maxSourceBytes) {
-  if (worktree) return runCurrentAutomaticVerification({ cwd, maxSourceBytes });
+async function automaticResults(paths, worktree, baseRef, maxSourceBytes, requestHandle, full) {
+  let intent;
+  if (requestHandle !== undefined) {
+    try {
+      intent = await readRequestIntent(requestHandle);
+    } catch (error) {
+      return [{
+        id: "verifier:request-intent",
+        status: "BLOCKED",
+        summary: "Current request intent is unavailable",
+        evidence: error.message,
+        nextCheck: "Use the active request handle, or run without --request to perform full automatic verification.",
+      }];
+    }
+  }
+  const options = {
+    cwd,
+    maxSourceBytes,
+    workLevel: full ? "normal" : intent?.level,
+    reuseExisting: !full && intent?.level === "normal",
+  };
+  if (worktree) return runCurrentAutomaticVerification(options);
   if (paths.length === 0 && baseRef === undefined) return [];
 
-  return runAutomaticVerificationForPaths({ cwd, changedPaths: paths, baseRef, maxSourceBytes });
+  return runAutomaticVerificationForPaths({ ...options, changedPaths: paths, baseRef });
 }
 
 async function handoffCommand(positionals, values, reporter) {
@@ -121,6 +142,8 @@ try {
       "failures-only": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
       base: { type: "string" },
+      request: { type: "string" },
+      full: { type: "boolean", default: false },
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
       "caller-context": { type: "string", multiple: true, default: [] },
@@ -157,6 +180,10 @@ try {
   }
   if (baseRef !== undefined && values.worktree) throw new Error("--base cannot be combined with --worktree");
   if (values.reason !== undefined && command !== "handoff") throw new Error("--reason is only supported by handoff cancel");
+  if ((values.request !== undefined || values.full) && command !== "automatic") {
+    throw new Error("--request and --full are only supported by automatic");
+  }
+  if (values.full && values.request === undefined) throw new Error("--full requires --request");
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -216,11 +243,11 @@ try {
       maxSourceBytes,
     }), { reporter, failuresOnly });
   } else if (command === "automatic" && (!values.worktree || positionals.length === 0) && !hasSemanticOptions) {
-    await writeResults(await automaticResults(positionals, values.worktree, baseRef, maxSourceBytes), { reporter, failuresOnly });
+    await writeResults(await automaticResults(positionals, values.worktree, baseRef, maxSourceBytes, values.request, values.full), { reporter, failuresOnly });
   } else {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
