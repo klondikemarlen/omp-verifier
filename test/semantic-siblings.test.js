@@ -230,11 +230,52 @@ test("when a sibling appears after empty-directory capture, the earlier assessme
   }
 });
 
-test("when a changed directory cannot be inspected, retained deletion source does not establish empty siblings", async () => {
+for (const deletion of ["working-tree", "staged", "committed"]) {
+  test(`when a whole directory is ${deletion} deleted, authenticated sibling inventory permits review`, async () => {
+    // Arrange
+    const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+    try {
+      await writeFile(join(fixture.root, "src", "other.js"), "export const other = true;\n");
+      execFileSync("git", ["add", "src/other.js"], { cwd: fixture.root });
+      execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "add sibling"], { cwd: fixture.root });
+      await rm(join(fixture.root, "src"), { recursive: true });
+      if (deletion !== "working-tree") execFileSync("git", ["add", "-u"], { cwd: fixture.root });
+      if (deletion === "committed") {
+        execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "remove boundary"], { cwd: fixture.root });
+      }
+      const prepared = await prepareSemanticEvaluation({
+        check: await discoverSemanticCheck(fixture),
+        cwd: fixture.root,
+        changedPaths: ["src/helper.js", "src/other.js"],
+        contextPaths: ["caller.js"],
+      });
+
+      // Act
+      const completed = await completeSemanticEvaluation({
+        cwd: fixture.root,
+        requestPath: prepared.reviewRequest.path,
+        assessment: passAssessment(prepared.reviewRequest.requestId),
+      });
+
+      // Assert
+      assert.deepEqual(prepared.reviewRequest.context.changedCode.map(record => [record.path, record.state]), [
+        ["src/helper.js", "deleted"], ["src/other.js", "deleted"],
+      ]);
+      assert.equal(completed.status, "PASS");
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("when deleted-directory scope omits historical siblings, review cannot claim complete context", async () => {
   // Arrange
-  const fixture = await createEmptySiblingFixture();
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
 
   try {
+    await writeFile(join(fixture.root, "src", "other.js"), "export const other = true;\n");
+    execFileSync("git", ["add", "src/other.js"], { cwd: fixture.root });
     await rm(join(fixture.root, "src"), { recursive: true });
     const prepared = await prepareSemanticEvaluation({
       check: await discoverSemanticCheck(fixture),
@@ -251,8 +292,74 @@ test("when a changed directory cannot be inspected, retained deletion source doe
     });
 
     // Assert
-    assert.equal(prepared.reviewRequest.context.changedCode[0].state, "deleted");
+    assert.notEqual(completed.status, "PASS");
+    assert.match(prepared.evidence, /sibling retrieval is incomplete/);
+    assert.match(prepared.evidence, /src\/other.js/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a deleted directory reappears during review, historical evidence cannot approve the new source", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    await rm(join(fixture.root, "src"), { recursive: true });
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+      contextPaths: ["caller.js"],
+    });
+    await mkdir(join(fixture.root, "src"));
+    await writeFile(join(fixture.root, "src", "new.js"), "export const newBoundary = true;\n");
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
     assert.equal(completed.status, "BLOCKED");
+    assert.match(completed.evidence, /source or project context changed/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when deleted-directory history is unavailable, cached source cannot establish empty siblings", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    await rm(join(fixture.root, "src"), { recursive: true });
+    await rm(join(fixture.root, ".git"), { recursive: true });
+    const prepared = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+      contextPaths: ["caller.js"],
+    });
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.notEqual(completed.status, "PASS");
+    assert.match(prepared.evidence, /cannot authenticate deleted source/);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
