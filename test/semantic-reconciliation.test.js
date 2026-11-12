@@ -84,6 +84,8 @@ for (const mutation of ["restored source", "temporary cleanup", "provider update
       assert.deepEqual(result.reviewRequest.scope.changedPaths, expected);
       if (mutation === "provider update") assert.equal(result.reviewRequest.standard.sourceDetails.version, "2.0.0");
       if (mutation === "changed source") assert.equal(result.reviewRequest.context.changedCode.find(record => record.path === "src/live.js").content, "export const live = -1;\n");
+      if (mutation === "guidance change") assert.equal(result.reviewRequest.context.projectGuidance.find(record => record.path === "AGENTS.md").content, "Live exports must now equal two.\n");
+      if (mutation === "inventory change") assert.ok(result.reviewRequest.context.sourceInventory.files.some(record => record.path === "src/diagnostic.js"));
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 }
@@ -93,7 +95,9 @@ test("when completed automatic evidence changes, exact recovery cannot reuse its
   const f = await fixture();
   try {
     const original = await f.prepare();
-    await completeSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path, assessment: assessment(original.reviewRequest.requestId) });
+    const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path, assessment: assessment(original.reviewRequest.requestId) });
+    assert.equal(accepted.status, "PASS");
+    assert.equal(accepted.evaluation.requestId, original.reviewRequest.requestId);
     await writeFile(join(f.cwd, "src/live.js"), "export const live = -1;\n");
     // Act
     const result = await readSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path });
