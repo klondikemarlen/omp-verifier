@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0 - 2026-11-12
+
+- Automatically capture oversized required present and authenticated deleted source in bounded chunks, preserving complete coverage, original lines, and one semantic review.
+- Record recovery policy and provenance without raising aggregate ceilings, changing explicit source-limit overrides, or inferring semantic approval from complete capture.
+- Keep the 16,000-byte chunk ceiling when named-verifier context metadata is unavailable; do not substitute the primary model's token window.
+
 ## 1.2.3 - 2026-11-12
 
 - Reconcile automatic delivery candidates against the actual base, retaining committed deletions and current edits while excluding restored paths and removed temporary additions.
