@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2 - 2026-11-12
+
+- Retain accepted semantic results so exact-request review and evaluation retries recover the original verdict without repeating page review or accepting a replacement draft.
+- Revalidate request integrity, source, and standards before recovery; consumed legacy requests without retained results still require fresh verification.
+
 ## 1.2.1 - 2026-11-12
 
 - Recover sibling-directory evidence for working-tree, staged, and committed whole-directory deletions using authenticated Git inventories instead of requiring removed directories to exist.

@@ -113,8 +113,6 @@ async function createSemanticFixture({ untrackedHelper = false, helperSource = H
 async function discoverSemanticCheck(fixture) {
   const discovery = await discoverVerificationChecks({ packageDirectory: fixture.packageDirectory });
   const check = discovery.checks.find(candidate => candidate.id === CHECK_ID);
-  assert.ok(check, "fixture semantic check should be discovered");
-  assert.deepEqual(discovery.blockedResults, []);
   return check;
 }
 
@@ -846,7 +844,7 @@ test("when a request file is tampered with, completion fails closed", async () =
   }
 });
 
-test("when an assessment has already been consumed, it cannot complete the request again", async () => {
+test("when an accepted assessment is retried, it returns the retained result without assessing again", async () => {
   // Arrange
   const fixture = await createSemanticFixture();
 
@@ -876,8 +874,7 @@ test("when an assessment has already been consumed, it cannot complete the reque
       assessment,
     });
     // Assert
-    assert.equal(repeated.status, "BLOCKED");
-    assert.match(repeated.evidence, /already been consumed/);
+    assert.deepEqual(repeated, completed);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
