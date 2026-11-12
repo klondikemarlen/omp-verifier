@@ -331,10 +331,11 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
   return { checks, blockedResults };
 }
 
-export async function discoverAutomaticVerification({ repositoryRoot, changedPaths, packageDirectory = defaultPackageDirectory() }) {
+export async function discoverAutomaticVerification({ repositoryRoot, changedPaths, packageDirectory = defaultPackageDirectory(), workLevel = "normal" }) {
   packageDirectory = resolve(packageDirectory);
   let paths;
   try {
+    if (!["normal", "quick-tweak", "rearchitecture"].includes(workLevel)) throw new Error("Unknown request work level");
     paths = [...new Set(changedPaths.map(path => projectPath(path, "changed path")))];
   } catch (error) {
     return {
@@ -353,6 +354,7 @@ export async function discoverAutomaticVerification({ repositoryRoot, changedPat
     requirements,
     suppressions,
     blockedResults,
+    workLevel,
   });
   return {
     results: [...blockedResults, ...policyBlocks, ...plan.results],

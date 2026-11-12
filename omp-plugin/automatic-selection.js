@@ -53,6 +53,7 @@ export function planAutomaticVerification({
   requirements,
   suppressions,
   blockedResults,
+  workLevel = "normal",
 }) {
   const checksById = new Map(checks.map(check => [check.id, check]));
   const declaredRequirementIds = new Set(requirements.map(requirement => requirement.id));
@@ -75,7 +76,7 @@ export function planAutomaticVerification({
   };
 
   for (const check of checks) {
-    if (!check.pathTriggers) continue;
+    if (workLevel === "quick-tweak" || !check.pathTriggers) continue;
     for (const path of changedPaths) {
       const trigger = check.pathTriggers.find(pattern => matchesGlob(path, pattern));
       if (trigger) addSelection(check, { path, trigger });

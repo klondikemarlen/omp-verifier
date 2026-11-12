@@ -59,7 +59,7 @@ function verificationEnvironment(changedPaths) {
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false) {
   if (check.mode === "agentic") {
     let scopePaths = changedPaths;
     let scopeRoot = repositoryRoot;
@@ -80,6 +80,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
       maxSourceBytes,
       sourceRecovery,
       automaticScope,
+      reuseExisting,
     });
   }
 
@@ -136,15 +137,23 @@ export async function runAutomaticVerification({
   repositoryRoot = cwd,
   maxSourceBytes,
   delivery,
+  workLevel = "normal",
+  reuseExisting = false,
 }) {
-  const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({ repositoryRoot, changedPaths, packageDirectory });
-  const automaticScope = delivery ? { packageDirectory: selectedDirectory, delivery } : undefined;
+  const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({
+    repositoryRoot, changedPaths, packageDirectory, workLevel,
+  });
+  const automaticScope = delivery ? {
+    packageDirectory: selectedDirectory,
+    delivery,
+    ...(workLevel === "quick-tweak" ? { workLevel } : {}),
+  } : undefined;
   const sourceRecovery = maxSourceBytes === undefined ? AUTOMATIC_SOURCE_RECOVERY : undefined;
 
   for (const { check, matches, suppressedResults } of selections) {
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
-    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery);
+    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting);
     if (!result) continue;
     results.push({
       ...result,
@@ -154,7 +163,7 @@ export async function runAutomaticVerification({
   return results;
 }
 
-export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes }) {
+export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes, workLevel, reuseExisting }) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
     if (baseRef !== undefined) return [blocked("verifier:auto-selection", "Could not inspect base changes", root.error)];
@@ -182,10 +191,12 @@ export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [],
     repositoryRoot: root.repositoryRoot,
     maxSourceBytes,
     delivery,
+    workLevel,
+    reuseExisting,
   });
 }
 
-export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes }) {
+export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes, workLevel, reuseExisting }) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
@@ -200,6 +211,8 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory, m
     packageDirectory,
     repositoryRoot: changeSet.repositoryRoot,
     maxSourceBytes,
+    workLevel,
+    reuseExisting,
   });
 }
 
