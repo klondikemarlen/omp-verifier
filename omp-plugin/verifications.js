@@ -10,6 +10,11 @@ const MAX_OUTPUT_BYTES = 64_000;
 const MAX_FIELD_LENGTH = 4_000;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const NODE_RUNTIME = "node";
+const AUTOMATIC_SOURCE_RECOVERY = Object.freeze({
+  chunkBytes: 16_000,
+  maxSourceBytes: 256_000,
+  modelContext: "unavailable",
+});
 
 function blocked(id, summary, evidence) {
   return { id, status: "BLOCKED", summary, ...(evidence ? { evidence } : {}) };
@@ -54,7 +59,7 @@ function verificationEnvironment(changedPaths) {
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery) {
   if (check.mode === "agentic") {
     let scopePaths = changedPaths;
     let scopeRoot = repositoryRoot;
@@ -73,6 +78,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
       changedPaths: scopePaths,
       repositoryRoot: scopeRoot,
       maxSourceBytes,
+      sourceRecovery,
       automaticScope,
     });
   }
@@ -133,11 +139,12 @@ export async function runAutomaticVerification({
 }) {
   const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({ repositoryRoot, changedPaths, packageDirectory });
   const automaticScope = delivery ? { packageDirectory: selectedDirectory, delivery } : undefined;
+  const sourceRecovery = maxSourceBytes === undefined ? AUTOMATIC_SOURCE_RECOVERY : undefined;
 
   for (const { check, matches, suppressedResults } of selections) {
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
-    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes, automaticScope);
+    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery);
     if (!result) continue;
     results.push({
       ...result,
