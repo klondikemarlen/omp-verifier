@@ -41,6 +41,66 @@ export function validateSourceByteLimit(value = DEFAULT_MAX_SOURCE_BYTES) {
   return value;
 }
 
+function validateSourceRecovery(value) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("sourceRecovery must be an object");
+  }
+  for (const [name, maximum] of [["chunkBytes", MAX_FILE_EVIDENCE_BYTES], ["maxSourceBytes", MAX_SOURCE_BYTES]]) {
+    if (!Number.isSafeInteger(value[name]) || value[name] <= 0 || value[name] > maximum) {
+      throw new RangeError(`sourceRecovery.${name} must be a positive safe integer no greater than ${maximum}`);
+    }
+  }
+  return { chunkBytes: value.chunkBytes, maxSourceBytes: value.maxSourceBytes, modelContext: value.modelContext };
+}
+
+function sourceChunks(path, content, source, recovery, identity = {}) {
+  if (Buffer.byteLength(content) > recovery.maxSourceBytes) {
+    return { error: `source exceeds the ${recovery.maxSourceBytes}-byte automatic recovery whole-source limit` };
+  }
+  // Keep CRLF bytes intact so complete cached chunks can authenticate the original source.
+  const lines = content.split("\n");
+  const ranges = [];
+  let startLine = 1;
+  let bytes = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    const lineBytes = Buffer.byteLength(lines[index]);
+    if (lineBytes > recovery.chunkBytes) {
+      return { error: `source line ${index + 1} exceeds the ${recovery.chunkBytes}-byte automatic recovery chunk limit` };
+    }
+    if (index + 1 > startLine && bytes + 1 + lineBytes > recovery.chunkBytes) {
+      ranges.push([startLine, index]);
+      startLine = index + 1;
+      bytes = lineBytes;
+    } else {
+      bytes += (index + 1 > startLine ? 1 : 0) + lineBytes;
+    }
+  }
+  ranges.push([startLine, lines.length]);
+  const sourceHash = sha256(content);
+  const records = ranges.map(([startLine, endLine]) => ({
+    ...recordFor(path, {
+      content: lines.slice(startLine - 1, endLine).join("\n"),
+      sha256: sourceHash,
+      lineCount: lines.length,
+      startLine,
+      endLine,
+      partial: ranges.length > 1,
+    }, source),
+    ...identity,
+  }));
+  return { records, ranges, lineCount: lines.length };
+}
+
+function admitSourceChunks(records, chunks, budget) {
+  const admittedRanges = [];
+  for (let index = 0; index < chunks.records.length; index += 1) {
+    if (!addRecord(records, chunks.records[index], budget)) break;
+    admittedRanges.push(chunks.ranges[index]);
+  }
+  return { lineCount: chunks.lineCount, ...lineCoverage(admittedRanges, chunks.lineCount) };
+}
+
 function normalizedProjectPath(value, name) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty project-relative path`);
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
@@ -325,8 +385,23 @@ function recordFor(path, result, source) {
 function previousSource(previousContext, path) {
   const records = previousContext?.changedCode?.filter(record => record.path === path && typeof record.content === "string") ?? [];
   const coverage = previousContext?.changedCodeCoverage?.find(record => record.path === path);
-  if (records.length !== 1 || coverage || records[0].partial || records[0].startLine > 1) return undefined;
-  return records[0].content;
+  if (coverage) {
+    if (!coverage.complete || !records.length) return undefined;
+    const ordered = [...records].sort((left, right) => (left.startLine ?? 1) - (right.startLine ?? 1));
+    let nextLine = 1;
+    for (const record of ordered) {
+      if ((record.startLine ?? 1) !== nextLine) return undefined;
+      nextLine += record.content.split("\n").length;
+    }
+    const content = ordered.map(record => record.content).join("\n");
+    const sourceHash = sha256(content);
+    if (nextLine !== coverage.lineCount + 1
+      || ordered.some(record => (record.previousSha256 ?? record.sha256) !== sourceHash)) return undefined;
+    if (ordered.some(record => record.reference !== ordered[0].reference)) return undefined;
+    return { content, ...(ordered[0].reference ? { reference: ordered[0].reference } : {}) };
+  }
+  if (records.length !== 1 || records[0].partial || records[0].startLine > 1) return undefined;
+  return { content: records[0].content, ...(records[0].reference ? { reference: records[0].reference } : {}) };
 }
 
 function disjointLineRanges(selectors) {
@@ -463,6 +538,7 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
   };
   if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
+  if (context.sourceRecovery) fingerprint.sourceRecovery = context.sourceRecovery;
   return sha256(JSON.stringify(fingerprint));
 }
 
@@ -475,9 +551,12 @@ export async function captureSemanticContext({
   externalSnapshot,
   previousContext,
   maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
+  sourceRecovery,
   legacyRequest = false,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
+  const recovery = validateSourceRecovery(sourceRecovery);
+  const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
   const normalizedChangedPaths = [...new Set(changedPaths.map(path => normalizedProjectPath(path, "changed path")))].sort();
   const callerSourcePaths = new Set(callerContextPaths.map(contextRange).map(context =>
@@ -501,7 +580,7 @@ export async function captureSemanticContext({
   const normalizedContextPaths = [...new Set(requestedContext.map(context => context.path))].sort();
 
   const deletedSources = new Map();
-  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths, deletedSources, sourceByteLimit);
+  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths, deletedSources, requiredSourceLimit);
   const paths = [...new Set([
     ...await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]),
     ...siblingInventory.flatMap(inventory => inventory.files),
@@ -553,26 +632,43 @@ export async function captureSemanticContext({
   const changedCodeCoverage = [];
   const changedSelectors = new Map();
   for (const path of normalizedChangedPaths) {
-    const result = await readProjectText(root, path, sourceByteLimit);
+    const selectorsForRecovery = requestedContext.filter(selector => selector.path === path && selector.startLine);
+    const recoverWholeSource = recovery && !selectorsForRecovery.length;
+    const changedSourceLimit = recoverWholeSource ? requiredSourceLimit : sourceByteLimit;
+    const result = await readProjectText(root, path, changedSourceLimit);
     if (result.missing) {
-      const cachedContent = previousSource(previousContext, path);
-      const priorSource = cachedContent === undefined
-        ? (deletedSources.has(path) ? deletedSources.get(path) : await deletedProjectSource(root, path, sourceByteLimit, {
+      const cachedSource = previousSource(previousContext, path);
+      const priorSource = cachedSource === undefined
+        ? (deletedSources.has(path) ? deletedSources.get(path) : await deletedProjectSource(root, path, changedSourceLimit, {
           identifyOversized: !legacyRequest,
         }))
-        : { oversized: Buffer.byteLength(cachedContent) > sourceByteLimit, content: cachedContent };
+        : { ...cachedSource, oversized: Buffer.byteLength(cachedSource.content) > changedSourceLimit };
       if (!priorSource) {
         changedCode.push({ path, state: "unavailable", reason: "path is absent and no prior source confirms its deletion" });
         missingChangedPaths.push(path);
         continue;
       }
-      if (priorSource.oversized || Buffer.byteLength(priorSource.content ?? "") > sourceByteLimit) {
+      if (priorSource.oversized || Buffer.byteLength(priorSource.content ?? "") > changedSourceLimit) {
         changedCode.push({
           path,
           state: "unavailable",
-          reason: `deleted source exceeds the ${sourceByteLimit}-byte changed-source limit`,
+          reason: `deleted source exceeds the ${changedSourceLimit}-byte ${recoverWholeSource ? "automatic recovery whole-source" : "changed-source"} limit`,
         });
         missingChangedPaths.push(path);
+        continue;
+      }
+      if (recoverWholeSource) {
+        const chunks = sourceChunks(path, priorSource.content, "changed-code", recovery, {
+          state: "deleted",
+          previousSha256: sha256(priorSource.content),
+          ...(priorSource.reference ? { reference: priorSource.reference } : {}),
+        });
+        const coverage = chunks.error ? undefined : admitSourceChunks(changedCode, chunks, budget);
+        if (coverage) changedCodeCoverage.push({ path, ...coverage });
+        if (!coverage?.complete) {
+          changedCode.push({ path, state: "unavailable", reason: chunks.error ?? budget.rejections.at(-1)?.reason ?? "context evidence limit reached" });
+          missingChangedPaths.push(path);
+        }
         continue;
       }
       const deletedRecord = {
@@ -586,6 +682,21 @@ export async function captureSemanticContext({
         changedCode.push({ path, state: "unavailable", reason: "context evidence limit reached" });
         missingChangedPaths.push(path);
       }
+      continue;
+    }
+    if (recoverWholeSource && typeof result.content === "string") {
+      const chunks = sourceChunks(path, result.content, "changed-code", recovery);
+      const coverage = chunks.error ? undefined : admitSourceChunks(changedCode, chunks, budget);
+      if (coverage) changedCodeCoverage.push({ path, ...coverage });
+      if (!coverage?.complete) {
+        changedCode.push({ path, state: "unavailable", reason: chunks.error ?? budget.rejections.at(-1)?.reason ?? "context evidence limit reached" });
+        missingChangedPaths.push(path);
+      }
+      continue;
+    }
+    if (recoverWholeSource && result.sizeLimitExceeded) {
+      changedCode.push({ path, state: "unavailable", reason: `source exceeds the ${requiredSourceLimit}-byte automatic recovery whole-source limit` });
+      missingChangedPaths.push(path);
       continue;
     }
     if (result.sizeLimitExceeded) {
@@ -717,6 +828,18 @@ export async function captureSemanticContext({
       && changedCode.some(record => record.path === path && record.state === "present")) {
       continue;
     }
+    if (recovery && !requestedContext.some(selector => selector.path === path && selector.startLine)) {
+      const result = await readProjectText(root, path, requiredSourceLimit);
+      const chunks = typeof result.content === "string" ? sourceChunks(path, result.content, "project-guidance", recovery) : undefined;
+      const coverage = chunks && !chunks.error ? admitSourceChunks(projectGuidance, chunks, budget) : undefined;
+      if (!coverage?.complete) {
+        guidanceRequirements.find(requirement => requirement.path === path).reason = chunks?.error
+          ?? (result.sizeLimitExceeded ? `source exceeds the ${requiredSourceLimit}-byte automatic recovery whole-source limit` : result.error)
+          ?? (result.missing ? "path is absent" : budget.rejections.at(-1)?.reason ?? "context evidence limit reached");
+        missingGuidancePaths.push(path);
+      }
+      continue;
+    }
     let result = await readProjectText(root, path);
     if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
       result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });
@@ -825,6 +948,7 @@ export async function captureSemanticContext({
   };
   const context = {
     changedPaths: normalizedChangedPaths,
+    ...(recovery ? { sourceRecovery: recovery } : {}),
     changedCode,
     ...(changedCodeCoverage.length ? { changedCodeCoverage } : {}),
     callers: callerEvidence,
@@ -889,6 +1013,10 @@ export function semanticContextMissing(requiredContext, captured) {
     if (context.changedPaths.length === 0) missing.push("changed-code scope was not supplied");
     if (context.missingChangedPaths.length) {
       missing.push(`could not capture changed files: ${context.missingChangedPaths.join(", ")}`);
+      if (context.sourceRecovery) {
+        const failures = context.changedCode.filter(record => record.state === "unavailable");
+        missing.push(`Automatic source recovery prerequisites: ${failures.map(record => `${record.path} (${record.reason})`).join("; ")}. Unavailable required evidence keeps the review BLOCKED; automatic capture does not establish a verdict.`);
+      }
       if (context.changedCode.some(record => record.rangeRecovery)) {
         missing.push("Changed-source range recovery remains available. Before adding replacements, remove each oversized or invalid retained selector from scope.contextPaths with review --remove-context '<exact-selector>'; do not retain the failed selection alongside smaller overlaps. Add bounded --context '<path#Lstart-Lend>' replacements and every omitted line in changedCodeCoverage, including the final line. Keep the complete changed scope and limits, inspect all renewed pages, then submit one assessment. If supported recovery cannot obtain the required evidence, submit explicit BLOCKED naming the prerequisite.");
       }

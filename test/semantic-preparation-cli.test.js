@@ -263,7 +263,7 @@ test("when worktree automatic receives a larger source cap, it recovers deleted 
     LARGE_HISTORICAL_SOURCE);
 });
 
-test("when a default automatic capture follows an explicit override, cached large deletion is rejected again", async t => {
+test("when a default automatic capture follows an explicit override, bounded chunks replace the one-off whole-source cap", async t => {
   // Arrange
   const changedPolicySource = POLICY_SOURCE.replace("value <= 0", "value < 1");
   const fixture = await preparationFixture(t, {
@@ -279,7 +279,7 @@ test("when a default automatic capture follows an explicit override, cached larg
   // Act
   const defaultCapture = fixture.run(["automatic", "src/policy.js", "src/obsolete.js"]);
   const defaultResult = JSON.parse(defaultCapture.stdout)[0];
-  const rejectedDeletion = defaultResult.reviewRequest.context.changedCode.find(record => record.path === "src/obsolete.js");
+  const deletedChunks = defaultResult.reviewRequest.context.changedCode.filter(record => record.path === "src/obsolete.js");
   const assessment = {
     requestId: defaultResult.reviewRequest.requestId,
     status: "PASS",
@@ -306,11 +306,13 @@ test("when a default automatic capture follows an explicit override, cached larg
   assert.equal(defaultCapture.status, 0, defaultCapture.stderr);
   assert.equal(defaultResult.status, "PENDING");
   assert.equal(defaultResult.reviewRequest.scope.maxSourceBytes, 16000);
-  assert.equal(rejectedDeletion.state, "unavailable");
-  assert.ok(defaultResult.reviewRequest.context.missingChangedPaths.includes("src/obsolete.js"));
-  assert.ok(defaultResult.reviewRequest.missingContext.some(reason => reason.includes("src/obsolete.js")));
-  assert.equal(evaluation.status, 1, evaluation.stderr);
-  assert.equal(completed.status, "BLOCKED");
+  assert.ok(deletedChunks.every(record => record.state === "deleted" && Buffer.byteLength(record.content) <= 16000));
+  assert.equal(deletedChunks.map(record => record.content).join("\n"), LARGE_HISTORICAL_SOURCE);
+  assert.deepEqual(defaultResult.reviewRequest.context.missingChangedPaths, []);
+  assert.deepEqual(defaultResult.reviewRequest.missingContext, []);
+  assert.equal(defaultResult.reviewRequest.scope.sourceRecovery.chunkBytes, 16000);
+  assert.equal(evaluation.status, 0, evaluation.stderr);
+  assert.equal(completed.status, "PASS");
 });
 
 test("when checks, review or evaluate receives a source cap, CLI rejects the unsupported command before dispatch", async t => {

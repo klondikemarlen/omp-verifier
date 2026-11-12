@@ -253,6 +253,7 @@ async function captureRequest({
   externalContextPaths = [],
   previousContext,
   maxSourceBytes,
+  sourceRecovery,
   automaticScope,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
@@ -265,6 +266,7 @@ async function captureRequest({
     externalContextPaths,
     previousContext,
     maxSourceBytes: sourceByteLimit,
+    sourceRecovery,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
   const requestId = randomUUID();
@@ -292,6 +294,7 @@ async function captureRequest({
       callerContextPaths: [...callerContextPaths],
       ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
       maxSourceBytes: sourceByteLimit,
+      ...(sourceRecovery ? { sourceRecovery: { ...sourceRecovery } } : {}),
       ...(automaticScope ? { automatic: automaticScope } : {}),
     },
     context: captured.context,
@@ -377,6 +380,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     externalSnapshot: payload.context.externalContext,
     previousContext: payload.context,
     maxSourceBytes: sourceByteLimit,
+    sourceRecovery: payload.scope.sourceRecovery,
     legacyRequest: usesLegacySourceLimit,
   });
   if (captured.fingerprint !== runtime.contextFingerprint || captured.fingerprint !== payload.context.fingerprint) {
@@ -449,6 +453,7 @@ async function reconcileAutomaticScope(target, current) {
     externalContextPaths: payload.scope.externalContextPaths,
     previousContext: payload.context,
     maxSourceBytes: payload.scope.maxSourceBytes,
+    sourceRecovery: payload.scope.sourceRecovery,
     automaticScope: { packageDirectory: plan.packageDirectory, delivery },
   });
   const requestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, captured.requestId));
@@ -513,6 +518,7 @@ export async function prepareSemanticEvaluation({
   repositoryRoot = cwd,
   contextPaths = [],
   maxSourceBytes,
+  sourceRecovery,
   automaticScope,
 }) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
@@ -532,6 +538,7 @@ export async function prepareSemanticEvaluation({
         contextPaths,
         previousContext: previous?.context,
         maxSourceBytes: sourceByteLimit,
+        sourceRecovery,
         automaticScope,
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
@@ -601,6 +608,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         callerContextPaths: additionalCallerContext,
         externalContextPaths: additionalExternalContext,
         maxSourceBytes: stored.payload.scope.maxSourceBytes,
+        sourceRecovery: stored.payload.scope.sourceRecovery,
         previousContext: stored.payload.context,
         automaticScope: stored.payload.scope.automatic,
       });
