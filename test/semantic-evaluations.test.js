@@ -10,7 +10,8 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
-import { discoverVerificationChecks, runAutomaticVerification } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { runAutomaticVerification } from "#root/omp-plugin/verifications.js";
 
 const CHECK_ID = "publisher:alignment";
 const HELPER_SOURCE = "export function helper(value) { return value; }\n";

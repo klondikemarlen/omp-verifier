@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { uninstallGlobalVerifier } from "#root/omp-plugin/global-verifier.js";
 import verifierPlugin from "#root/omp-plugin/index.js";
-import { discoverVerificationChecks, runAutomaticVerification, runVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { runAutomaticVerification, runVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const startupAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-startup-"));
 const registrations = { commands: new Map(), events: new Map(), notices: [] };

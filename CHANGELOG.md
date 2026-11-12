@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.3 - 2026-11-12
+
+- Reconcile automatic delivery candidates against the actual base, retaining committed deletions and current edits while excluding restored paths and removed temporary additions.
+- Renew stale delivery-backed semantic requests against current scope, providers, and evidence; discard old approval eligibility while preserving guidance, capture limits, and integrity checks.
+
 ## 1.2.2 - 2026-11-12
 
 - Retain accepted semantic results so exact-request review and evaluation retries recover the original verdict without repeating page review or accepting a replacement draft.

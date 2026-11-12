@@ -6,7 +6,8 @@ import {
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
-import { discoverVerificationChecks, runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|uninstall]";
 const SUBCOMMANDS = [

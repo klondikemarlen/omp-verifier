@@ -10,8 +10,8 @@ import {
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
+import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import {
-  discoverVerificationChecks,
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
   runInstalledVerificationChecks,
