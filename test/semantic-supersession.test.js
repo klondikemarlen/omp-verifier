@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { discoverVerificationChecks } from "#root/omp-plugin/verifications.js";
@@ -239,3 +239,101 @@ test("when a late CLI page read follows supersession, replacement inspection sta
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+for (const status of ["PASS", "FAIL", "BLOCKED"]) {
+  test(`when an accepted ${status} is retried or read, its exact result survives a conflicting draft`, async () => {
+    // Arrange
+    const fixture = await createSemanticFixture();
+    try {
+      const prepared = await prepareSemanticEvaluation({
+        check: await discoverSemanticCheck(fixture),
+        cwd: fixture.root,
+        changedPaths: ["src/helper.js"],
+      });
+      const requestPath = prepared.reviewRequest.path;
+      const assessment = { ...passAssessment(prepared.reviewRequest.requestId), status };
+      const accepted = await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment });
+      const conflicting = { ...assessment, status: status === "PASS" ? "FAIL" : "PASS", summary: "Replacement draft" };
+
+      // Act
+      const retried = await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment: conflicting });
+      const recovered = await readSemanticEvaluation({ cwd: fixture.root, requestPath });
+      const cli = spawnSync(process.execPath, [
+        CLI, "evaluate", requestPath, "--assessment", "-", "--reporter", "text", "--failures-only",
+      ], { cwd: fixture.root, encoding: "utf8", input: JSON.stringify(conflicting) });
+
+      // Assert
+      assert.deepEqual({
+        status: accepted.status,
+        retried,
+        recovered,
+        cliStatus: cli.status,
+        cliReport: status === "PASS" ? cli.stdout : cli.stdout.startsWith(`${status} publisher:alignment\n`),
+      }, {
+        status,
+        retried: accepted,
+        recovered: accepted,
+        cliStatus: status === "PASS" ? 0 : 1,
+        cliReport: status === "PASS" ? "" : true,
+      });
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const mutation of ["source", "standard", "request", "missing provider", "legacy completion"]) {
+  test(`when ${mutation} invalidates a completed request, recovery cannot reuse its PASS`, async () => {
+    // Arrange
+    const fixture = await createSemanticFixture();
+    try {
+      const prepared = await prepareSemanticEvaluation({
+        check: await discoverSemanticCheck(fixture),
+        cwd: fixture.root,
+        changedPaths: ["src/helper.js"],
+      });
+      const requestPath = prepared.reviewRequest.path;
+      const assessment = passAssessment(prepared.reviewRequest.requestId);
+      await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment });
+      const provider = join(fixture.packageDirectory, "publisher");
+      const expectedEvidence = {
+        source: /source or project context changed/,
+        standard: /standard or provider manifest changed/,
+        request: /tampered/,
+        "missing provider": /manifest is unavailable/,
+        "legacy completion": /no retained final result/,
+      };
+      if (mutation === "source") {
+        await writeFile(join(fixture.root, "src/helper.js"), "export function helper() { return 0; }\n");
+      } else if (mutation === "standard") {
+        await writeFile(join(provider, "standard.md"), "The helper must return zero.\n");
+      } else if (mutation === "request") {
+        await writeFile(requestPath, `${await readFile(requestPath, "utf8")}\n`);
+      } else if (mutation === "missing provider") {
+        await rm(join(provider, "package.json"));
+      } else {
+        const states = join(dirname(dirname(requestPath)), "states");
+        const statePath = join(states, (await readdir(states))[0]);
+        const state = JSON.parse(await readFile(statePath, "utf8"));
+        delete state.finalResult;
+        await writeFile(statePath, JSON.stringify(state));
+      }
+
+      // Act
+      const recovered = await readSemanticEvaluation({ cwd: fixture.root, requestPath });
+      const retried = await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment });
+
+      // Assert
+      assert.deepEqual([recovered, retried].map(result => ({
+        status: result.status,
+        evidenceMatches: expectedEvidence[mutation].test(result.evidence),
+        request: result.reviewRequest,
+      })), [
+        { status: "BLOCKED", evidenceMatches: true, request: undefined },
+        { status: "BLOCKED", evidenceMatches: true, request: undefined },
+      ]);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}

@@ -388,9 +388,10 @@ function requestBlock(id, error) {
   return blocked(id || "semantic-evaluation", "Semantic request is unavailable", error);
 }
 
-async function reconcileSupersededRequest(target) {
+async function reconcileRequest(target) {
   const currentState = await readCurrentState(target.cacheDirectory, target.checkId);
-  if (!currentState || currentState.requestId === target.requestId) return undefined;
+  const isCurrent = currentState?.requestId === target.requestId;
+  if (!currentState || (isCurrent && !currentState.consumed)) return undefined;
 
   const current = await readStoredRequest(target.cacheDirectory, target.checkId, currentState.requestId, {
     requireCurrent: false,
@@ -400,6 +401,15 @@ async function reconcileSupersededRequest(target) {
     repositoryRoot: target.repositoryRoot,
     stored: current.stored,
   });
+  if (isCurrent) {
+    const result = currentState.finalResult;
+    if (result?.id !== target.checkId || result.evaluation?.requestId !== target.requestId
+      || !STATUSES.has(result.status)) {
+      throw new Error("completed semantic request has no retained final result; prepare fresh verification");
+    }
+    return result;
+  }
+
   const evaluation = {
     mode: "agentic",
     requestId: target.requestId,
@@ -465,8 +475,8 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-      const superseded = await reconcileSupersededRequest(target);
-      if (superseded) return superseded;
+      const reconciled = await reconcileRequest(target);
+      if (reconciled) return reconciled;
 
       const { stored } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
       await validateFreshness({ checkId: target.checkId, repositoryRoot: target.repositoryRoot, stored });
@@ -634,8 +644,8 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-      const superseded = await reconcileSupersededRequest(target);
-      if (superseded) return superseded;
+      const reconciled = await reconcileRequest(target);
+      if (reconciled) return reconciled;
 
       const { stored, currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
       await validateFreshness({
@@ -684,6 +694,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
       await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify({
         ...currentState,
         consumed: true,
+        finalResult,
       }));
       return finalResult;
     });
