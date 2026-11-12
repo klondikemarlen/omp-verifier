@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
+import { lstat, opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -111,7 +111,60 @@ async function inventoryPaths(root, changedPaths) {
     .sort();
 }
 
-async function siblingDirectoryInventory(root, changedPaths) {
+async function historicalSiblingInventory(root, directory, changedPaths, deletedSources, maxSourceBytes, remainingEntries) {
+  // Only genuinely absent directories may use history, not links or inaccessible paths.
+  let ancestor = resolve(root, directory);
+  while (true) {
+    try {
+      const entry = await lstat(ancestor);
+      if (!entry.isDirectory() || !insideRoot(root, await realpath(ancestor))) {
+        throw new Error("missing directory has an unsafe ancestor");
+      }
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      ancestor = dirname(ancestor);
+    }
+  }
+
+  const references = new Set();
+  const boundaryPaths = changedPaths.filter(path => dirname(path) === directory);
+  if (boundaryPaths.length > remainingEntries) throw new Error("sibling directory entry limit reached");
+  for (const path of boundaryPaths) {
+    const source = await deletedProjectSource(root, path, maxSourceBytes);
+    deletedSources.set(path, source);
+    if (typeof source?.content !== "string") {
+      throw new Error(`historical sibling inventory cannot authenticate deleted source: ${path}`);
+    }
+    references.add(source.reference.slice(0, source.reference.indexOf(":")));
+  }
+
+  const files = new Set();
+  const snapshots = [];
+  let inspectedEntries = 0;
+  for (const revision of references) {
+    const args = revision
+      ? ["ls-tree", "-z", `${revision}:${directory}`]
+      : ["ls-files", "--stage", "-z", "--", `:(literal)${directory}/`];
+    const { stdout } = await execFileAsync("git", ["-C", root, ...args], {
+      maxBuffer: 4_000_000,
+      timeout: 5_000,
+    });
+    const entries = stdout.split("\0").filter(Boolean);
+    inspectedEntries += entries.length;
+    if (inspectedEntries > remainingEntries) throw new Error("sibling directory entry limit reached");
+    if (!entries.length) throw new Error("historical sibling inventory is unavailable");
+    snapshots.push({ revision: revision || "index", sha256: sha256(stdout) });
+    for (const entry of entries) {
+      const name = entry.slice(entry.indexOf("\t") + 1);
+      const path = revision ? `${directory}/${name}` : name;
+      if (dirname(path) === directory && codeFile(path) && !changedPaths.includes(path)) files.add(path);
+    }
+  }
+  return { files: [...files], snapshots, inspectedEntries };
+}
+
+async function siblingDirectoryInventory(root, changedPaths, deletedSources, maxSourceBytes) {
   const directories = [...new Set(changedPaths.map(path => dirname(path)))].sort();
   const inventories = [];
   let inspectedEntries = 0;
@@ -140,7 +193,21 @@ async function siblingDirectoryInventory(root, changedPaths) {
       inventory.complete = !truncated;
       if (truncated) inventory.reason = "sibling directory entry limit reached";
     } catch (error) {
-      inventory.reason = error.message;
+      if (error.code === "ENOENT") {
+        try {
+          const historical = await historicalSiblingInventory(
+            root, path, changedPaths, deletedSources, maxSourceBytes, MAX_INVENTORY_FILES - inspectedEntries,
+          );
+          inventory.files = historical.files;
+          inventory.snapshots = historical.snapshots;
+          inventory.complete = true;
+          inspectedEntries += historical.inspectedEntries;
+        } catch (historicalError) {
+          inventory.reason = historicalError.message;
+        }
+      } else {
+        inventory.reason = error.message;
+      }
     }
     inventory.files.sort();
   }
@@ -307,7 +374,7 @@ async function gitSource(root, reference, maxSourceBytes) {
     if (stdout.byteLength > maxSourceBytes) return { oversized: true };
     if (stdout.includes(0)) return undefined;
 
-    return { content: stdout.toString("utf8") };
+    return { content: stdout.toString("utf8"), reference };
   } catch (error) {
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return { oversized: true };
     return undefined;
@@ -433,7 +500,8 @@ export async function captureSemanticContext({
     context.startLine || !selectors.some(other => other.path === context.path && other.startLine));
   const normalizedContextPaths = [...new Set(requestedContext.map(context => context.path))].sort();
 
-  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths);
+  const deletedSources = new Map();
+  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths, deletedSources, sourceByteLimit);
   const paths = [...new Set([
     ...await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]),
     ...siblingInventory.flatMap(inventory => inventory.files),
@@ -489,9 +557,9 @@ export async function captureSemanticContext({
     if (result.missing) {
       const cachedContent = previousSource(previousContext, path);
       const priorSource = cachedContent === undefined
-        ? await deletedProjectSource(root, path, sourceByteLimit, {
+        ? (deletedSources.has(path) ? deletedSources.get(path) : await deletedProjectSource(root, path, sourceByteLimit, {
           identifyOversized: !legacyRequest,
-        })
+        }))
         : { oversized: Buffer.byteLength(cachedContent) > sourceByteLimit, content: cachedContent };
       if (!priorSource) {
         changedCode.push({ path, state: "unavailable", reason: "path is absent and no prior source confirms its deletion" });
