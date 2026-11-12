@@ -96,12 +96,12 @@ test("when completed automatic evidence changes, exact recovery cannot reuse its
   try {
     const original = await f.prepare();
     const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path, assessment: assessment(original.reviewRequest.requestId) });
-    assert.equal(accepted.status, "PASS");
-    assert.equal(accepted.evaluation.requestId, original.reviewRequest.requestId);
     await writeFile(join(f.cwd, "src/live.js"), "export const live = -1;\n");
     // Act
     const result = await readSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path });
     // Assert
+    assert.equal(accepted.status, "PASS");
+    assert.equal(accepted.evaluation.requestId, original.reviewRequest.requestId);
     assert.equal(result.status, "PENDING");
     assert.notEqual(result.reviewRequest.requestId, original.reviewRequest.requestId);
     assert.equal(result.reviewRequest.context.changedCode.find(record => record.path === "src/live.js").content, "export const live = -1;\n");
