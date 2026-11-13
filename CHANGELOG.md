@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.0 - 2026-11-13
+
+- Add `/verifier demo` to preview labeled PASS, FAIL, and BLOCKED samples through the real manual-result notification UI without executing checks or changing verification state.
+
 ## 1.4.1 - 2026-11-13
 
 - Hide internal request-intent cards from the chat while preserving advisor context, request-level safeguards, and verification failure reporting.

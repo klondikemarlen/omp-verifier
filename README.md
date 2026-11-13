@@ -47,6 +47,12 @@ The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on 
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it requests the coordinator's failure-only text reporter and passes that readable output unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
 
+## Preview result notifications
+
+Run `/verifier demo` to see sample `PASS`, `FAIL`, and `BLOCKED` results through the same text formatter and notification surface as `/verifier verify`. The command uses labeled sample data only: it does not execute checks, record verdicts, change verification state, or enable a persistent mode.
+
+This previews manual-command notifications, not OMP's automatic advisor-warning UI. Internal request coordination remains hidden. The demo is not evidence about your project; automatic advisor silence is not proof of a successful check.
+
 ## Request-sized work
 
 Start a request with `Verifier work level: quick tweak`, `Verifier work level: normal`, or `Verifier work level: rearchitecture` on its first line. The choice applies only to that request; the next request defaults to normal. Request-level coordination stays out of the chat while remaining available to the native advisor. Quoted declarations elsewhere in a prompt do not select a mode.
