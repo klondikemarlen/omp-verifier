@@ -74,7 +74,12 @@ async function showDemo(ctx) {
       const sample = samples[sampleIndex];
       preview.clear();
       preview.addChild(new ui.Text(
-        `Verifier demo — sample ${sampleIndex + 1}/${samples.length}: ${sample.status}\nTab: next sample · Esc / Enter: close`,
+        `Verifier demo — sample ${sampleIndex + 1}/${samples.length}: ${sample.status}`,
+        0, 0,
+      ));
+      preview.addChild(new ui.Text(
+        `${theme.bold("Controls")}  ${theme.bold(theme.fg("accent", "[Tab]"))} Next sample    `
+        + `${theme.bold(theme.fg("accent", "[Esc] / [Enter]"))} Close`,
         0, 0,
       ));
       preview.addChild(advisor.createAdvisorMessageCard({
