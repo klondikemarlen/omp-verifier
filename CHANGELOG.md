@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.3 - 2026-11-13
+
+- Make demo shortcuts easy to find in a dedicated control row with bold, accent-colored keycaps.
+
 ## 1.5.2 - 2026-11-13
 
 - Keep the advisor demo separate from the conversation in a bordered editor-area preview. Show one sample at a time with Tab switching and visible dismissal controls.
