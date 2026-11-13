@@ -18,13 +18,15 @@ async function pluginFixture(t) {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-intent-plugin-"));
   t.after(() => rm(agentDir, { recursive: true, force: true }));
   const events = new Map();
+  const renderers = new Map();
   await verifierPlugin({
     setLabel() {},
     pi: { getAgentDir: () => agentDir },
     on: (event, handler) => events.set(event, handler),
     registerCommand() {},
+    registerMessageRenderer: (type, renderer) => renderers.set(type, renderer),
   });
-  return { hook: events.get("before_agent_start") };
+  return { hook: events.get("before_agent_start"), renderers };
 }
 
 const prefixCases = [
@@ -186,9 +188,9 @@ test("when session identity is missing, direct creation refuses an unbound inten
   await assert.rejects(emptyIdentity, /session identity/);
 });
 
-test("when the supported prompt hook fires, visible context starts with the complete handle and level", async t => {
+test("when the prompt hook supplies request intent, the chat stays quiet without removing advisor context", async t => {
   // Arrange
-  const { hook } = await pluginFixture(t);
+  const { hook, renderers } = await pluginFixture(t);
   const sessionId = randomUUID();
   const ctx = { sessionManager: { getSessionId: () => sessionId } };
 
@@ -197,8 +199,15 @@ test("when the supported prompt hook fires, visible context starts with the comp
   const handle = result.message.content.match(/--request ([0-9a-f.-]+)/)[1];
   const intent = await readRequestIntent(handle);
   t.after(() => rm(dirname(intent.path), { recursive: true, force: true }));
+  const renderer = renderers.get(result.message.customType);
+  const collapsed = renderer(result.message, { expanded: false });
+  const expanded = renderer(result.message, { expanded: true });
+  collapsed.invalidate();
 
   // Assert
+  assert.deepEqual(collapsed.render(80), []);
+  assert.deepEqual(expanded.render(160), []);
+  assert.deepEqual([...renderers.keys()], ["verifier-work-intent"]);
   assert.equal(result.message.customType, "verifier-work-intent");
   assert.equal(result.message.display, true);
   assert.equal(result.message.attribution, "agent");

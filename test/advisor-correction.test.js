@@ -28,6 +28,7 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
       setLabel() {},
       on() {},
       registerCommand() {},
+      registerMessageRenderer() {},
     };
 
     await mkdir(join(projectDir, "src"), { recursive: true });

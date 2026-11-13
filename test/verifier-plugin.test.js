@@ -15,6 +15,7 @@ const pi = {
   setLabel() {},
   on(event, handler) { registrations.events.set(event, handler); },
   registerCommand(name, command) { registrations.commands.set(name, command); },
+  registerMessageRenderer() {},
 };
 const ctx = { ui: { notify(message, level) { registrations.notices.push({ message, level }); } } };
 
