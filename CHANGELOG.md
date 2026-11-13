@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0 - 2026-11-13
+
+- Bind explicit quick-tweak, normal, and rearchitecture intent to the current request without changing advisor cadence or model routes.
+- Skip optional automatic checks for eligible mechanical tweaks while preserving project requirements, explicit verification, and safety/release escalation.
+- Reuse exact still-current semantic results for normal follow-ups; invalidate changed scope, source, guidance, and provider evidence without clearing unrelated failures.
+
 ## 1.3.0 - 2026-11-12
 
 - Automatically capture oversized required present and authenticated deleted source in bounded chunks, preserving complete coverage, original lines, and one semantic review.

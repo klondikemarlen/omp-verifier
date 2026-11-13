@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
@@ -199,11 +199,11 @@ async function readStoredRequest(cacheDirectory, checkId, requestId, { requireCu
   return { requestPath, currentState, stored };
 }
 
-async function previousPayload(cacheDirectory, checkId) {
-  const currentState = await readCurrentState(cacheDirectory, checkId);
-  if (!currentState?.requestId) return undefined;
+async function previousRequest(cacheDirectory, checkId) {
   try {
-    return (await readStoredRequest(cacheDirectory, checkId, currentState.requestId, { requireCurrent: false })).stored.payload;
+    const currentState = await readCurrentState(cacheDirectory, checkId);
+    if (!currentState?.requestId) return undefined;
+    return (await readStoredRequest(cacheDirectory, checkId, currentState.requestId, { requireCurrent: false })).stored;
   } catch {
     return undefined;
   }
@@ -413,6 +413,7 @@ async function reconcileAutomaticScope(target, current) {
     repositoryRoot: target.repositoryRoot,
     changedPaths: delivery.changedPaths,
     packageDirectory: automatic.packageDirectory,
+    workLevel: automatic.workLevel,
   });
   const blockers = plan.results.filter(result => result.status === "BLOCKED");
   if (blockers.length) {
@@ -454,7 +455,7 @@ async function reconcileAutomaticScope(target, current) {
     previousContext: payload.context,
     maxSourceBytes: payload.scope.maxSourceBytes,
     sourceRecovery: payload.scope.sourceRecovery,
-    automaticScope: { packageDirectory: plan.packageDirectory, delivery },
+    automaticScope: { packageDirectory: plan.packageDirectory, delivery, ...(automatic.workLevel ? { workLevel: automatic.workLevel } : {}) },
   });
   const requestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, captured.requestId));
   await persistRequest(target.cacheDirectory, target.checkId, requestPath, captured.stored);
@@ -511,6 +512,47 @@ async function reconcileRequest(target) {
   } };
 }
 
+function automaticEvidenceScope(automatic) {
+  if (!automatic) return undefined;
+  return {
+    packageDirectory: automatic.packageDirectory,
+    workLevel: automatic.workLevel,
+    baseRef: automatic.delivery?.baseRef,
+    baseCommit: automatic.delivery?.baseCommit,
+    mergeBaseCommit: automatic.delivery?.mergeBaseCommit,
+  };
+}
+
+async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPaths, contextPaths, maxSourceBytes, sourceRecovery, automaticScope }) {
+  try {
+    const state = await readCurrentState(cacheDirectory, check.id);
+    if (state?.consumed !== true || !state.requestId) return undefined;
+    const { stored } = await readStoredRequest(cacheDirectory, check.id, state.requestId, { requireCurrent: false });
+    const { payload, runtime } = stored;
+    const result = state.finalResult;
+    if (result?.id !== check.id || result.evaluation?.mode !== "agentic"
+      || result.evaluation.requestId !== state.requestId || !STATUSES.has(result.status)) return undefined;
+
+    const selectedPaths = [...new Set(changedPaths)].sort();
+    if (payload.scope.repositoryRoot !== repositoryRoot
+      || runtime.manifestPath !== check.manifestPath || runtime.packagePath !== check.packagePath
+      || !isDeepStrictEqual(payload.scope.changedPaths, selectedPaths)
+      || !contextPaths.every(selector => payload.scope.contextPaths.includes(selector))
+      || payload.scope.maxSourceBytes !== maxSourceBytes
+      || !isDeepStrictEqual(payload.scope.sourceRecovery, sourceRecovery)
+      || !isDeepStrictEqual(automaticEvidenceScope(payload.scope.automatic), automaticEvidenceScope(automaticScope))) return undefined;
+
+    // Validate the whole accepted capture, including selectors enrolled during review.
+    // A narrower automatic invocation must not silently discard material evidence.
+    await validateFreshness({ checkId: check.id, repositoryRoot, stored });
+    return result;
+  } catch {
+    // Missing, damaged, or stale prior proof is not an execution failure.
+    // Normal capture below must establish a fresh request instead.
+    return undefined;
+  }
+}
+
 export async function prepareSemanticEvaluation({
   check,
   cwd,
@@ -520,6 +562,7 @@ export async function prepareSemanticEvaluation({
   maxSourceBytes,
   sourceRecovery,
   automaticScope,
+  reuseExisting = false,
 }) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
     return blocked(check?.id || "semantic-evaluation", "Semantic verification check is not supported by this runtime");
@@ -530,13 +573,26 @@ export async function prepareSemanticEvaluation({
     const root = await realpath(repositoryRoot);
     const cacheDirectory = await requestCacheRoot(root);
     return await withCheckLock(cacheDirectory, check.id, async () => {
-      const previous = await previousPayload(cacheDirectory, check.id);
+      if (reuseExisting) {
+        const accepted = await reusableResult({
+          cacheDirectory, check, repositoryRoot: root, changedPaths, contextPaths,
+          maxSourceBytes: sourceByteLimit, sourceRecovery, automaticScope,
+        });
+        if (accepted) return accepted;
+      }
+      const previous = await previousRequest(cacheDirectory, check.id);
+      const isSameEvidenceScope = reuseExisting && previous?.payload.scope.repositoryRoot === root
+        && previous.runtime.manifestPath === check.manifestPath && previous.runtime.packagePath === check.packagePath
+        && isDeepStrictEqual(previous.payload.scope.changedPaths, [...new Set(changedPaths)].sort());
+      const retainedScope = isSameEvidenceScope ? previous.payload.scope : undefined;
       const result = await captureRequest({
         check,
         repositoryRoot: root,
         changedPaths,
-        contextPaths,
-        previousContext: previous?.context,
+        contextPaths: [...new Set([...(retainedScope?.contextPaths ?? []), ...contextPaths])],
+        callerContextPaths: retainedScope?.callerContextPaths,
+        externalContextPaths: retainedScope?.externalContextPaths,
+        previousContext: previous?.payload.context,
         maxSourceBytes: sourceByteLimit,
         sourceRecovery,
         automaticScope,
