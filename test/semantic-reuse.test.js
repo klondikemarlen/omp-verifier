@@ -206,6 +206,32 @@ test("when an unassessed request exists, reuse does not fabricate a final assess
   assert.notEqual(fresh.reviewRequest.requestId, prepared.reviewRequest.requestId);
 });
 
+test("when only an enrolled caller changes, accepted proof is not reused", async t => {
+  // Arrange
+  const { root, options } = await fixture(t);
+  const prepared = await prepareSemanticEvaluation(options);
+  const recovered = await readSemanticEvaluation({
+    cwd: root, requestPath: prepared.reviewRequest.path,
+    callerContextPaths: ["src/caller.js#L1-L1"],
+  });
+  const accepted = await complete(options, recovered, "PASS", [
+    { path: "src/helper.js", line: 1, quote: SOURCE.trim() },
+    { path: "src/caller.js", line: 1, quote: CALLER.trim() },
+  ]);
+  await writeFile(join(root, "src/caller.js"), "export const runtime = 'other';\n");
+
+  // Act
+  const result = await prepareSemanticEvaluation({ ...options, reuseExisting: true });
+
+  // Assert
+  assert.equal(accepted.status, "PASS");
+  assert.equal(result.status, "PENDING");
+  assert.notEqual(result.reviewRequest.requestId, recovered.reviewRequest.requestId);
+  assert.deepEqual(result.reviewRequest.scope.contextPaths, recovered.reviewRequest.scope.contextPaths);
+  assert.deepEqual(result.reviewRequest.scope.callerContextPaths, ["src/caller.js#L1-L1"]);
+  assert.equal(result.reviewRequest.context.targetedContext.find(record => record.path === "src/caller.js").content, "export const runtime = 'other';");
+});
+
 for (const changedMaterial of [false, true]) {
   test(`when recovered caller and external material is ${changedMaterial ? "changed" : "unchanged"}, reuse validates the complete enrolled capture`, async t => {
     // Arrange
