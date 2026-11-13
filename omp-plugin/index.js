@@ -15,7 +15,7 @@ const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
-  { name: "demo", description: "Preview sample results without running checks" },
+  { name: "demo", description: "Preview actual advisor cards without running checks" },
   { name: "uninstall", description: "Remove the verifier advisor" },
 ];
 const COORDINATOR = `'${fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url)).replaceAll("'", "'\"'\"'")}'`;
@@ -29,14 +29,26 @@ async function buildVerification(cwd, ids, packageDirectory) {
   return `Verifier verification:\n${formatVerificationResults(results)}`;
 }
 
-function buildDemo() {
+async function showDemo(ctx) {
+  if (!ctx.hasUI) {
+    return ctx.ui.notify("Verifier demo requires an interactive OMP terminal.", "warning");
+  }
+
+  let advisor;
+  let ui;
+  try {
+    [advisor, ui] = await Promise.all([
+      import("@oh-my-pi/pi-tui/chat/advisor-message"),
+      import("@oh-my-pi/pi-tui"),
+    ]);
+    if (typeof advisor.createAdvisorMessageCard !== "function") {
+      throw new Error("OMP does not export its advisor-card renderer.");
+    }
+  } catch (error) {
+    return ctx.ui.notify(`Verifier demo unavailable: ${error.message}`, "warning");
+  }
+
   const samples = [
-    {
-      id: "demo:pass",
-      status: "PASS",
-      summary: "Sample check passed.",
-      evidence: "Sample: the checked value matched the required value.",
-    },
     {
       id: "demo:fail",
       status: "FAIL",
@@ -52,12 +64,27 @@ function buildDemo() {
       nextCheck: "Example action: restore the documented dependencies and retry.",
     },
   ];
-  return [
-    "Verifier demo — sample data only; no checks run or verification state changed.",
-    formatVerificationResults(samples),
-    "This previews /verifier verify notifications, not automatic advisor warnings.",
-    "Internal request coordination stays hidden. This demo is not project verification.",
-  ].join("\n\n");
+  return ctx.ui.custom((_tui, theme, _keybindings, done) => {
+    const preview = new ui.Container();
+    preview.addChild(new ui.Text("Verifier demo — sample data only", 1, 1));
+    for (const sample of samples) {
+      preview.addChild(advisor.createAdvisorMessageCard({
+        notes: [{
+          advisor: "verifier",
+          severity: "blocker",
+          note: `SAMPLE — not a project finding\n${formatVerificationResults([sample])}`,
+        }],
+      }, () => true, theme));
+    }
+    preview.addChild(new ui.Text(
+      "PASS and inapplicable checks are normally silent; silence alone is not proof of success.\nEsc / Enter close. No checks run, advice sent, or verdicts recorded.",
+      1, 1,
+    ));
+    preview.handleInput = data => {
+      if (ui.matchesKey(data, "escape") || ui.matchesKey(data, "enter") || ui.matchesKey(data, "ctrl+c")) done();
+    };
+    return preview;
+  }, { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });
 }
 
 function completeSubcommands(argumentPrefix) {
@@ -145,7 +172,7 @@ export default async function verifierPlugin(pi) {
       }
 
       if (action === "demo" && rest.length === 0) {
-        return ctx.ui.notify(buildDemo(), "info");
+        return showDemo(ctx);
       }
 
       if (action === "verify") {
