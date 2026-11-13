@@ -10,11 +10,12 @@ import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|uninstall]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|demo|uninstall]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
+  { name: "demo", description: "Preview sample results without running checks" },
   { name: "uninstall", description: "Remove the verifier advisor" },
 ];
 const COORDINATOR = `'${fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url)).replaceAll("'", "'\"'\"'")}'`;
@@ -26,6 +27,37 @@ async function buildChecks(packageDirectory) {
 async function buildVerification(cwd, ids, packageDirectory) {
   const results = await runInstalledVerificationChecks({ cwd, ids, packageDirectory });
   return `Verifier verification:\n${formatVerificationResults(results)}`;
+}
+
+function buildDemo() {
+  const samples = [
+    {
+      id: "demo:pass",
+      status: "PASS",
+      summary: "Sample check passed.",
+      evidence: "Sample: the checked value matched the required value.",
+    },
+    {
+      id: "demo:fail",
+      status: "FAIL",
+      summary: "Sample check found a violation.",
+      evidence: "Sample: an unused variable was found in example.js.",
+      nextCheck: "Example action: remove the unused variable and rerun the check.",
+    },
+    {
+      id: "demo:blocked",
+      status: "BLOCKED",
+      summary: "Sample check could not run.",
+      evidence: "Sample: a required development dependency was unavailable.",
+      nextCheck: "Example action: restore the documented dependencies and retry.",
+    },
+  ];
+  return [
+    "Verifier demo — sample data only; no checks run or verification state changed.",
+    formatVerificationResults(samples),
+    "This previews /verifier verify notifications, not automatic advisor warnings.",
+    "Internal request coordination stays hidden. This demo is not project verification.",
+  ].join("\n\n");
 }
 
 function completeSubcommands(argumentPrefix) {
@@ -92,7 +124,7 @@ export default async function verifierPlugin(pi) {
   });
 
   pi.registerCommand("verifier", {
-    description: "Show verifier setup or run installed checks",
+    description: "Show verifier setup, preview results, or run installed checks",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
@@ -110,6 +142,10 @@ export default async function verifierPlugin(pi) {
 
       if (action === "checks" && rest.length === 0) {
         return ctx.ui.notify(await buildChecks(ctx.verificationPackageDirectory), "info");
+      }
+
+      if (action === "demo" && rest.length === 0) {
+        return ctx.ui.notify(buildDemo(), "info");
       }
 
       if (action === "verify") {
