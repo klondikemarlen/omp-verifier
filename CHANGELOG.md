@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.2 - 2026-11-13
+
+- Keep the advisor demo separate from the conversation in a bordered editor-area preview. Show one sample at a time with Tab switching and visible dismissal controls.
+
 ## 1.5.1 - 2026-11-13
 
 - Replace the manual-notification demo with a dismissible preview of OMP's actual advisor cards, without sending advice or recording sample verdicts. Explain normal PASS silence rather than displaying a synthetic success card.
