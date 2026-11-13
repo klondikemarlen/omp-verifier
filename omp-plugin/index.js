@@ -37,6 +37,11 @@ function completeSubcommands(argumentPrefix) {
 
 export default async function verifierPlugin(pi) {
   pi.setLabel("Verifier");
+  // Hide only the UI card; display:false also removes this metadata from advisor history.
+  pi.registerMessageRenderer("verifier-work-intent", () => ({
+    render: () => [],
+    invalidate() {},
+  }));
   await installGlobalVerifier({ agentDir: pi.pi.getAgentDir() });
   let currentIntent;
   let currentSessionId;
