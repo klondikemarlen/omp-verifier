@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0 - 2026-11-12
+## 1.4.0 - 2026-11-13
 
 - Bind explicit quick-tweak, normal, and rearchitecture intent to the current request without changing advisor cadence or model routes.
 - Skip optional automatic checks for eligible mechanical tweaks while preserving project requirements, explicit verification, and safety/release escalation.
