@@ -49,7 +49,7 @@ The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt
 
 ## Preview advisor cards
 
-Run `/verifier demo` in an interactive OMP terminal to preview sample `FAIL` and `BLOCKED` findings using OMP's actual advisor-card renderer, including native Tern cards and ordinary terminal rendering. Press **Escape** or **Enter** to close the preview. Automatic `PASS` and inapplicable checks are normally silent; the demo does not invent a success card.
+Run `/verifier demo` in an interactive OMP terminal to preview sample `FAIL` and `BLOCKED` findings using OMP's actual advisor-card renderer, including native Tern cards and ordinary terminal rendering. A bordered preview temporarily replaces the input editor instead of floating over the conversation. It shows one sample at a time: press **Tab** to switch samples and **Escape** or **Enter** to close and restore the editor. Automatic `PASS` and inapplicable checks are normally silent; the demo does not invent a success card.
 
 The preview is display-only: it runs no checks, sends no advisor messages, records no verdicts, and changes no verification state. Every card is labeled as a sample, not a finding about your project. Normal `/verifier verify` remains a plain manual-result notification. Internal request coordination stays hidden, and automatic advisor silence is not proof of success.
 

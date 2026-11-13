@@ -64,10 +64,19 @@ async function showDemo(ctx) {
       nextCheck: "Example action: restore the documented dependencies and retry.",
     },
   ];
-  return ctx.ui.custom((_tui, theme, _keybindings, done) => {
-    const preview = new ui.Container();
-    preview.addChild(new ui.Text("Verifier demo — sample data only", 1, 1));
-    for (const sample of samples) {
+  return ctx.ui.custom((tui, theme, _keybindings, done) => {
+    const preview = new ui.Box(1, 0, undefined, {
+      chars: { topLeft: "╭", topRight: "╮", bottomLeft: "╰", bottomRight: "╯", horizontal: "─", vertical: "│" },
+      color: text => theme.fg("border", text),
+    });
+    let sampleIndex = 0;
+    const showSample = () => {
+      const sample = samples[sampleIndex];
+      preview.clear();
+      preview.addChild(new ui.Text(
+        `Verifier demo — sample ${sampleIndex + 1}/${samples.length}: ${sample.status}\nTab: next sample · Esc / Enter: close`,
+        0, 0,
+      ));
       preview.addChild(advisor.createAdvisorMessageCard({
         notes: [{
           advisor: "verifier",
@@ -75,16 +84,23 @@ async function showDemo(ctx) {
           note: `SAMPLE — not a project finding\n${formatVerificationResults([sample])}`,
         }],
       }, () => true, theme));
-    }
-    preview.addChild(new ui.Text(
-      "PASS and inapplicable checks are normally silent; silence alone is not proof of success.\nEsc / Enter close. No checks run, advice sent, or verdicts recorded.",
-      1, 1,
-    ));
+      preview.addChild(new ui.Text(
+        "PASS is normally silent, not proof of success.\nPreview only: no checks run, advice sent, or verdicts recorded.",
+        0, 0,
+      ));
+    };
+    showSample();
     preview.handleInput = data => {
-      if (ui.matchesKey(data, "escape") || ui.matchesKey(data, "enter") || ui.matchesKey(data, "ctrl+c")) done();
+      if (ui.matchesKey(data, "escape") || ui.matchesKey(data, "enter") || ui.matchesKey(data, "ctrl+c")) {
+        done();
+      } else if (ui.matchesKey(data, "tab")) {
+        sampleIndex = (sampleIndex + 1) % samples.length;
+        showSample();
+        tui.requestRender();
+      }
     };
     return preview;
-  }, { overlay: true, overlayOptions: { width: "90%", maxHeight: "90%", anchor: "center" } });
+  });
 }
 
 function completeSubcommands(argumentPrefix) {
