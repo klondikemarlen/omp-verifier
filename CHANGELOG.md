@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.1 - 2026-11-13
+
+- Hide internal request-intent cards from the chat while preserving advisor context, request-level safeguards, and verification failure reporting.
+
 ## 1.4.0 - 2026-11-13
 
 - Bind explicit quick-tweak, normal, and rearchitecture intent to the current request without changing advisor cadence or model routes.

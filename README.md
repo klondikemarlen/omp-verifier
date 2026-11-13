@@ -49,7 +49,7 @@ The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt
 
 ## Request-sized work
 
-Start a request with `Verifier work level: quick tweak`, `Verifier work level: normal`, or `Verifier work level: rearchitecture` on its first line. The choice applies only to that request; the next request defaults to normal. The plugin emits a compact request-intent message for the native advisor. Quoted declarations elsewhere in a prompt do not select a mode.
+Start a request with `Verifier work level: quick tweak`, `Verifier work level: normal`, or `Verifier work level: rearchitecture` on its first line. The choice applies only to that request; the next request defaults to normal. Request-level coordination stays out of the chat while remaining available to the native advisor. Quoted declarations elsewhere in a prompt do not select a mode.
 
 An eligible mechanical quick tweak omits optional automatic checks, not mandatory project requirements or explicitly requested verification. Public/serialized-field changes, authorization changes, and other behavioral changes require normal verification even with a quick prefix. Initial delivery and release gates remain effective. Normal follow-ups can reuse exact, freshness-validated semantic results; changed evidence requires fresh assessment. Skipping is not PASS, and current failures are not cleared. See [request intent and proof reuse](docs/references/verifier-concepts-reference.md#request-intent-and-proof-reuse) for the contract and host limitations.
 
