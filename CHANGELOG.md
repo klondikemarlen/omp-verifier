@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.5.1 - 2026-11-13
+
+- Replace the manual-notification demo with a dismissible preview of OMP's actual advisor cards, without sending advice or recording sample verdicts. Explain normal PASS silence rather than displaying a synthetic success card.
+
 ## 1.5.0 - 2026-11-13
 
 - Add `/verifier demo` to preview labeled PASS, FAIL, and BLOCKED samples through the real manual-result notification UI without executing checks or changing verification state.

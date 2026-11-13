@@ -47,11 +47,13 @@ The plugin copies its shipped guidance to `<agent-dir>/verifier/WATCHDOG.md` on 
 
 The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it requests the coordinator's failure-only text reporter and passes that readable output unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
 
-## Preview result notifications
+## Preview advisor cards
 
-Run `/verifier demo` to see sample `PASS`, `FAIL`, and `BLOCKED` results through the same text formatter and notification surface as `/verifier verify`. The command uses labeled sample data only: it does not execute checks, record verdicts, change verification state, or enable a persistent mode.
+Run `/verifier demo` in an interactive OMP terminal to preview sample `FAIL` and `BLOCKED` findings using OMP's actual advisor-card renderer, including native Tern cards and ordinary terminal rendering. Press **Escape** or **Enter** to close the preview. Automatic `PASS` and inapplicable checks are normally silent; the demo does not invent a success card.
 
-This previews manual-command notifications, not OMP's automatic advisor-warning UI. Internal request coordination remains hidden. The demo is not evidence about your project; automatic advisor silence is not proof of a successful check.
+The preview is display-only: it runs no checks, sends no advisor messages, records no verdicts, and changes no verification state. Every card is labeled as a sample, not a finding about your project. Normal `/verifier verify` remains a plain manual-result notification. Internal request coordination stays hidden, and automatic advisor silence is not proof of success.
+
+The preview requires an OMP host exposing the public advisor-card renderer (verified with OMP 18.20.0). If that capability is unavailable, the command reports the limitation instead of substituting a look-alike.
 
 ## Request-sized work
 
