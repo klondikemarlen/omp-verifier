@@ -269,6 +269,90 @@ for (const deletion of ["working-tree", "staged", "committed"]) {
   });
 }
 
+for (const state of ["staged", "committed"]) {
+  for (const includeCurrentSibling of [false, true]) {
+    test(`when a directory rename is ${state} and the current sibling is ${includeCurrentSibling ? "changed" : "context"}, review uses its current path`, async () => {
+      // Arrange
+      const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+      const siblingSource = "export const other = true;\n";
+
+      try {
+        await writeFile(join(fixture.root, "src", "other.js"), siblingSource);
+        execFileSync("git", ["add", "src/other.js"], { cwd: fixture.root });
+        execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "add sibling"], { cwd: fixture.root });
+        execFileSync("git", ["mv", "src", "current"], { cwd: fixture.root });
+        if (state === "committed") {
+          execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "rename boundary"], { cwd: fixture.root });
+        }
+        const changedPaths = ["src/helper.js", "current/helper.js", ...(includeCurrentSibling ? ["current/other.js"] : [])];
+        const prepared = await prepareSemanticEvaluation({
+          check: await discoverSemanticCheck(fixture),
+          cwd: fixture.root,
+          changedPaths,
+          contextPaths: ["caller.js"],
+        });
+
+        // Act
+        const completed = await completeSemanticEvaluation({
+          cwd: fixture.root,
+          requestPath: prepared.reviewRequest.path,
+          assessment: {
+            ...passAssessment(prepared.reviewRequest.requestId),
+            citations: [
+              { path: "src/helper.js", line: 1, quote: HELPER_SOURCE.trim() },
+              { path: "current/other.js", line: 1, quote: siblingSource.trim() },
+            ],
+          },
+        });
+
+        // Assert
+        const inventory = prepared.reviewRequest.context.siblingInventory.find(record => record.path === "src");
+        assert.deepEqual(prepared.reviewRequest.scope.changedPaths, changedPaths.sort());
+        assert.deepEqual(inventory.files, ["current/other.js"]);
+        assert.equal(inventory.renames[0].from, "src/other.js");
+        assert.equal(inventory.renames[0].to, "current/other.js");
+        assert.match(inventory.renames[0].reference, /:src\/other.js$/);
+        assert.equal(completed.status, "PASS", completed.evidence);
+        assert.match(completed.evidence, /current\/other.js:1/);
+      } finally {
+        await rm(fixture.root, { recursive: true, force: true });
+      }
+    });
+  }
+}
+
+test("when a renamed sibling changes after capture, its old evidence cannot approve the review", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    await writeFile(join(fixture.root, "src", "other.js"), "export const other = true;\n");
+    execFileSync("git", ["add", "src/other.js"], { cwd: fixture.root });
+    execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "add sibling"], { cwd: fixture.root });
+    execFileSync("git", ["mv", "src", "current"], { cwd: fixture.root });
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js", "current/helper.js"],
+      contextPaths: ["caller.js"],
+    });
+    await writeFile(join(fixture.root, "current", "other.js"), "export const other = false;\n");
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(completed.status, "BLOCKED");
+    assert.match(completed.evidence, /source or project context changed/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("when deleted-directory scope omits historical siblings, review cannot claim complete context", async () => {
   // Arrange
   const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
@@ -488,3 +572,77 @@ test("when sibling source is also the caller, incomplete global inventory does n
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+test("when a guide line moves, a corrected citation can complete the renewed request after rejection", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const prepare = () => prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+      contextPaths: ["README.md#L2-L4"],
+    });
+    await writeFile(join(fixture.root, "README.md"), "# Guide\nModules own invariants.\n");
+    const original = await prepare();
+    await writeFile(join(fixture.root, "README.md"), "# Guide\n\nModules own invariants.\n");
+    const renewed = await prepare();
+    const sourceCitation = passAssessment(renewed.reviewRequest.requestId).citations[0];
+    const assessment = {
+      ...passAssessment(renewed.reviewRequest.requestId),
+      citations: [sourceCitation, { path: "README.md", line: 2, quote: "Modules own invariants." }],
+    };
+
+    // Act
+    const rejected = await completeSemanticEvaluation({
+      cwd: fixture.root, requestPath: renewed.reviewRequest.path, assessment,
+    });
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: renewed.reviewRequest.path,
+      assessment: { ...assessment, citations: [sourceCitation, { ...assessment.citations[1], line: 3 }] },
+    });
+
+    // Assert
+    assert.notEqual(renewed.reviewRequest.requestId, original.reviewRequest.requestId);
+    assert.equal(rejected.status, "BLOCKED");
+    assert.equal(rejected.summary, "Semantic assessment is invalid");
+    assert.equal(rejected.evaluation.requestId, renewed.reviewRequest.requestId);
+    assert.match(rejected.evidence, /citation README.md:2 does not match/);
+    assert.equal(completed.status, "PASS", completed.evidence);
+    assert.match(completed.evidence, /README.md:3/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a request artifact is missing, completion reports unavailable evidence rather than an invalid citation", async () => {
+  // Arrange
+  const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
+
+  try {
+    const prepared = await prepareSemanticEvaluation({
+      check: await discoverSemanticCheck(fixture),
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    await rm(prepared.reviewRequest.path);
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment: passAssessment(prepared.reviewRequest.requestId),
+    });
+
+    // Assert
+    assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.summary, "Semantic request is unavailable");
+    assert.match(completed.evidence, /semantic request file is unavailable/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+

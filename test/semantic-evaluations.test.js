@@ -464,6 +464,7 @@ test("when an assessment cites unobserved source, completion is BLOCKED", async 
 
     // Assert
     assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.summary, "Semantic assessment is invalid");
     assert.match(completed.evidence, /does not match the captured source excerpt/);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

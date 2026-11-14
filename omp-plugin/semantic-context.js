@@ -171,6 +171,21 @@ async function inventoryPaths(root, changedPaths) {
     .sort();
 }
 
+async function renamedProjectPaths(root, revision) {
+  const { stdout } = await execFileAsync("git", [
+    "-C", root, "diff", "--no-ext-diff", "--no-textconv", "--find-renames",
+    `-l${MAX_INVENTORY_FILES}`, "--diff-filter=R", "--name-status", "-z",
+    ...(revision ? [revision] : []), "--",
+  ], { maxBuffer: 4_000_000, timeout: 5_000 });
+  const fields = stdout.split("\0");
+  const renames = new Map();
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    if (!/^R\d+$/.test(fields[index])) throw new Error("invalid Git rename inventory");
+    renames.set(fields[index + 1], fields[index + 2]);
+  }
+  return renames;
+}
+
 async function historicalSiblingInventory(root, directory, changedPaths, deletedSources, maxSourceBytes, remainingEntries) {
   // Only genuinely absent directories may use history, not links or inaccessible paths.
   let ancestor = resolve(root, directory);
@@ -201,6 +216,7 @@ async function historicalSiblingInventory(root, directory, changedPaths, deleted
 
   const files = new Set();
   const snapshots = [];
+  const renames = [];
   let inspectedEntries = 0;
   for (const revision of references) {
     const args = revision
@@ -215,13 +231,18 @@ async function historicalSiblingInventory(root, directory, changedPaths, deleted
     if (inspectedEntries > remainingEntries) throw new Error("sibling directory entry limit reached");
     if (!entries.length) throw new Error("historical sibling inventory is unavailable");
     snapshots.push({ revision: revision || "index", sha256: sha256(stdout) });
-    for (const entry of entries) {
+    const candidates = entries.map(entry => {
       const name = entry.slice(entry.indexOf("\t") + 1);
-      const path = revision ? `${directory}/${name}` : name;
-      if (dirname(path) === directory && codeFile(path) && !changedPaths.includes(path)) files.add(path);
+      return revision ? `${directory}/${name}` : name;
+    }).filter(path => dirname(path) === directory && codeFile(path) && !changedPaths.includes(path));
+    const currentPaths = candidates.length ? await renamedProjectPaths(root, revision) : new Map();
+    for (const path of candidates) {
+      const currentPath = currentPaths.get(path);
+      files.add(currentPath ?? path);
+      if (currentPath) renames.push({ from: path, to: currentPath, reference: `${revision}:${path}` });
     }
   }
-  return { files: [...files], snapshots, inspectedEntries };
+  return { files: [...files], snapshots, renames, inspectedEntries };
 }
 
 async function siblingDirectoryInventory(root, changedPaths, deletedSources, maxSourceBytes) {
@@ -260,6 +281,7 @@ async function siblingDirectoryInventory(root, changedPaths, deletedSources, max
           );
           inventory.files = historical.files;
           inventory.snapshots = historical.snapshots;
+          if (historical.renames.length) inventory.renames = historical.renames;
           inventory.complete = true;
           inspectedEntries += historical.inspectedEntries;
         } catch (historicalError) {
@@ -467,7 +489,7 @@ async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversi
   try {
     const { stdout } = await execFileAsync("git", [
       "-C", root, "log", "--first-parent", "--diff-merges=first-parent",
-      "--format=%H", "--no-patch", "--diff-filter=D", "-1", "HEAD", "--", `:(literal)${path}`,
+      "--format=%H", "--no-patch", "--no-renames", "--diff-filter=D", "-1", "HEAD", "--", `:(literal)${path}`,
     ], { maxBuffer: 128, timeout: 5_000 });
     const deletionCommit = stdout.trim();
     if (!/^[a-f0-9]{40,64}$/.test(deletionCommit)) return undefined;
@@ -588,7 +610,11 @@ export async function captureSemanticContext({
 
   // Filename matches are candidate callers, not a declaration of material dependencies.
   // Explicit context promotes those boundaries and their owning guidance together.
-  const boundaryPaths = [...normalizedChangedPaths, ...normalizedContextPaths];
+  const boundaryPaths = [
+    ...normalizedChangedPaths,
+    ...normalizedContextPaths,
+    ...siblingInventory.flatMap(inventory => (inventory.renames ?? []).map(rename => rename.to)),
+  ];
   const guidancePaths = paths.filter(path => relevantGuidance(path, boundaryPaths));
   const inventoryWasTruncated = paths.length > MAX_INVENTORY_FILES;
   const orderedInventoryPaths = prioritizedInventory(paths, normalizedChangedPaths, normalizedContextPaths);
@@ -677,6 +703,7 @@ export async function captureSemanticContext({
         state: "deleted",
         content: priorSource.content,
         previousSha256: sha256(priorSource.content),
+        ...(priorSource.reference ? { reference: priorSource.reference } : {}),
       };
       if (!addRecord(changedCode, deletedRecord, budget)) {
         changedCode.push({ path, state: "unavailable", reason: "context evidence limit reached" });
@@ -877,7 +904,8 @@ export async function captureSemanticContext({
 
   const callers = [];
   const siblings = [];
-  const capturedOptionalPaths = new Set(targetedContext.filter(record => typeof record.content === "string").map(record => record.path));
+  const capturedOptionalPaths = new Set([...targetedContext, ...changedCode]
+    .filter(record => typeof record.content === "string").map(record => record.path));
   const attemptedOptionalPaths = new Set();
 
   function captureOptionalSource(path, records, source) {
@@ -919,7 +947,7 @@ export async function captureSemanticContext({
   if (!siblings.length) {
     const discovered = siblingInventory.flatMap(inventory => inventory.files);
     if (discovered.some(path => capturedOptionalPaths.has(path))) {
-      siblingEvidence = { status: "captured-elsewhere", explanation: "Sibling source is captured in targeted context or caller records; inspect siblingInventory for each boundary." };
+      siblingEvidence = { status: "captured-elsewhere", explanation: "Sibling source is captured in changed, targeted, or caller records; inspect siblingInventory for each boundary." };
     } else if (discovered.length) {
       siblingEvidence = { status: "not-captured", explanation: "Sibling source files were discovered but not admitted; inspect siblingInventory, sourceInventory, and evidenceBudget.rejections, then select material ranges with review --context." };
     } else if (siblingInventory.some(inventory => !inventory.complete)) {
@@ -1036,10 +1064,11 @@ export function semanticContextMissing(requiredContext, captured) {
     ...(Array.isArray(context.siblings) ? context.siblings : []),
     ...(Array.isArray(context.callers) ? context.callers : []),
     ...targetedRecords.filter(record => codeFile(record.path) && !context.changedPaths.includes(record.path)),
+    ...context.changedCode.filter(record => record.state === "present" && typeof record.content === "string"),
   ];
   const incompleteSiblingBoundaries = context.siblingInventory.filter(inventory =>
     !inventory.complete || (inventory.files.length > 0
-      && !siblingRecords.some(record => dirname(record.path) === inventory.path)));
+      && !siblingRecords.some(record => inventory.files.includes(record.path))));
   if (requiredContext.includes("callers") && !hasCallerEvidence
     && (!context.sourceInventory.complete || context.evidenceTruncated?.callers)) {
     const retrieval = context.callerRetrieval;
