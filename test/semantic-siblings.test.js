@@ -285,22 +285,26 @@ for (const state of ["staged", "committed"]) {
           execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "rename boundary"], { cwd: fixture.root });
         }
         const changedPaths = ["src/helper.js", "current/helper.js", ...(includeCurrentSibling ? ["current/other.js"] : [])];
+        const check = await discoverSemanticCheck(fixture);
         const prepared = await prepareSemanticEvaluation({
-          check: await discoverSemanticCheck(fixture),
+          check,
           cwd: fixture.root,
           changedPaths,
           contextPaths: ["caller.js"],
         });
 
         // Act
+        const assessment = passAssessment(prepared.reviewRequest.requestId);
+        const helperQuote = HELPER_SOURCE.trim();
+        const siblingQuote = siblingSource.trim();
         const completed = await completeSemanticEvaluation({
           cwd: fixture.root,
           requestPath: prepared.reviewRequest.path,
           assessment: {
-            ...passAssessment(prepared.reviewRequest.requestId),
+            ...assessment,
             citations: [
-              { path: "src/helper.js", line: 1, quote: HELPER_SOURCE.trim() },
-              { path: "current/other.js", line: 1, quote: siblingSource.trim() },
+              { path: "src/helper.js", line: 1, quote: helperQuote },
+              { path: "current/other.js", line: 1, quote: siblingQuote },
             ],
           },
         });
@@ -330,8 +334,9 @@ test("when a renamed sibling changes after capture, its old evidence cannot appr
     execFileSync("git", ["add", "src/other.js"], { cwd: fixture.root });
     execFileSync("git", ["-c", "user.email=test@example.com", "-c", "user.name=OMP Verifier Tests", "commit", "--quiet", "-m", "add sibling"], { cwd: fixture.root });
     execFileSync("git", ["mv", "src", "current"], { cwd: fixture.root });
+    const check = await discoverSemanticCheck(fixture);
     const prepared = await prepareSemanticEvaluation({
-      check: await discoverSemanticCheck(fixture),
+      check,
       cwd: fixture.root,
       changedPaths: ["src/helper.js", "current/helper.js"],
       contextPaths: ["caller.js"],
@@ -339,10 +344,11 @@ test("when a renamed sibling changes after capture, its old evidence cannot appr
     await writeFile(join(fixture.root, "current", "other.js"), "export const other = false;\n");
 
     // Act
+    const assessment = passAssessment(prepared.reviewRequest.requestId);
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
-      assessment: passAssessment(prepared.reviewRequest.requestId),
+      assessment,
     });
 
     // Assert
@@ -589,9 +595,10 @@ test("when a guide line moves, a corrected citation can complete the renewed req
     const original = await prepare();
     await writeFile(join(fixture.root, "README.md"), "# Guide\n\nModules own invariants.\n");
     const renewed = await prepare();
-    const sourceCitation = passAssessment(renewed.reviewRequest.requestId).citations[0];
+    const initialAssessment = passAssessment(renewed.reviewRequest.requestId);
+    const sourceCitation = initialAssessment.citations[0];
     const assessment = {
-      ...passAssessment(renewed.reviewRequest.requestId),
+      ...initialAssessment,
       citations: [sourceCitation, { path: "README.md", line: 2, quote: "Modules own invariants." }],
     };
 
@@ -623,18 +630,20 @@ test("when a request artifact is missing, completion reports unavailable evidenc
   const fixture = await createEmptySiblingFixture({ noiseFiles: 0 });
 
   try {
+    const check = await discoverSemanticCheck(fixture);
     const prepared = await prepareSemanticEvaluation({
-      check: await discoverSemanticCheck(fixture),
+      check,
       cwd: fixture.root,
       changedPaths: ["src/helper.js"],
     });
     await rm(prepared.reviewRequest.path);
 
     // Act
+    const assessment = passAssessment(prepared.reviewRequest.requestId);
     const completed = await completeSemanticEvaluation({
       cwd: fixture.root,
       requestPath: prepared.reviewRequest.path,
-      assessment: passAssessment(prepared.reviewRequest.requestId),
+      assessment,
     });
 
     // Assert

@@ -393,8 +393,9 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
 }
 
 function requestBlock(id, error) {
+  const unavailable = blocked(id || "semantic-evaluation", "Semantic request is unavailable", error);
   return {
-    ...blocked(id || "semantic-evaluation", "Semantic request is unavailable", error),
+    ...unavailable,
     nextCheck: "Restore the named request prerequisite, then prepare fresh verification with the original complete scope and actual delivery base. Do not reuse citations from an unavailable or stale request.",
   };
 }
@@ -826,9 +827,13 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
       try {
         result = normalizedAssessment(assessment, stored.payload);
       } catch (error) {
+        const invalid = blocked(target.checkId, "Semantic assessment is invalid", error.message);
         return {
-          ...blocked(target.checkId, "Semantic assessment is invalid", error.message),
-          evaluation: { mode: "agentic", requestId: stored.payload.requestId },
+          ...invalid,
+          evaluation: {
+            mode: "agentic",
+            requestId: stored.payload.requestId,
+          },
           nextCheck: "Read the current request with review, recover any missing context, and correct the assessment using its requestId and exact captured source lines. Resubmit with evaluate; this rejected assessment has not consumed the request.",
         };
       }

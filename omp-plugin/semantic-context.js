@@ -610,10 +610,11 @@ export async function captureSemanticContext({
 
   // Filename matches are candidate callers, not a declaration of material dependencies.
   // Explicit context promotes those boundaries and their owning guidance together.
+  const renamedBoundaryPaths = siblingInventory.flatMap(inventory => (inventory.renames ?? []).map(rename => rename.to));
   const boundaryPaths = [
     ...normalizedChangedPaths,
     ...normalizedContextPaths,
-    ...siblingInventory.flatMap(inventory => (inventory.renames ?? []).map(rename => rename.to)),
+    ...renamedBoundaryPaths,
   ];
   const guidancePaths = paths.filter(path => relevantGuidance(path, boundaryPaths));
   const inventoryWasTruncated = paths.length > MAX_INVENTORY_FILES;
