@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.4 - 2026-11-13
+
+- Recover renamed sibling evidence at current Git paths while retaining historical provenance, owning guidance, and strict freshness checks.
+- Distinguish rejected semantic assessments from unavailable request artifacts and explain how to correct citations without consuming the request.
+
 ## 1.5.3 - 2026-11-13
 
 - Make demo shortcuts easy to find in a dedicated control row with bold, accent-colored keycaps.
