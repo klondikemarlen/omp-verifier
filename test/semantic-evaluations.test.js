@@ -592,6 +592,7 @@ test("when guidance is recovered in separate chunks, citations retain both origi
         status: "FAIL",
         summary: "The helper only forwards its input.",
         rationale: "The captured helper owns no invariant; the recovered guidance locations remain source citations.",
+        findings: [{ path: "src/helper.js", summary: "The helper forwards without owning an invariant." }],
         citations: [
           CITATION,
           { path: "README.md", line: 130, quote: "Boundary guidance at original line 130." },
@@ -925,6 +926,7 @@ test("when a newer request supersedes an older one, only the current assessment 
         status: "FAIL",
         summary: "The extracted helper only forwards its input.",
         rationale: "The extraction does not own a meaningful invariant under boundary-ownership.",
+        findings: [{ path: "src/helper.js", summary: "The extraction owns no meaningful invariant." }],
         citations: [CITATION],
       },
     });
@@ -996,6 +998,7 @@ test("when a corrected change deletes an untracked helper, the fresh request ret
         status: "FAIL",
         summary: "The helper is a trivial forwarding extraction.",
         rationale: "It forwards without owning behavior, failing the boundary-ownership condition.",
+        findings: [{ path: "src/helper.js", summary: "The helper forwards without owning behavior." }],
         citations: [CITATION],
       },
     });

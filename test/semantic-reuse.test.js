@@ -50,6 +50,7 @@ function assessment(prepared, status = "PASS", citations = [{ path: "src/helper.
     requestId: prepared.reviewRequest.requestId, status,
     summary: `${status}: ownership reviewed`, rationale: "Observed the selected module under the supplied standard.",
     nextCheck: "Retain the owning boundary.", citations,
+    ...(status === "FAIL" ? { findings: [{ path: "src/helper.js", summary: "The helper does not own the required boundary." }] } : {}),
   };
 }
 
