@@ -20,6 +20,7 @@ const REVIEW_REQUEST_ORDER = [
   "check",
   "scope",
   "missingContext",
+  "continuation",
   "standard",
   "context",
 ];
@@ -100,18 +101,31 @@ function quoteShellArgument(value) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
-function nextReviewCommand(path, nextPageIndex) {
+function nextReviewCommand(path, nextPageIndex, batchIndex) {
   const coordinator = `node ${quoteShellArgument(COORDINATOR_PATH)}`;
   const request = quoteShellArgument(path);
   if (nextPageIndex === null) {
     return `${coordinator} evaluate ${request} --assessment - --reporter text --failures-only`;
   }
 
-  return `${coordinator} review ${request} --reporter text --page ${nextPageIndex}`;
+  const batchOption = batchIndex === undefined ? "" : ` --batch ${batchIndex}`;
+  return `${coordinator} review ${request} --reporter text${batchOption} --page ${nextPageIndex}`;
 }
 
-function reviewContinuation(path, nextPageIndex) {
+function reviewContinuation(path, nextPageIndex, phase, batchIndex) {
   if (nextPageIndex === null) {
+    if (phase === "batch") {
+      return [
+        `Next action: Submit a batch checkpoint with batchIndex: ${batchIndex}, nonempty crossBatchNotes (at most 4000 characters), and the usual assessment fields, within 8000 serialized UTF-8 bytes. This leaves the whole obligation PENDING; inspect the returned next batch or aggregate ledger.`,
+        `Next command: ${nextReviewCommand(path, null)}`,
+      ].join("\n");
+    }
+    if (phase === "aggregate") {
+      return [
+        "Next action: Assess the whole original scope and cross-batch interactions using every checkpoint. Submit the usual assessment fields and coveredBatches with every exact batch index; omit batchIndex. Reinspect material source with review --batch N as needed. Do not finish before observing the accepted final result.",
+        `Next command: ${nextReviewCommand(path, null)}`,
+      ].join("\n");
+    }
     return [
       "Next action: Assess the complete scope using this request ID, then submit literal assessment JSON on stdin. Do not finish before observing the accepted final result.",
       `Next command: ${nextReviewCommand(path, null)}`,
@@ -120,35 +134,44 @@ function reviewContinuation(path, nextPageIndex) {
 
   return [
     "Next action: Read the next page now; do not report unread pages as a blocker or finish the review.",
-    `Next command: ${nextReviewCommand(path, nextPageIndex)}`,
+    `Next command: ${nextReviewCommand(path, nextPageIndex, batchIndex)}`,
   ].join("\n");
 }
 
-function fixedHeaderBytes(path, requestId) {
+function reviewPageInstruction(phase) {
+  if (phase === "batch") {
+    return "You are the verifier: execute the next command with bash yourself. Inspect every page of this batch before its checkpoint. A checkpoint is not a final verdict; continue through all batches and the final cross-batch assessment. Never use standalone advise for PENDING progress.";
+  }
+  return REVIEW_PAGE_INSTRUCTION;
+}
+
+function fixedHeaderBytes(path, requestId, phase, batchIndex) {
   const header = [
     "Semantic review page",
     "Review state: PENDING",
     `Request path: ${path}`,
     `Request ID: ${requestId}`,
+    ...(phase ? [`Continuation phase: ${phase}`] : []),
+    ...(batchIndex === undefined ? [] : [`Batch index: ${batchIndex} (zero-based)`]),
     "Page index:  of  (zero-based)",
     "Bytes: - of  (end exclusive)",
     DISPLAY_WRAP_NOTE,
     "JSON fragment:",
     "",
     "Next page index: ",
-    REVIEW_PAGE_INSTRUCTION,
+    reviewPageInstruction(phase),
     "",
   ].join("\n");
   const continuationBytes = Math.max(
-    Buffer.byteLength(reviewContinuation(path, 0), "utf8"),
-    Buffer.byteLength(reviewContinuation(path, null), "utf8"),
+    Buffer.byteLength(reviewContinuation(path, 0, phase, batchIndex), "utf8"),
+    Buffer.byteLength(reviewContinuation(path, null, phase, batchIndex), "utf8"),
   );
   return Buffer.byteLength(header, "utf8") + continuationBytes;
 }
 
-function contentCapacity(path, requestId) {
+function contentCapacity(path, requestId, phase, batchIndex) {
   const capacity = MAX_UNWRAPPED_PAGE_BYTES
-    - fixedHeaderBytes(path, requestId)
+    - fixedHeaderBytes(path, requestId, phase, batchIndex)
     - NUMERIC_HEADER_ALLOWANCE;
   if (capacity < 4) {
     throw new RangeError("Semantic review page header leaves no room for a UTF-8-safe JSON fragment.");
@@ -197,10 +220,18 @@ export function buildSemanticReviewPage(result, pageIndex = 0) {
   if (typeof requestId !== "string" || typeof path !== "string") {
     throw new TypeError("Semantic review page requires a request ID and request path.");
   }
+  const phase = result.reviewRequest.continuation?.phase;
+  const batchIndex = phase === "batch" ? result.reviewRequest.continuation.batchIndex : undefined;
+  if (batchIndex !== undefined && (!Number.isSafeInteger(batchIndex) || batchIndex < 0)) {
+    throw new TypeError("Semantic review batch index must be a nonnegative integer.");
+  }
+  if (phase === "batch" && batchIndex === undefined) {
+    throw new TypeError("Semantic batch review requires a batch index.");
+  }
 
   const serialized = serializeSemanticReviewResults([orderedReviewResult(result)]);
   const buffer = Buffer.from(serialized, "utf8");
-  const capacity = contentCapacity(path, requestId);
+  const capacity = contentCapacity(path, requestId, phase, batchIndex);
   const offsets = pageOffsets(buffer, capacity);
   if (pageIndex >= offsets.length) {
     throw new RangeError(`Semantic review page index ${pageIndex} is out of range; page count is ${offsets.length}.`);
@@ -212,6 +243,8 @@ export function buildSemanticReviewPage(result, pageIndex = 0) {
     requestId,
     path,
     viewFingerprint,
+    ...(phase ? { continuationPhase: phase } : {}),
+    ...(batchIndex === undefined ? {} : { batchIndex }),
     index: pageIndex,
     count: offsets.length,
     startByte,
@@ -251,14 +284,16 @@ export function formatSemanticReviewPage(page) {
     "Review state: PENDING",
     `Request path: ${page.path}`,
     `Request ID: ${page.requestId}`,
+    ...(page.continuationPhase ? [`Continuation phase: ${page.continuationPhase}`] : []),
+    ...(page.batchIndex === undefined ? [] : [`Batch index: ${page.batchIndex} (zero-based)`]),
     `Page index: ${page.index} of ${page.count} (zero-based)`,
     `Bytes: ${page.startByte}-${page.endByte} of ${page.totalBytes} (end exclusive)`,
     DISPLAY_WRAP_NOTE,
     "JSON fragment:",
     page.content,
     `Next page index: ${nextPage}`,
-    reviewContinuation(page.path, nextPageIndex),
-    REVIEW_PAGE_INSTRUCTION,
+    reviewContinuation(page.path, nextPageIndex, page.continuationPhase, page.batchIndex),
+    reviewPageInstruction(page.continuationPhase),
   ].join("\n"));
 
   if (Buffer.byteLength(output, "utf8") > MAX_FORMATTED_PAGE_BYTES) {
