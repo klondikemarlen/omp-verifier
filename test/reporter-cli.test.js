@@ -47,16 +47,19 @@ process.exitCode = 1;
 `);
   await writeFile(join(packageDirectory, "pass.mjs"), 'process.stdout.write(JSON.stringify({ status: "PASS", summary: "Gold met." }));\n');
   execFileSync("git", ["init", "--quiet"], { cwd: root });
-  return args => spawnSync(process.execPath, [cliPath, ...args], {
-    cwd: root,
-    encoding: "utf8",
-    env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
-  });
+  return {
+    root,
+    run: args => spawnSync(process.execPath, [cliPath, ...args], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
+    }),
+  };
 }
 
 test("when automatic checks return mixed results, advisor text contains only actionable failure evidence", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { root, run } = await reporterFixture(t);
 
   // Act
   const result = run(["automatic", "tests/downloads.test.ts", "--reporter", "text", "--failures-only"]);
@@ -65,6 +68,7 @@ test("when automatic checks return mixed results, advisor text contains only act
   assert.equal(result.status, 1);
   assert.equal(result.stdout, `FAIL publisher:alignment
   1 test-alignment violation found.
+  Scope: changed-files; provider-owned; checkout ${root}
   Evidence: tests/downloads.test.ts:169: missing ordered comments
   Expected Arrange, Act, Assert.
   Next check: Add ordered comments.
@@ -73,7 +77,7 @@ test("when automatic checks return mixed results, advisor text contains only act
 
 test("when JSON reporting is selected, automatic metadata and successful results remain available", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { root, run } = await reporterFixture(t);
 
   // Act
   const result = run(["automatic", "tests/downloads.test.ts", "--reporter", "json"]);
@@ -87,17 +91,29 @@ test("when JSON reporting is selected, automatic metadata and successful results
     evidence: "tests/downloads.test.ts:169: missing ordered comments\nExpected Arrange, Act, Assert.",
     nextCheck: "Add ordered comments.",
     matches: [{ path: "tests/downloads.test.ts", trigger: "**/*.test.ts" }],
+    scope: {
+      mode: "changed-files",
+      attribution: "provider-owned",
+      repositoryRoot: root,
+      changedPaths: ["tests/downloads.test.ts"],
+    },
   }, {
     id: "publisher:pass",
     status: "PASS",
     summary: "Gold met.",
     matches: [{ path: "tests/downloads.test.ts", trigger: "**/*.test.ts" }],
+    scope: {
+      mode: "changed-files",
+      attribution: "provider-owned",
+      repositoryRoot: root,
+      changedPaths: ["tests/downloads.test.ts"],
+    },
   }]);
 });
 
 test("when the selected check passes, failure-only text is silent", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { run } = await reporterFixture(t);
 
   // Act
   const result = run(["verify", "publisher:pass", "--reporter", "text", "--failures-only"]);
@@ -109,7 +125,7 @@ test("when the selected check passes, failure-only text is silent", async t => {
 
 test("when no check applies, failure-only text is silent", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { run } = await reporterFixture(t);
 
   // Act
   const result = run(["automatic", "README.md", "--reporter", "text", "--failures-only"]);
@@ -121,7 +137,7 @@ test("when no check applies, failure-only text is silent", async t => {
 
 test("when a named check is unavailable, text reports BLOCKED instead of success", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { run } = await reporterFixture(t);
 
   // Act
   const result = run(["verify", "publisher:missing", "--reporter", "text", "--failures-only"]);
@@ -133,7 +149,7 @@ test("when a named check is unavailable, text reports BLOCKED instead of success
 
 test("when a reporter is misspelled, the CLI rejects it instead of silently using JSON", async t => {
   // Arrange
-  const run = await reporterFixture(t);
+  const { run } = await reporterFixture(t);
 
   // Act
   const result = run(["verify", "--reporter", "typo"]);

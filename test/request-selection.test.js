@@ -71,6 +71,12 @@ test("when a quick request selects changed source, optional checks do not run bu
       status: "FAIL",
       summary: "required violation",
       matches: [{ path: "source.js", trigger: "**/*.js" }],
+      scope: {
+        mode: "changed-files",
+        attribution: "provider-owned",
+        repositoryRoot: f.project,
+        changedPaths: ["source.js"],
+      },
     },
   ]);
   assert.equal(await readFile(join(f.project, "executed.txt"), "utf8"), "required\n");

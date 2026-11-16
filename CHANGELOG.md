@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0 - 2026-11-16
+
+- Require semantic FAIL findings to cite selected files or explicitly attribute a regression in unchanged context to a cited selected change.
+- Report changed-file scope and captured delivery identities while retaining broader evidence. Label opaque deterministic attribution as provider-owned without filtering its diagnostics.
+- Keep preservation-only snapshots separate from authored delivery candidates. Renew older semantic requests before using the new attribution contract.
+
 ## 1.6.2 - 2026-11-16
 
 - Make range-boundary test inputs explicit before constructing their scenario table; runtime capture behavior is unchanged.

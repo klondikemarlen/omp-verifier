@@ -86,6 +86,7 @@ process.exitCode = failed ? 1 : 0;
     assert.equal(failure.status, 1);
     assert.equal(failure.stdout, `FAIL publisher:fail
   Fixture failed
+  Scope: changed-files; provider-owned; checkout ${projectDir}
   Evidence: src/changed.js contains BROKEN
   Next check: remove BROKEN
 `);

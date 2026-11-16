@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
+import { verificationScope } from "#root/omp-plugin/finding-scope.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -153,11 +154,14 @@ export async function runAutomaticVerification({
   for (const { check, matches, suppressedResults } of selections) {
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
-    const result = await runVerificationCheckWithRoot(check, cwd, matches.map(match => match.path), repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting);
+    const selectedPaths = matches.map(match => match.path);
+    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting);
     if (!result) continue;
+    const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({
       ...result,
       matches,
+      scope,
     });
   }
   return results;

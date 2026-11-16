@@ -251,7 +251,11 @@ for (const status of ["PASS", "FAIL", "BLOCKED"]) {
         changedPaths: ["src/helper.js"],
       });
       const requestPath = prepared.reviewRequest.path;
-      const assessment = { ...passAssessment(prepared.reviewRequest.requestId), status };
+      const assessment = {
+        ...passAssessment(prepared.reviewRequest.requestId),
+        status,
+        ...(status === "FAIL" ? { findings: [{ path: "src/helper.js", summary: "The helper does not own its boundary." }] } : {}),
+      };
       const accepted = await completeSemanticEvaluation({ cwd: fixture.root, requestPath, assessment });
       const conflicting = { ...assessment, status: status === "PASS" ? "FAIL" : "PASS", summary: "Replacement draft" };
 

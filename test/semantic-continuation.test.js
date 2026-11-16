@@ -72,6 +72,7 @@ function assessmentFor(review, status = "PASS") {
     summary: status === "PASS" ? "Values satisfy the supplied standard." : "A required value check remains unresolved.",
     rationale: "Source values are nonnegative; cross-file integration must also respect the shared limits.",
     citations: [{ path, line: 1, quote: `export const value${index} = ${index};` }],
+    ...(status === "FAIL" ? { findings: [{ path, summary: "The value violates the shared limit." }] } : {}),
     ...(batchIndex === null
       ? { coveredBatches: review.reviewRequest.continuation.batches.map(batch => batch.index) }
       : { batchIndex, crossBatchNotes: "Compare the exported values with the other batches under the same source ownership guide." }),
@@ -408,6 +409,7 @@ test("when integration finds a cross-batch violation after local checkpoints, th
     const final = await finalize(fixture, aggregate, {
       status: "FAIL", summary: "The exported values disagree across boundaries.",
       rationale: "Local values are nonnegative, but value0 and value1 violate the required shared equality constraint.",
+      findings: [{ path: "src/value-1.js", summary: "value1 differs from the required shared value0." }],
       citations: [
         { path: "src/value-0.js", line: 1, quote: "export const value0 = 0;" },
         { path: "src/value-1.js", line: 1, quote: "export const value1 = 1;" },
@@ -422,3 +424,26 @@ test("when integration finds a cross-batch violation after local checkpoints, th
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
+
+for (const status of ["FAIL", "BLOCKED"]) {
+  test(`when final integration is ${status}, saved batch findings remain visible without duplicating an aggregate finding`, async () => {
+    // Arrange
+    const fixture = await createFixture();
+    try {
+      const aggregate = await completeBatches(fixture, "FAIL");
+      const finding = { path: "src/value-0.js", summary: "The value violates the shared limit." };
+
+      // Act
+      const final = await finalize(fixture, aggregate, {
+        status,
+        findings: status === "FAIL" ? [finding] : [],
+      });
+
+      // Assert
+      assert.equal(final.status, status);
+      assert.deepEqual(final.findings, [finding]);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
