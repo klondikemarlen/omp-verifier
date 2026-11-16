@@ -5,12 +5,14 @@ import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:
 import { promisify } from "node:util";
 
 import { pinnedExternalSource, readExternalText } from "#root/omp-plugin/external-context.js";
+import { readSourceRange } from "#root/omp-plugin/source-range.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_INVENTORY_FILES = 1_200;
 const MAX_INVENTORY_READ_BYTES = 8_000_000;
 const MAX_FILE_EVIDENCE_BYTES = 16_000;
 const MAX_INVENTORY_FILE_BYTES = 256_000;
+const MAX_TARGETED_RANGE_BYTES = 8_000_000;
 const MAX_TOTAL_EVIDENCE_BYTES = 256_000;
 const MAX_EVIDENCE_FILES = 40;
 const MAX_LARGE_SCOPE_EVIDENCE_BYTES = 1_024_000;
@@ -327,7 +329,7 @@ function contextRange(value) {
   return { path: match[1], startLine, endLine };
 }
 
-async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, range) {
+async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, range, maxRangeBytes = MAX_INVENTORY_FILE_BYTES) {
   const absolutePath = resolve(root, path);
   if (!insideRoot(root, absolutePath)) return { error: "path resolves outside the project" };
   let fileRealPath;
@@ -347,10 +349,10 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
   }
   if (!fileStat.isFile()) return { error: "path is not a regular file" };
 
-  const sourceLimit = range ? MAX_INVENTORY_FILE_BYTES : maxBytes;
-  if (fileStat.size > sourceLimit) {
+  if (range) return readSourceRange(fileRealPath, range, maxRangeBytes);
+  if (fileStat.size > maxBytes) {
     return {
-      error: `file exceeds the ${sourceLimit}-byte context limit`,
+      error: `file exceeds the ${maxBytes}-byte context limit`,
       sizeLimitExceeded: true,
       ...(fileStat.size <= MAX_INVENTORY_FILE_BYTES ? { rangeRecovery: true } : {}),
     };
@@ -364,28 +366,7 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
   }
   if (contents.includes(0)) return { error: "file is not text" };
 
-  const fullContent = contents.toString("utf8");
-  const identity = { sha256: sha256(contents), size: contents.byteLength };
-  if (!range) return { content: fullContent, ...identity };
-
-  const allLines = fullContent.split(/\r?\n/);
-  const startLine = range.startLine;
-  const endLine = range.endLine ?? Math.min(allLines.length, startLine + 119);
-  if (startLine > allLines.length) return { error: `requested line ${startLine} is beyond end of file`, rangeRecovery: true };
-  if (endLine > allLines.length) return { error: `requested line ${endLine} is beyond end of file`, rangeRecovery: true };
-
-  const content = allLines.slice(startLine - 1, endLine).join("\n");
-  if (Buffer.byteLength(content) > MAX_FILE_EVIDENCE_BYTES) {
-    return { error: `excerpt exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte evidence limit; request a smaller line range`, rangeRecovery: true };
-  }
-  return {
-    content,
-    ...identity,
-    lineCount: allLines.length,
-    startLine,
-    endLine,
-    partial: startLine !== 1 || endLine < allLines.length,
-  };
+  return { content: contents.toString("utf8"), sha256: sha256(contents), size: contents.byteLength };
 }
 
 function recordFor(path, result, source) {
@@ -824,7 +805,8 @@ export async function captureSemanticContext({
   for (const selector of requestedContext) {
     const { path } = selector;
     if (changedSelectors.has(path)) continue;
-    const result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, selector.startLine ? selector : undefined);
+    const range = selector.startLine ? selector : undefined;
+    const result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
     if (result.missing || result.error) {
       targetedContext.push({ path, state: "unavailable", reason: result.error ?? "path is absent" });
       missingContextPaths.push(path);
