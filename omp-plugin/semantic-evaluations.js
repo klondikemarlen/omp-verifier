@@ -14,6 +14,13 @@ import {
   validateSemanticCitations,
   validateSourceByteLimit,
 } from "#root/omp-plugin/semantic-context.js";
+import { captureSemanticContinuation, validateSemanticContinuation } from "#root/omp-plugin/semantic-continuation.js";
+import {
+  continuationAssessmentPayload,
+  continuationBatch,
+  continuationReviewPayload,
+  validateContinuationAssessment,
+} from "#root/omp-plugin/semantic-continuation-review.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = resolve(tmpdir(), `omp-verifier-semantic-${process.getuid?.() ?? "user"}`);
@@ -244,6 +251,15 @@ async function currentDefinition(check) {
 }
 
 
+function previousSourceContext(payload) {
+  if (!payload?.continuation) return payload?.context;
+  return {
+    ...payload.context,
+    changedCode: payload.continuation.batches.flatMap(batch => batch.context.changedCode),
+    changedCodeCoverage: payload.continuation.batches.flatMap(batch => batch.context.changedCodeCoverage ?? []),
+  };
+}
+
 async function captureRequest({
   check,
   repositoryRoot,
@@ -255,6 +271,7 @@ async function captureRequest({
   maxSourceBytes,
   sourceRecovery,
   automaticScope,
+  continuation = false,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const definition = await currentDefinition(check);
@@ -300,6 +317,20 @@ async function captureRequest({
     context: captured.context,
     missingContext,
   };
+  if (continuation) {
+    payload.continuation = await captureSemanticContinuation({
+      repositoryRoot,
+      changedPaths: payload.scope.changedPaths,
+      contextPaths,
+      callerContextPaths,
+      externalContextPaths,
+      externalSnapshot: captured.context.externalContext,
+      previousContext,
+      maxSourceBytes: sourceByteLimit,
+      sourceRecovery,
+      automaticScope,
+    }, definition.contract.requiredContext);
+  }
   const stored = {
     payload,
     runtime: {
@@ -314,10 +345,16 @@ async function captureRequest({
   return { requestId, payload, stored };
 }
 
-function requestEnvelope(payload, requestPath) {
+function requestEnvelope(payload, requestPath, state = {}, batchIndex) {
+  payload = continuationReviewPayload(payload, state, batchIndex);
   let summary = "Semantic evaluation is ready for assessment";
   if (payload.missingContext.length) {
     summary = "Semantic evaluation awaits required context";
+  }
+  if (payload.continuation) {
+    summary = payload.continuation.phase === "batch"
+      ? "Semantic continuation awaits a batch checkpoint; the whole review remains pending"
+      : "Semantic continuation awaits the final whole-scope assessment";
   }
 
   return {
@@ -378,7 +415,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     callerContextPaths: payload.scope.callerContextPaths,
     externalContextPaths: payload.scope.externalContextPaths,
     externalSnapshot: payload.context.externalContext,
-    previousContext: payload.context,
+    previousContext: previousSourceContext(payload),
     maxSourceBytes: sourceByteLimit,
     sourceRecovery: payload.scope.sourceRecovery,
     legacyRequest: usesLegacySourceLimit,
@@ -390,6 +427,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     payload.scope.maxSourceBytes = sourceByteLimit;
     payload.context.evidenceBudget.maxSourceBytes = sourceByteLimit;
   }
+  if (payload.continuation) await validateSemanticContinuation(payload);
 }
 
 function requestBlock(id, error) {
@@ -456,9 +494,10 @@ async function reconcileAutomaticScope(target, current) {
     contextPaths: payload.scope.contextPaths,
     callerContextPaths: payload.scope.callerContextPaths,
     externalContextPaths: payload.scope.externalContextPaths,
-    previousContext: payload.context,
+    previousContext: previousSourceContext(payload),
     maxSourceBytes: payload.scope.maxSourceBytes,
     sourceRecovery: payload.scope.sourceRecovery,
+    continuation: Boolean(payload.continuation),
     automaticScope: { packageDirectory: plan.packageDirectory, delivery, ...(automatic.workLevel ? { workLevel: automatic.workLevel } : {}) },
   });
   const requestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, captured.requestId));
@@ -511,7 +550,7 @@ async function reconcileRequest(target) {
   }
 
   return { result: {
-    ...requestEnvelope(current.stored.payload, current.requestPath),
+    ...requestEnvelope(current.stored.payload, current.requestPath, currentState),
     evaluation,
   } };
 }
@@ -585,10 +624,10 @@ export async function prepareSemanticEvaluation({
         if (accepted) return accepted;
       }
       const previous = await previousRequest(cacheDirectory, check.id);
-      const isSameEvidenceScope = reuseExisting && previous?.payload.scope.repositoryRoot === root
+      const isSameEvidenceScope = previous?.payload.scope.repositoryRoot === root
         && previous.runtime.manifestPath === check.manifestPath && previous.runtime.packagePath === check.packagePath
         && isDeepStrictEqual(previous.payload.scope.changedPaths, [...new Set(changedPaths)].sort());
-      const retainedScope = isSameEvidenceScope ? previous.payload.scope : undefined;
+      const retainedScope = reuseExisting && isSameEvidenceScope ? previous.payload.scope : undefined;
       const result = await captureRequest({
         check,
         repositoryRoot: root,
@@ -596,10 +635,11 @@ export async function prepareSemanticEvaluation({
         contextPaths: [...new Set([...(retainedScope?.contextPaths ?? []), ...contextPaths])],
         callerContextPaths: retainedScope?.callerContextPaths,
         externalContextPaths: retainedScope?.externalContextPaths,
-        previousContext: previous?.payload.context,
+        previousContext: previousSourceContext(previous?.payload),
         maxSourceBytes: sourceByteLimit,
         sourceRecovery,
         automaticScope,
+        continuation: isSameEvidenceScope && Boolean(previous?.payload.continuation),
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
       await persistRequest(cacheDirectory, check.id, requestPath, result.stored);
@@ -610,7 +650,10 @@ export async function prepareSemanticEvaluation({
   }
 }
 
-export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [], removeContextPaths = [] }) {
+export async function readSemanticEvaluation({
+  cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [],
+  removeContextPaths = [], continuation = false, batchIndex,
+}) {
   let target;
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
@@ -620,7 +663,7 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-      const { result: reconciled, stored } = await reconcileRequest(target);
+      const { result: reconciled, stored, currentState } = await reconcileRequest(target);
       if (reconciled) return reconciled;
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
@@ -651,7 +694,13 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         || additionalContextPaths.length !== previousContextPaths.length
         || additionalCallerContext.length !== previousCallerContext.length
         || additionalExternalContext.length !== previousExternalContext.length;
-      if (!hasContextChanges) return requestEnvelope(stored.payload, target.absoluteRequestPath);
+      if (typeof continuation !== "boolean") throw new Error("continuation must be a boolean");
+      if (batchIndex !== undefined && (continuation || hasContextChanges)) {
+        throw new Error("batch selection cannot be combined with continuation renewal or context changes");
+      }
+      if (!hasContextChanges && !continuation) {
+        return requestEnvelope(stored.payload, target.absoluteRequestPath, currentState, batchIndex);
+      }
 
       const check = {
         id: target.checkId,
@@ -669,8 +718,9 @@ export async function readSemanticEvaluation({ cwd, requestPath, contextPaths = 
         externalContextPaths: additionalExternalContext,
         maxSourceBytes: stored.payload.scope.maxSourceBytes,
         sourceRecovery: stored.payload.scope.sourceRecovery,
-        previousContext: stored.payload.context,
+        previousContext: previousSourceContext(stored.payload),
         automaticScope: stored.payload.scope.automatic,
+        continuation: continuation || Boolean(stored.payload.continuation),
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));
       await persistRequest(target.cacheDirectory, target.checkId, nextRequestPath, result.stored);
@@ -694,8 +744,10 @@ export async function recordSemanticReviewPage({ cwd, page }) {
   }
 
   await withCheckLock(target.cacheDirectory, target.checkId, async () => {
-    const { currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
-    const previous = currentState.pagePresentation;
+    const { currentState, stored } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
+    const isBatch = page.batchIndex !== undefined;
+    if (isBatch) continuationBatch(stored.payload, page.batchIndex);
+    const previous = isBatch ? currentState.batchPagePresentations?.[page.batchIndex] : currentState.pagePresentation;
     let deliveredPages = [];
     if (previous?.viewFingerprint === page.viewFingerprint && previous.count === page.count) {
       deliveredPages = previous.deliveredPages;
@@ -703,14 +755,18 @@ export async function recordSemanticReviewPage({ cwd, page }) {
 
     const delivered = new Set(deliveredPages);
     delivered.add(page.index);
-    await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify({
-      ...currentState,
-      pagePresentation: {
-        viewFingerprint: page.viewFingerprint,
-        count: page.count,
-        deliveredPages: [...delivered].sort((left, right) => left - right),
-      },
-    }));
+    const presentation = {
+      viewFingerprint: page.viewFingerprint,
+      count: page.count,
+      deliveredPages: [...delivered].sort((left, right) => left - right),
+    };
+    const nextState = { ...currentState };
+    if (isBatch) {
+      nextState.batchPagePresentations = { ...currentState.batchPagePresentations, [page.batchIndex]: presentation };
+    } else {
+      nextState.pagePresentation = presentation;
+    }
+    await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify(nextState));
   });
 }
 
@@ -790,10 +846,14 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
       const { result: reconciled, stored, currentState } = await reconcileRequest(target);
       if (reconciled) return reconciled;
-      const missingPages = missingReviewPages(currentState.pagePresentation);
+      const batchIndex = assessment?.batchIndex;
+      const presentation = batchIndex === undefined
+        ? currentState.pagePresentation
+        : currentState.batchPagePresentations?.[batchIndex];
+      const missingPages = missingReviewPages(presentation);
       if (missingPages.length > 0) {
         return {
-          ...requestEnvelope(stored.payload, target.absoluteRequestPath),
+          ...requestEnvelope(stored.payload, target.absoluteRequestPath, currentState, batchIndex),
           reviewProgress: {
             nextPage: missingPages[0],
             missingPages,
@@ -801,7 +861,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
         };
       }
 
-      if (stored.payload.missingContext.length
+      if (!stored.payload.continuation && stored.payload.missingContext.length
         && (assessment?.status === "PASS" || assessment?.status === "FAIL")) {
         const { context, standard } = stored.payload;
         const recoverablePaths = new Set(context.changedCode
@@ -825,7 +885,9 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
 
       let result;
       try {
-        result = normalizedAssessment(assessment, stored.payload);
+        validateContinuationAssessment(assessment, stored.payload, currentState);
+        const assessmentPayload = continuationAssessmentPayload(stored.payload, batchIndex);
+        result = normalizedAssessment(assessment, assessmentPayload);
       } catch (error) {
         const invalid = blocked(target.checkId, "Semantic assessment is invalid", error.message);
         return {
@@ -837,7 +899,33 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
           nextCheck: "Read the current request with review, recover any missing context, and correct the assessment using its requestId and exact captured source lines. Resubmit with evaluate; this rejected assessment has not consumed the request.",
         };
       }
+      if (batchIndex !== undefined) {
+        const checkpoint = { ...result, crossBatchNotes: assessment.crossBatchNotes };
+        const nextState = {
+          ...currentState,
+          batchAssessments: { ...currentState.batchAssessments, [batchIndex]: checkpoint },
+        };
+        // The aggregate ledger changed. Its old receipts cannot acknowledge the new one.
+        delete nextState.pagePresentation;
+        const pending = requestEnvelope(stored.payload, target.absoluteRequestPath, nextState);
+        await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify(nextState));
+        return pending;
+      }
       const finalResult = resultFromAssessment(stored.payload, result);
+      if (stored.payload.continuation) {
+        const batches = stored.payload.continuation.batches.map((batch, index) => ({
+          index,
+          contextFingerprint: batch.context.fingerprint,
+          status: currentState.batchAssessments?.[index]?.status ?? "PENDING",
+        }));
+        finalResult.evaluation.continuation = { fingerprint: stored.payload.continuation.fingerprint, batches };
+        for (const batch of batches) {
+          if (batch.status !== "FAIL" && batch.status !== "BLOCKED") continue;
+          const checkpoint = resultFromAssessment(stored.payload, currentState.batchAssessments[batch.index]);
+          finalResult.evidence += `\nBatch ${batch.index} ${checkpoint.status}: ${checkpoint.summary}\n${checkpoint.evidence}`;
+          if (checkpoint.nextCheck) finalResult.evidence += `\nNext check: ${checkpoint.nextCheck}`;
+        }
+      }
       await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify({
         ...currentState,
         consumed: true,

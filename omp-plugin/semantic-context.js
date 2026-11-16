@@ -518,7 +518,7 @@ function addRecord(records, record, budget) {
   // Required records are admitted before optional discovery. Grow only for
   // actual required bytes, including recovered chunks and authenticated deletions.
   const required = record.source !== "callers" && record.source !== "siblings";
-  if (required && budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES) {
+  if (!budget.boundedBatch && required && budget.used + bytes > MAX_TOTAL_EVIDENCE_BYTES) {
     budget.maxFiles = MAX_LARGE_SCOPE_EVIDENCE_FILES;
     budget.maxBytes = MAX_LARGE_SCOPE_EVIDENCE_BYTES;
   }
@@ -561,6 +561,14 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
   if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
   if (context.sourceRecovery) fingerprint.sourceRecovery = context.sourceRecovery;
+  if (context.evidenceBudget.boundedBatch) {
+    fingerprint.evidenceBudget = context.evidenceBudget;
+    fingerprint.guidanceRequirements = context.guidanceRequirements;
+    fingerprint.missingChangedPaths = context.missingChangedPaths;
+    fingerprint.missingContextPaths = context.missingContextPaths;
+    fingerprint.missingGuidancePaths = context.missingGuidancePaths;
+    fingerprint.unavailableSourceStates = context.unavailableSourceStates;
+  }
   return sha256(JSON.stringify(fingerprint));
 }
 
@@ -575,8 +583,10 @@ export async function captureSemanticContext({
   maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
   sourceRecovery,
   legacyRequest = false,
+  boundedBatch = false,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
+  if (typeof boundedBatch !== "boolean") throw new TypeError("boundedBatch must be a boolean");
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -646,8 +656,9 @@ export async function captureSemanticContext({
   const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths, ...externalSelectors.map(source => source.url)]);
   const largeScope = requiredEvidencePaths.size > MAX_EVIDENCE_FILES;
   const budget = {
-    maxFiles: largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES,
-    maxBytes: largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES,
+    maxFiles: boundedBatch || largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES,
+    maxBytes: boundedBatch ? MAX_TOTAL_EVIDENCE_BYTES : largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES,
+    boundedBatch,
     used: 0,
     paths: new Set(),
     truncated: false,
@@ -888,7 +899,9 @@ export async function captureSemanticContext({
     // Stored requests are integrity-checked before reuse. Immutable remote snapshots
     // need no network access during page reads or final local-source freshness checks.
     const snapshot = externalSnapshot?.find(record => record.selector === source.selector);
-    let record = snapshot;
+    let record = boundedBatch && snapshot?.state === "unavailable" && snapshot.reason === "context evidence limit reached"
+      ? undefined
+      : snapshot;
     if (!record) {
       const result = await readExternalText(source, source.startLine ? source : undefined);
       const identity = { path: source.url, selector: source.selector, revision: source.revision, source: "external-context" };
@@ -999,6 +1012,7 @@ export async function captureSemanticContext({
       recovery: "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
     },
     evidenceBudget: {
+      ...(boundedBatch ? { boundedBatch: true } : {}),
       maxBytes: budget.maxBytes,
       maxFiles: budget.maxFiles,
       requiredFiles: requiredEvidencePaths.size,
@@ -1020,6 +1034,26 @@ export async function captureSemanticContext({
     missingContextPaths,
     missingGuidancePaths,
   };
+  if (boundedBatch) {
+    const unavailablePaths = [...new Set([...missingChangedPaths, ...missingContextPaths, ...missingGuidancePaths])].sort();
+    context.unavailableSourceStates = await Promise.all(unavailablePaths.map(async path => {
+      try {
+        const entry = await lstat(resolve(root, path), { bigint: true });
+        return {
+          path,
+          state: "present",
+          size: String(entry.size),
+          mode: String(entry.mode),
+          inode: String(entry.ino),
+          device: String(entry.dev),
+          modified: String(entry.mtimeNs),
+          changed: String(entry.ctimeNs),
+        };
+      } catch (error) {
+        return { path, state: "unavailable", reason: error.code ?? error.message };
+      }
+    }));
+  }
   context.fingerprint = contextFingerprint(context, !legacyRequest);
   return { context, fingerprint: context.fingerprint };
 }
@@ -1029,13 +1063,14 @@ export function semanticContextMissing(requiredContext, captured) {
   const { context } = captured;
   const { evidenceBudget } = context;
   const requiredRejections = evidenceBudget.rejections.filter(record =>
-    (record.source === "changed-code" && requiredContext.includes("changed-code"))
+    (evidenceBudget.boundedBatch && record.source !== "callers" && record.source !== "siblings")
+    || (record.source === "changed-code" && requiredContext.includes("changed-code"))
     || (record.source === "project-guidance" && requiredContext.includes("project-guidance"))
     || ["targeted-context", "caller-context", "external-context"].includes(record.source));
   if (requiredRejections.length && evidenceBudget.requiredFiles > evidenceBudget.maxFiles) {
-    missing.push(`required-scope capacity exceeded: ${evidenceBudget.requiredFiles} distinct required paths cannot fit the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte evidence budget. Smaller excerpts cannot reduce required file cardinality; no supported within-request recovery exists. Keep the complete scope BLOCKED rather than splitting it or dropping required evidence.`);
+    missing.push(`required-scope capacity exceeded: ${evidenceBudget.requiredFiles} distinct required paths cannot fit the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte evidence budget. Smaller excerpts cannot reduce required file cardinality. Use review --continue to renew the complete obligation into bounded checkpoints and one final whole-scope assessment; never substitute independent fragment verdicts or drop required evidence.`);
   } else if (requiredRejections.length) {
-    missing.push(`required-scope evidence capacity reached within the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte budget; inspect evidenceBudget.rejections for exact required records and limits. Recover material context ranges with review --context while retaining complete changed-source coverage. If all required evidence still cannot coexist, keep the whole scope BLOCKED; optional caller/sibling omissions alone do not establish this failure.`);
+    missing.push(`required-scope evidence capacity reached within the ${evidenceBudget.maxFiles}-file / ${evidenceBudget.maxBytes}-byte budget; inspect evidenceBudget.rejections for exact required records and limits. Recover material context ranges with review --context while retaining complete changed-source coverage. If required evidence still cannot coexist, use review --continue for bounded whole-scope continuation; optional caller/sibling omissions alone do not establish this failure.`);
   }
 
   if (requiredContext.includes("changed-code")) {
