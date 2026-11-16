@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0 - 2026-11-16
+
+- Continue oversized semantic reviews through bounded evidence batches, saved checkpoints, and one explicit whole-scope assessment.
+- Preserve complete scope, applicable guidance, citations, and freshness across process resumes; batch failures cannot become aggregate PASS.
+- Keep ordinary capture limits and model routes unchanged. Evidence batching does not compact native advisor history or repair provider context-window exhaustion.
+
 ## 1.5.4 - 2026-11-13
 
 - Recover renamed sibling evidence at current Git paths while retaining historical provenance, owning guidance, and strict freshness checks.
