@@ -8,6 +8,7 @@ import { isDeepStrictEqual, promisify } from "node:util";
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
+import { validateFindings, verificationScope } from "#root/omp-plugin/finding-scope.js";
 import {
   captureSemanticContext,
   semanticContextMissing,
@@ -307,6 +308,7 @@ async function captureRequest({
     scope: {
       repositoryRoot,
       changedPaths: captured.context.changedPaths,
+      findingMode: "changed-files",
       contextPaths: [...contextPaths],
       callerContextPaths: [...callerContextPaths],
       ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
@@ -391,6 +393,9 @@ async function loadRequestForOperation({ cwd, requestPath }) {
 
 async function validateFreshness({ checkId, repositoryRoot, stored }) {
   const { payload, runtime } = stored;
+  if (payload.scope.findingMode !== "changed-files") {
+    throw new Error("request predates finding attribution; prepare fresh verification with the complete current scope");
+  }
   // Older stored requests have no source cap and retain their original fingerprint shape.
   const usesLegacySourceLimit = payload.scope.maxSourceBytes === undefined;
   const sourceByteLimit = validateSourceByteLimit(payload.scope.maxSourceBytes);
@@ -809,9 +814,11 @@ function normalizedAssessment(assessment, payload) {
       && !validatedCitations.some(citation => payload.context.callerContextPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL assessments using explicit caller context must cite its captured caller or runtime source");
     }
-    return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations };
+    const findings = validateFindings(assessment, payload.scope.changedPaths, validatedCitations);
+    return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations, findings };
   }
   const validatedCitations = citations.length ? validateSemanticCitations(citations, payload.context) : [];
+  validateFindings(assessment, payload.scope.changedPaths, validatedCitations);
   return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations };
 }
 
@@ -819,11 +826,14 @@ function resultFromAssessment(payload, assessment) {
   const citationEvidence = assessment.citations.map(citation =>
     `${citation.path}:${citation.line}${citation.state === "deleted" ? " (deleted)" : ""}: ${JSON.stringify(citation.quote)}`,
   );
+  const scope = verificationScope(payload.scope.repositoryRoot, payload.scope.changedPaths, payload.scope.automatic?.delivery, "semantic-findings");
   return {
     id: payload.check.id,
     status: assessment.status,
     summary: assessment.summary,
     evidence: [assessment.rationale, ...citationEvidence].join("\n"),
+    scope,
+    ...(assessment.findings?.length ? { findings: assessment.findings } : {}),
     ...(assessment.nextCheck ? { nextCheck: assessment.nextCheck } : {}),
     standard: {
       id: payload.standard.id,
@@ -922,6 +932,12 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
         for (const batch of batches) {
           if (batch.status !== "FAIL" && batch.status !== "BLOCKED") continue;
           const checkpoint = resultFromAssessment(stored.payload, currentState.batchAssessments[batch.index]);
+          for (const finding of checkpoint.findings ?? []) {
+            finalResult.findings ??= [];
+            if (!finalResult.findings.some(existing => isDeepStrictEqual(existing, finding))) {
+              finalResult.findings.push(finding);
+            }
+          }
           finalResult.evidence += `\nBatch ${batch.index} ${checkpoint.status}: ${checkpoint.summary}\n${checkpoint.evidence}`;
           if (checkpoint.nextCheck) finalResult.evidence += `\nNext check: ${checkpoint.nextCheck}`;
         }

@@ -22,6 +22,21 @@ function formatVerificationResult(result) {
     lines.push(`  Quality standard: ${indented(result.standard.gold)}`);
   }
 
+  if (result.scope) {
+    const scope = result.scope;
+    lines.push(`  Scope: ${scope.mode}; ${scope.attribution}; checkout ${scope.repositoryRoot}`);
+    if (scope.baseRef) {
+      lines.push(`  Base: ${scope.baseRef} (${scope.baseCommit}); merge base ${scope.mergeBaseCommit}; head ${scope.headCommit}`);
+    }
+  }
+
+  for (const finding of result.findings ?? []) {
+    lines.push(`  Finding: ${indented(`${finding.path}: ${finding.summary}`)}`);
+    if (finding.introducedBy) {
+      lines.push(`  Introduced by: ${indented(`${finding.introducedBy}: ${finding.regression}`)}`);
+    }
+  }
+
   if (result.reviewRequest) {
     lines.push(`  Review request: ${result.reviewRequest.path}`);
   }
