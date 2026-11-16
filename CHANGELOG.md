@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.6.2 - 2026-11-16
+
+- Make range-boundary test inputs explicit before constructing their scenario table; runtime capture behavior is unchanged.
+
 ## 1.6.1 - 2026-11-16
 
 - Capture bounded dependency records from large local lockfiles without admitting the whole file. Streamed ranges retain full-source hashes, original lines, and freshness checks.
