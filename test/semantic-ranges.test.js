@@ -118,11 +118,15 @@ test("when the installed public API is absent, successful lockfile capture canno
   assert.deepEqual(recovered.reviewRequest.context.missingContextPaths, [API_PATH]);
 });
 
+const oversizedSelectedLine = `${"x".repeat(16_001)}\n`;
+const sourceWithBinaryTail = `one\n${"x".repeat(270_000)}\0`;
+const sourceBeyondScanCeiling = "x".repeat(8_000_001);
+
 for (const [description, content, selector, reason] of [
-  ["oversized selected line", `${"x".repeat(16_001)}\n`, "#L1", /excerpt exceeds the 16000-byte evidence limit/],
+  ["oversized selected line", oversizedSelectedLine, "#L1", /excerpt exceeds the 16000-byte evidence limit/],
   ["out-of-bounds range", "one\ntwo\n", "#L5", /requested line 5 is beyond end/],
-  ["binary tail", `one\n${"x".repeat(270_000)}\0`, "#L1", /file is not text/],
-  ["scan ceiling", "x".repeat(8_000_001), "#L1", /8000000-byte range scan limit/],
+  ["binary tail", sourceWithBinaryTail, "#L1", /file is not text/],
+  ["scan ceiling", sourceBeyondScanCeiling, "#L1", /8000000-byte range scan limit/],
 ]) {
   test(`when targeted evidence has an ${description}, capture reports the specific unavailable prerequisite`, async t => {
     // Arrange
