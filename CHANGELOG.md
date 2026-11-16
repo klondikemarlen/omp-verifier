@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.6.1 - 2026-11-16
+
+- Capture bounded dependency records from large local lockfiles without admitting the whole file. Streamed ranges retain full-source hashes, original lines, and freshness checks.
+- Keep excerpt, whole-source, and aggregate evidence limits distinct; partial changed-source coverage still cannot pass review.
+
 ## 1.6.0 - 2026-11-16
 
 - Continue oversized semantic reviews through bounded evidence batches, saved checkpoints, and one explicit whole-scope assessment.
