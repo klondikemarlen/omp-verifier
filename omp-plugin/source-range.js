@@ -60,9 +60,10 @@ export async function readSourceRange(path, range, maxScanBytes) {
     if (endsWithDelimiter && endLine < lineCount) content = content.replace(/\r?\n$/, "");
     content = content.replace(/\r\n/g, "\n");
     if (Buffer.byteLength(content) > MAX_EXCERPT_BYTES) return excerptError;
+    const sha256 = hash.digest("hex");
     return {
       content,
-      sha256: hash.digest("hex"),
+      sha256,
       size,
       lineCount,
       startLine,

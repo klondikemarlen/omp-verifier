@@ -35,7 +35,8 @@ async function fixture(t, lockfile) {
       id: "publisher:api", label: "API", description: "Review fixture API use.", mode: "agentic", contract: "./contract.json",
     }] },
   }));
-  const { checks } = await discoverVerificationChecks({ packageDirectory: join(root, "plugins") });
+  const packageDirectory = join(root, "plugins");
+  const { checks } = await discoverVerificationChecks({ packageDirectory });
   const check = checks.find(entry => entry.id === "publisher:api");
   const prepared = await prepareSemanticEvaluation({ cwd: root, check, changedPaths: ["usage.js"] });
   return { root, check, content, prepared };
@@ -58,7 +59,8 @@ test("when a required lock record is in a large unchanged file, bounded recovery
   const { root, prepared, content } = await fixture(t);
   // Act
   const recovered = await readSemanticEvaluation({ cwd: root, requestPath: prepared.reviewRequest.path, contextPaths: SELECTORS });
-  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: assessment(recovered.reviewRequest.requestId) });
+  const reviewedAssessment = assessment(recovered.reviewRequest.requestId);
+  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: reviewedAssessment });
   // Assert
   assert.equal(completed.status, "PASS", completed.evidence);
   const record = recovered.reviewRequest.context.targetedContext.find(entry => entry.path === "package-lock.json");
@@ -96,7 +98,8 @@ test("when unselected lockfile bytes change, evaluation rejects the stale depend
   const recovered = await readSemanticEvaluation({ cwd: root, requestPath: prepared.reviewRequest.path, contextPaths: SELECTORS });
   await writeFile(join(root, "package-lock.json"), content.replace("xxx", "yyy"));
   // Act
-  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: assessment(recovered.reviewRequest.requestId) });
+  const reviewedAssessment = assessment(recovered.reviewRequest.requestId);
+  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: reviewedAssessment });
   // Assert
   assert.equal(completed.status, "BLOCKED");
   assert.match(completed.evidence, /context changed/);
@@ -108,7 +111,8 @@ test("when the installed public API is absent, successful lockfile capture canno
   await rm(join(root, API_PATH));
   const recovered = await readSemanticEvaluation({ cwd: root, requestPath: prepared.reviewRequest.path, contextPaths: SELECTORS });
   // Act
-  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: assessment(recovered.reviewRequest.requestId) });
+  const reviewedAssessment = assessment(recovered.reviewRequest.requestId);
+  const completed = await completeSemanticEvaluation({ cwd: root, requestPath: recovered.reviewRequest.path, assessment: reviewedAssessment });
   // Assert
   assert.notEqual(completed.status, "PASS");
   assert.deepEqual(recovered.reviewRequest.context.missingContextPaths, [API_PATH]);
