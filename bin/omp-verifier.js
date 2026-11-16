@@ -150,6 +150,8 @@ try {
       "external-context": { type: "string", multiple: true, default: [] },
       "remove-context": { type: "string", multiple: true, default: [] },
       page: { type: "string" },
+      continue: { type: "boolean", default: false },
+      batch: { type: "string" },
       reason: { type: "string" },
     },
   });
@@ -202,6 +204,22 @@ try {
   if (pageIndex > 0 && hasContextOptions) {
     throw new Error("Context recovery must start at page 0; read later pages from the renewed request without context options");
   }
+  if ((values.continue || values.batch !== undefined) && command !== "review") {
+    throw new Error("--continue and --batch are only supported by review");
+  }
+  if (values.continue && values.batch !== undefined) {
+    throw new Error("--continue cannot be combined with --batch");
+  }
+  if (values.continue && pageIndex !== 0) {
+    throw new Error("--continue must start at page 0");
+  }
+  let batchIndex;
+  if (values.batch !== undefined) {
+    if (!/^\d+$/.test(values.batch) || !Number.isSafeInteger(Number(values.batch))) {
+      throw new Error("Batch must be a nonnegative integer");
+    }
+    batchIndex = Number(values.batch);
+  }
 
   if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     await handoffCommand(positionals, values, reporter);
@@ -228,6 +246,8 @@ try {
       callerContextPaths: values["caller-context"],
       externalContextPaths: values["external-context"],
       removeContextPaths: values["remove-context"],
+      continuation: values.continue,
+      batchIndex,
     })], { reporter, failuresOnly, pageIndex });
   } else if (command === "evaluate" && positionals.length === 1 && !values.worktree && !hasContextOptions && values.assessment !== undefined) {
     const assessmentText = values.assessment === "-" ? readFileSync(0, "utf8") : values.assessment;
@@ -248,6 +268,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-raw-GitHub-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }
