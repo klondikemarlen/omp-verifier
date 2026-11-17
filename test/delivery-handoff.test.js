@@ -108,6 +108,75 @@ test("when the source worktree is removed and the primary is dirty, recovery res
   assert.equal((await stat(handoff.handoffPath)).mode & 0o777, 0o600);
 });
 
+test("when the original checkout remains configured, recovery selects it and release preserves its environment", async t => {
+  // Arrange
+  const fixture = await deliveryFixture(t);
+  await mkdir(join(fixture.source, "node_modules"));
+  await writeFile(join(fixture.source, "node_modules/ignored"), "retained runtime prerequisite\n");
+  const handoff = await prepare(fixture);
+
+  // Act
+  const selected = await recoverDeliveryHandoff({ handoffPath: handoff.handoffPath });
+  const released = await releaseDeliveryHandoff({ handoffPath: handoff.handoffPath });
+
+  // Assert
+  assert.equal(selected.checkoutPath, fixture.source);
+  assert.equal(selected.status, "PREPARED");
+  assert.equal(selected.baseCommit, fixture.baseCommit);
+  assert.equal(selected.tipCommit, fixture.tipCommit);
+  assert.deepEqual(selected.changedPaths, CHANGED_PATHS);
+  assert.equal(released.status, "RELEASED");
+  assert.equal(await readFile(join(selected.checkoutPath, "node_modules/ignored"), "utf8"), "retained runtime prerequisite\n");
+  assert.equal(await readFile(join(selected.checkoutPath, "src/helper.js"), "utf8"), TIP_SOURCE);
+  await assert.rejects(access(handoff.checkoutPath), { code: "ENOENT" });
+  assert.equal(git(fixture.primary, "for-each-ref", "--format=%(refname)", pin(handoff)), "");
+});
+
+test("when the original is the primary checkout, recovery accepts its attached delivered tip", async t => {
+  // Arrange
+  const fixture = await deliveryFixture(t);
+  git(fixture.primary, "merge", "--ff-only", "delivery");
+  fixture.source = fixture.primary;
+  const handoff = await prepare(fixture);
+
+  // Act
+  const selected = await recoverDeliveryHandoff({ handoffPath: handoff.handoffPath });
+
+  // Assert
+  assert.equal(selected.checkoutPath, fixture.primary);
+  assert.equal(git(selected.checkoutPath, "rev-parse", "--abbrev-ref", "HEAD"), "main");
+  assert.equal(selected.tipCommit, fixture.tipCommit);
+  await assert.rejects(access(handoff.checkoutPath), { code: "ENOENT" });
+});
+
+for (const state of ["tracked", "staged", "untracked", "moved tip", "foreign repository"]) {
+  test(`when the retained checkout has ${state}, recovery refuses instead of substituting detached source`, async t => {
+    // Arrange
+    const fixture = await deliveryFixture(t);
+    const handoff = await prepare(fixture);
+    if (state === "moved tip") {
+      git(fixture.source, "checkout", "--detach", fixture.baseCommit);
+    } else if (state === "foreign repository") {
+      git(fixture.primary, "worktree", "remove", fixture.source);
+      git(fixture.primary, "clone", "--quiet", fixture.primary, fixture.source);
+      git(fixture.source, "checkout", "--detach", fixture.tipCommit);
+    } else {
+      const path = state === "untracked" ? "src/untracked.js" : "src/helper.js";
+      await writeFile(join(fixture.source, path), "preserve later work\n");
+      if (state === "staged") git(fixture.source, "add", path);
+    }
+    const before = git(fixture.source, "status", "--porcelain");
+    const head = git(fixture.source, "rev-parse", "HEAD");
+
+    // Act / Assert
+    await assert.rejects(recoverDeliveryHandoff({ handoffPath: handoff.handoffPath }), /dirty or untracked|changed repository or tip/);
+    assert.equal(git(fixture.source, "status", "--porcelain"), before);
+    assert.equal(git(fixture.source, "rev-parse", "HEAD"), head);
+    await assert.rejects(access(handoff.checkoutPath), { code: "ENOENT" });
+    assert.equal(git(fixture.primary, "rev-parse", pin(handoff)), fixture.tipCommit);
+  });
+}
+
 for (const state of ["tracked", "staged", "untracked"]) {
   test(`when the source has ${state} changes, preparation refuses without altering the source`, async t => {
     // Arrange
@@ -143,6 +212,7 @@ for (const state of ["tracked", "untracked"]) {
     // Arrange
     const fixture = await deliveryFixture(t);
     const handoff = await prepare(fixture);
+    git(fixture.primary, "worktree", "remove", fixture.source);
     const recovered = await recoverDeliveryHandoff({ handoffPath: handoff.handoffPath });
     const path = state === "tracked" ? "src/helper.js" : "src/untracked.js";
     await writeFile(join(recovered.checkoutPath, path), "private review work\n");
@@ -199,7 +269,7 @@ test("when a valid record is copied outside its owned location, neither recovery
   await assert.rejects(recoverDeliveryHandoff({ handoffPath: copiedPath }));
   await assert.rejects(releaseDeliveryHandoff({ handoffPath: copiedPath }));
   const recovered = await recoverDeliveryHandoff({ handoffPath: handoff.handoffPath });
-  assert.equal(recovered.status, "RECOVERED");
+  assert.equal(recovered.checkoutPath, fixture.source);
   assert.equal(git(fixture.primary, "rev-parse", pin(handoff)), fixture.tipCommit);
 });
 
@@ -225,7 +295,9 @@ for (const cancellationReason of [undefined, "Maintainer explicitly cancelled th
     // Arrange
     const fixture = await deliveryFixture(t);
     const handoff = await prepare(fixture);
+    git(fixture.primary, "worktree", "remove", fixture.source);
     const recovered = await recoverDeliveryHandoff({ handoffPath: handoff.handoffPath });
+    git(fixture.primary, "worktree", "add", "--quiet", fixture.source, "delivery");
     await writeFile(join(fixture.source, "src/helper.js"), "source edits after handoff\n");
     await writeFile(join(fixture.primary, "src/helper.js"), "competing primary edits\n");
     const branches = git(fixture.primary, "for-each-ref", "--format=%(refname):%(objectname)", "refs/heads/");

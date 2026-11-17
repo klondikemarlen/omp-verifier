@@ -46,12 +46,12 @@ function identityMessage(record) {
   return `omp-verifier delivery identity ${digest}`;
 }
 
-function result(record, handoffPath) {
+function result(record, handoffPath, checkoutPath = join(dirname(handoffPath), "checkout")) {
   return {
     ...identity(record),
     status: record.status,
     handoffPath,
-    checkoutPath: join(dirname(handoffPath), "checkout"),
+    checkoutPath,
     ...(record.cancellationReason ? { cancellationReason: record.cancellationReason } : {}),
   };
 }
@@ -184,6 +184,19 @@ async function checkoutExists(checkoutPath) {
   }
 }
 
+async function validateOriginalCheckout(record) {
+  const info = await lstat(record.originalRoot);
+  if (!info.isDirectory() || info.isSymbolicLink() || await realpath(record.originalRoot) !== record.originalRoot) {
+    throw new Error("retained delivery checkout is not its original canonical directory");
+  }
+  const root = await realpath((await git(record.originalRoot, ["rev-parse", "--show-toplevel"])).trim());
+  if (root !== record.originalRoot || await commonDirectory(root) !== record.commonDirectory ||
+      await commit(root, "HEAD") !== record.tipCommit) {
+    throw new Error("retained delivery checkout has a changed repository or tip identity; preserve it for reconciliation");
+  }
+  await requireClean(root);
+}
+
 async function validateCheckout(record, checkoutPath, { includeIgnored = false } = {}) {
   const info = await lstat(checkoutPath);
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(checkoutPath) !== checkoutPath) {
@@ -239,6 +252,10 @@ export async function recoverDeliveryHandoff({ handoffPath }) {
   return withHandoff(handoffPath, async record => {
     if (!["PREPARED", "RECOVERED"].includes(record.status)) throw new Error(`cannot recover a ${record.status.toLowerCase()} delivery handoff`);
     await validateRepository(record);
+    if (await checkoutExists(record.originalRoot)) {
+      await validateOriginalCheckout(record);
+      return result(record, handoffPath, record.originalRoot);
+    }
     const checkoutPath = join(dirname(handoffPath), "checkout");
     if (!await checkoutExists(checkoutPath)) {
       await git(record.commonDirectory, ["worktree", "add", "--detach", checkoutPath, record.tipCommit]);

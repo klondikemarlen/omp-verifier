@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1 - 2026-11-17
+
+- Prefer a validated retained edit-owning checkout during delivery handoff verification, preserving its existing ignored runtime environment.
+- Recover detached source only when the original checkout is absent; block changed or foreign originals instead of silently substituting another checkout.
+
 ## 1.7.0 - 2026-11-16
 
 - Require semantic FAIL findings to cite selected files or explicitly attribute a regression in unchanged context to a cited selected change.
