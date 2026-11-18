@@ -13,6 +13,7 @@ import { validateContextPathLimit, validateSourceByteLimit } from "#root/omp-plu
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { generationCommand } from "#root/omp-plugin/runtime-generations.js";
+import { prepareResourceCloseout, verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
 import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
@@ -87,7 +88,7 @@ async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) 
   }
 }
 
-async function automaticResults(paths, worktree, baseRef, maxSourceBytes, requestHandle, full) {
+async function automaticResults(paths, worktree, baseRef, maxSourceBytes, requestHandle, full, closeoutPath) {
   let intent;
   if (requestHandle !== undefined) {
     try {
@@ -110,10 +111,24 @@ async function automaticResults(paths, worktree, baseRef, maxSourceBytes, reques
     selectionReason: full ? "full-delivery" : intent?.selectionReason === "explicit-work-level"
       ? `explicit-${intent.level}` : intent?.selectionReason ?? "manual-automatic",
   };
-  if (worktree) return runCurrentAutomaticVerification(options);
-  if (paths.length === 0 && baseRef === undefined) return [];
-
-  return runAutomaticVerificationForPaths({ ...options, changedPaths: paths, baseRef });
+  let results = [];
+  if (worktree) {
+    results = await runCurrentAutomaticVerification(options);
+  } else if (paths.length > 0 || baseRef !== undefined) {
+    results = await runAutomaticVerificationForPaths({
+      ...options,
+      changedPaths: paths,
+      baseRef,
+    });
+  }
+  if (closeoutPath !== undefined) {
+    const closeout = await verifyResourceCloseout({
+      cwd,
+      receiptPath: closeoutPath,
+    });
+    results.push(closeout);
+  }
+  return results;
 }
 
 async function handoffCommand(positionals, values, reporter) {
@@ -143,6 +158,33 @@ async function handoffCommand(positionals, values, reporter) {
   }
 }
 
+async function closeoutCommand(positionals, reporter, failuresOnly) {
+  const [action, path] = positionals;
+  if (positionals.length !== 2 || !["prepare", "verify"].includes(action) || (action === "prepare" && failuresOnly)) {
+    throw new Error("Use closeout prepare <declaration.json> or closeout verify <receipt.json>");
+  }
+  let result;
+  if (action === "prepare") {
+    result = await prepareResourceCloseout({
+      cwd,
+      declarationPath: path,
+    });
+  } else {
+    result = await verifyResourceCloseout({
+      cwd,
+      receiptPath: path,
+    });
+  }
+  if (result.status === "PREPARED") {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    await writeResults([result], {
+      reporter,
+      failuresOnly,
+    });
+  }
+}
+
 try {
   const { values, positionals } = parseArgs({
     args,
@@ -158,6 +200,9 @@ try {
       worktree: { type: "boolean", default: false },
       base: { type: "string" },
       request: { type: "string" },
+      closeout: {
+        type: "string",
+      },
       full: { type: "boolean", default: false },
       assessment: { type: "string" },
       context: { type: "string", multiple: true, default: [] },
@@ -209,6 +254,7 @@ try {
     throw new Error("--request and --full are only supported by automatic");
   }
   if (values.full && values.request === undefined) throw new Error("--full requires --request");
+  if (values.closeout !== undefined && command !== "automatic") throw new Error("--closeout is only supported by automatic");
 
   if (reporter !== "json" && reporter !== "text") {
     throw new Error("Reporter must be json or text");
@@ -249,6 +295,8 @@ try {
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } else if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     await handoffCommand(positionals, values, reporter);
+  } else if (command === "closeout" && !values.worktree && !hasSemanticOptions) {
+    await closeoutCommand(positionals, reporter, failuresOnly);
   } else if (command === "diagnostics" && positionals.length === 1 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     try {
       const diagnostics = await readSemanticDiagnostics({
@@ -305,11 +353,15 @@ try {
       maxSourceBytes,
     }), { reporter, failuresOnly });
   } else if (command === "automatic" && (!values.worktree || positionals.length === 0) && !hasSemanticOptions) {
-    await writeResults(await automaticResults(positionals, values.worktree, baseRef, maxSourceBytes, values.request, values.full), { reporter, failuresOnly });
+    const results = await automaticResults(positionals, values.worktree, baseRef, maxSourceBytes, values.request, values.full, values.closeout);
+    await writeResults(results, {
+      reporter,
+      failuresOnly,
+    });
   } else {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | diagnostics <request-file> [--reporter json|text] | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier closeout prepare <declaration.json> | closeout verify <receipt.json> [--reporter json|text] [--failures-only] | handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | diagnostics <request-file> [--reporter json|text] | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--closeout <receipt.json>] [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

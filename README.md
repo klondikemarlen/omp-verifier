@@ -91,6 +91,8 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier generation activate <generation-id>
 /verifier generation status
 /verifier generation collect
+/verifier closeout prepare <declaration.json>
+/verifier closeout verify <receipt.json>
 /verifier uninstall
 ```
 
@@ -106,6 +108,8 @@ Changed paths retain their edit-owned checkout: the advisor resolves transcript 
 
 Before removing a clean committed delivery worktree whose final review is still outstanding, prepare a [delivery handoff](docs/references/verifier-concepts-reference.md#delivery-handoff): `omp-verifier handoff prepare --base <actual-delivery-base>`. Preserve its returned path in the transcript. The verifier can recover that exact source into a private detached checkout and run fresh checks after normal cleanup. Recovery is not approval; missing execution prerequisites still produce BLOCKED. Uncommitted work must remain in its original checkout.
 
+Task cleanup has a separate [resource closeout check](docs/references/verifier-concepts-reference.md#resource-closeout). Before cleanup, the primary declares exact owned and protected resources and runs `closeout prepare <declaration.json>` in a surviving checkout. After authorized cleanup or retention, `closeout verify <receipt.json>` freshly observes their final state. Emit `Verifier closeout: <receiptPath>` for independent advisor verification, including cleanup-only tasks. Verifier never executes cleanup; source PASS, a merge, and successful cleanup commands do not prove resource disposition.
+
 The installed Verifier package supplies its own lint manifest; additional plugins may supply other checks. In an isolated package directory with no compatible manifests, `checks` reports `none installed` and `verify` reports `BLOCKED`. Installed but inapplicable checks return no selected results. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
 
 The `bash`-only advisor can discover and run named checks using the packaged CLI:
@@ -118,6 +122,9 @@ omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 omp-verifier diagnostics <request-file> [--reporter json|text]
+omp-verifier closeout prepare <declaration.json>
+omp-verifier closeout verify <receipt.json> [--reporter json|text] [--failures-only]
+omp-verifier automatic --closeout <receipt.json> [<changed-path>...]
 ```
 
 JSON remains the default reporter; `--reporter json` selects it explicitly. `checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify`, `automatic`, and `evaluate` write result arrays and support `--reporter text` and `--failures-only`. Failure-only output retains `PENDING` review requests and `SUPERSEDED` lifecycle results needed for recovery, as well as final `FAIL`/`BLOCKED`; successful results are omitted. Any final `FAIL`/`BLOCKED` exits `1`; otherwise successful execution exits `0`, including semantic preparation, retrieval, and missing-page recovery. Invocation errors exit `2`. Exit `0` alone is not PASS: a PENDING result still requires assessment, and a skipped or suppressed check is not approval. `evaluate --assessment -` reads literal JSON from stdin. Named verification shares its runner with `/verifier verify`; the generated prompt uses the installed CLI's absolute path rather than requiring it on `PATH`.

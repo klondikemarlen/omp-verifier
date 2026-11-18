@@ -73,6 +73,54 @@ The reviewer releases its handoff after all applicable assessments finish, befor
 
 Successful lifecycle operations return JSON objects with non-verdict statuses `PREPARED`, `RECOVERED`, `RELEASED`, or `CANCELLED` and exit 0 (`--reporter text` pretty-prints the same object). Invalid command syntax exits 2; unavailable source/ownership prerequisites return structured `BLOCKED verifier:delivery-handoff` and exit 1. Real check FAIL/BLOCKED remains reportable even if disposal also fails. If no matching handoff exists after checkout removal, source recovery remains unavailable rather than falling back to another checkout.
 
+### Resource Closeout
+
+`verifier:resource-closeout` verifies an explicitly declared final inventory independently of source review. The primary owns resource creation, cleanup authority, project wrappers, and retention decisions. Verifier only observes; it cannot authorize deletion, run cleanup commands, prove an omitted resource absent, or enforce native host settlement.
+
+Before cleanup, write a JSON declaration and invoke `omp-verifier closeout prepare <declaration.json>` from the surviving repository. The declaration contains `version: 1`, a nonempty `taskId`, absolute normalized `repositoryRoot`, concrete `authorization` evidence, and between 1 and 64 exact `resources`. Every resource has unique `id`, `kind`, `disposition` (`absent` or `retained`), `ownership` (`task`, `protected`, or `unknown`), `ownershipEvidence`, and a concrete `reason`. Only task-owned resources may request absence. Declare protected or uncertain resources as retained, including shared resources whose preservation matters to this cleanup.
+
+Kind-specific fields:
+
+| Kind | Required identity |
+| --- | --- |
+| `path` | Absolute normalized `path`; contents are hashed, never copied into results. |
+| `git-worktree` | Absolute `path`; both exact Git registration and filesystem presence are checked. |
+| `git-ref` | Exact fully qualified local `ref`. |
+| `git-remote-ref` | Configured `remote` name and exact fully qualified `ref`. |
+| `docker-container`, `docker-volume`, `docker-network`, `docker-image` | Exact `name` (tag for images), Compose `project`, and absolute project `wrapper` path. |
+
+A present Git resource declared absent also requires `delivery`: full `baseCommit`, `tipCommit`, `deliveredCommit`, configured `remote`, and exact remote `targetRef`. The declared tip must match the actual resource. Fresh remote evidence must contain the delivered commit. Ordinary merge ancestry proves delivery; rewritten delivery additionally needs `deliveredBaseCommit` and complete changed-path/tree equivalence. Required objects must already be available locally; Verifier never fetches or prunes. Uncommitted tracked work blocks preparation; untracked/ignored worktree contents require explicit `disposableContents: true`. This is evidence capture, not permission to delete the worktree.
+
+For example, a temporary ignored file outside the surviving checkout:
+
+```json
+{
+  "version": 1,
+  "taskId": "issue-123",
+  "repositoryRoot": "/work/project",
+  "authorization": "Maintainer authorized removal of this task's disposable QA environment",
+  "resources": [
+    {
+      "id": "qa-environment",
+      "kind": "path",
+      "path": "/work/project-worktrees/issue-123/.env",
+      "disposition": "absent",
+      "ownership": "task",
+      "ownershipEvidence": "Created for this task's isolated QA only",
+      "reason": "QA completed; no pending consumer needs this file"
+    }
+  ]
+}
+```
+
+Preparation validates the repository and baseline observations, captures Docker wrapper hashes, and returns `PREPARED` with a private `receiptPath`. It is not PASS. Keep that exact receipt; do not edit it. Input and receipt size is limited to 256,000 bytes; filesystem inventories are bounded to 4,096 entries and 64 MiB of content per resource. An unavailable or oversized inventory is BLOCKED rather than partially approved. Receipt permissions must remain owner-only. Evidence hashes detect accidental changes, not a malicious same-user process that can rewrite the receipt.
+
+After primary-owned cleanup through the documented project wrapper, run `omp-verifier closeout verify <receiptPath>`. Each call freshly observes resources and compares authority with the baseline. Retained resources must preserve identity and captured content/configuration; absence is classified as `removed` or `already absent`. Successful retention is `intentionally retained`. Existing disposable resources and damaged preservation are FAIL; unavailable prerequisites or changed repository/remote/Docker authority are BLOCKED. A known failure remains FAIL when another resource is blocked; per-resource evidence preserves both. JSON includes capture/observation timestamps and dispositions. Text supports the ordinary failure-only reporter; successful checks remain silent with `--failures-only`.
+
+Docker discovery distinguishes a successful exact absence from daemon/permission/inspection failures. Compose labels establish identity, not disposability. The check captures daemon/context identity, stable configuration hashes, and bounded container mount evidence without exposing environment values. The wrapper must exist at preparation but need not survive cleanup; Verifier never invokes it. Use a real isolated Compose project and its wrapper for release QA, covering disposal and protected resources. Existing/shared/uncertain databases, volumes, containers, networks, and images must not be removed to make a check pass.
+
+The primary's new standalone `Verifier closeout: <receiptPath>` message after cleanup is the native advisor's declared trigger, even when no source changed. `automatic --closeout <receiptPath>` combines source selection with this independent check; empty source selection does not bypass it. Historical receipts, quoted examples, child transcripts, and preparation alone are not final triggers. A later resource-affecting action needs a fresh trigger and observation. Native scheduling, automatic repair rechecks, and fail-closed settlement remain separate host capabilities; this check does not change model routes or advisor cadence.
+
 
 ## Requirement Contract
 
@@ -96,21 +144,9 @@ Review completion is separate from result delivery. A review with no reportable 
 
 ### Advisor Silence: Plugin Policy and QA
 
-Live OMP 18.8.9 QA with a stricter candidate prompt, loaded generated guidance, and resolved `openai-codex/gpt-6-luna` verifier produced `advise({ note: "The read is complete.", severity: "nit" })` after a read-only primary action. The acknowledgment was `Delivered.`; no failed verification justified that note under Verifier's policy. The candidate prompt-only fix was withdrawn. The evidence is recorded in [Verifier #117](https://github.com/klondikemarlen/omp-verifier/issues/117#issuecomment-6103445226). The 0.8.17 documentation misattributed this plugin-specific policy failure to an upstream defect; [Verifier #119](https://github.com/klondikemarlen/omp-verifier/issues/119) corrects that attribution and records withdrawal of the unrelated upstream comment.
+The silence/blocker-only policy belongs to this plugin. OMP's ability to deliver a native advisor note does not establish that the note satisfies Verifier's result-only contract. Prompt guidance is not a hard admission gate, and observed behavior for one model and runtime does not establish model-independent enforcement.
 
-The silence/blocker-only policy belongs to this plugin. The delivered `nit` demonstrates failure of Verifier's prompt contract, not an OMP admission-contract defect. OMP 18.8.9 [constructs the native `AdviseTool` directly](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/session/session-advisors.ts#L1295-L1319), its [advisor callbacks](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/session/session-advisors.ts#L1426-L1473) do not expose that native admission through the extension tool hook, and the [emission guard's non-blocker budget](https://github.com/can1357/oh-my-pi/blob/v18.8.9/packages/coding-agent/src/advisor/emission-guard.ts#L180-L192) has a minimum of one. These are versioned API capability facts; they do not prove a host bug or that Verifier's noise fix must be upstream. Keep this failure in Verifier unless separate evidence establishes a host-contract violation or a justified host capability request.
-
-For future silence QA:
-
-1. Start a fresh OMP process and verify the named verifier's resolved model and loaded generated guidance using `/advisor status` and `/advisor dump raw`.
-2. Exercise read-only/no-changed-path, empty automatic-result, `PASS`, and `SUPPRESSED` cases. Inspect the verifier's own completed transcript and the delivered primary transcript, not just an unlabelled `advisor_yielded` event or a consumer-model decision.
-3. Require no delivered verifier advice for each silent case. A delivered no-action note is `FAIL`, even if source checks and hypothetical decisions pass. Model quota/availability failures or missing named-advisor evidence are `BLOCKED`, not evidence of silence.
-4. Preserve failure delivery: exercise an applicable deterministic failure, observe the named verifier's blocker, remediate, and observe the clean follow-up result. Do not infer cross-advisor coordination from this cycle.
-5. Exercise malformed and empty manifest stdout. Compare the delivered blocker with actual failure-only reporter output: check id, malformed-result summary, observed output/empty diagnostic, and next check must remain intact. A bare heading is a failed delivery.
-
-The historical edit/no-result probe was `BLOCKED` by primary-model `usage_limit_reached`; it is not a passing case. Releases 0.8.17 and 0.8.18 documented and corrected the evidence without changing the prompt. The result-only specialization introduced later must be judged by its own live QA; historical failure and availability limits are not converted into a passing claim.
-
-The 0.8.19 result-only candidate passed targeted native OMP 18.10.3 QA with the configured `openai-codex/gpt-6.1-sol` verifier: read-only, empty results, PASS, and SUPPRESSED produced no delivered notes; an explicit manual requirement executed its named check; mixed FAIL/PASS delivered only the exact FAIL object; primary remediation was followed by actual PASS; and BLOCKED delivered the exact blocked result. The completed named transcript contained only two `advise` calls, both blocker/result arrays. See [PR #122's native QA record](https://github.com/klondikemarlen/omp-verifier/pull/122#issuecomment-6151394004). This proves those exercised decisions, not a hard admission gate or model-independent silence.
+The [README's advisor-correction procedure](../../README.md#development-and-release) owns live release QA. Historical findings and version-specific results remain in their issue and PR records, including [Verifier #117](https://github.com/klondikemarlen/omp-verifier/issues/117), [the attribution correction in #119](https://github.com/klondikemarlen/omp-verifier/issues/119), and [PR #122's native QA evidence](https://github.com/klondikemarlen/omp-verifier/pull/122#issuecomment-6151394004); they do not establish a current verdict.
 
 ## Verification Capability Direction
 
@@ -524,17 +560,11 @@ The implementation is the authority for current behavior, tests are evidence for
 
 ### Native QA Evidence Attribution
 
-The [release smoke](../../README.md#development-and-release) proves one current named-verifier scenario at a time. Save its named-advisor transcript baseline and primary/event baseline before triggering work. Associate the actual selected paths, check ID, current semantic request ID where applicable, final coordinator output, completed review, native blocker, primary remediation, and fresh corrected-scope result. Include removed source in that recheck. An earlier private final, unrelated result, or settled primary RPC prompt cannot substitute for current named-review completion. Conversely, named-review completion alone does not mean the primary can accept another ordinary prompt; require successful prompt admission and the preceding primary prompt's settlement.
+The [README release procedure](../../README.md#development-and-release) owns native QA execution. Evidence belongs to one current scenario: selected paths, check and request identity, final coordinator result, completed named review, delivered blocker, primary remediation, and fresh corrected-scope result. An earlier private final, unrelated result, or settled primary RPC prompt cannot substitute for current named-review completion.
 
-Record the exact installed OMP/Verifier/provider versions and resolved verifier selector. Freeze synthetic source and provider inputs before the live cycle and verify their identity; a provider replacement during review correctly invalidates that request. Require actual intended-path selection: a valid PASS saying no changed files applied is no-action evidence, not proof that committed source was assessed. Use the provider's supported scope input, such as its comparison-base variable, rather than assuming manual checks receive automatic changed paths.
+Loading, review completion, and host settlement are separate boundaries. A status-only probe can establish plugin registration and model resolution without exercising provider availability or semantic assessment. An unattended completion gate additionally requires one user request to drive failure, blocker delivery, repair, and fresh current PASS before settlement; a follow-up work prompt or unrelated continuation trigger does not prove that gate. Its dependency and reproduction record belong in [#150](https://github.com/klondikemarlen/omp-verifier/issues/150).
 
-A status-only probe can establish RPC readiness and protocol negotiation, `/verifier` registration, the installed version and guidance, and a resolved model in `/advisor status`. These local commands can complete with `agentInvoked: false` without exercising a model request. Their success proves loading and status, not provider availability, a completed semantic assessment, or completion enforcement.
-
-An unattended completion-gate claim needs one user request to drive FAIL → blocker → primary repair → fresh current PASS before settlement, without a follow-up work/recheck prompt. Account for unrelated continuation triggers such as unexpected-stop detection and todo reminders: their recheck can produce a valid PASS without proving that advisor-triggered repair itself schedules reassessment. Keep isolated failures and successful but differently triggered scenarios separate; the versioned reproduction and dependency record belong in #150 rather than a recurring knowledge-base status log.
-
-Keep outcome and diagnostics in their actual scenario windows. A later continuation or unrelated provider error does not erase a completed earlier scenario. A current error without a completed current result remains FAIL/BLOCKED; no result is invented from historical success. Startup-only timeouts, mismatched installed-version assertions, rejected overlapping prompts, and incomplete PTY terminal-query responses are setup/harness failures, not semantic verdicts or general provider-outage evidence. Use an observable initialized-editor or RPC-ready barrier and answer terminal queries instead of relying on sleeps.
-
-An explicitly authorized task-local alternate model proves only that selector's exercised behavior, not original-model-specific coverage. Preserve normal routes and configuration, record unavailable original coverage honestly, and stop diagnostics once the scoped plugin outcome and blocker are established. The shared [Real Async Runtime Barriers in Integration Tests](https://github.com/klondikemarlen/marlens-skills-rules-and-tools/blob/main/docs/references/engineering-techniques-reference.md#real-async-runtime-barriers-in-integration-tests) owns the general barrier technique. [OMP #15422](https://github.com/can1357/oh-my-pi/issues/15422) owns the requested extension-observable per-review completion/outcome handoff; transcript inspection is QA evidence, not a promise of a private-state API or a new Verifier runtime.
+Transcript inspection supplies QA evidence, not a supported extension-completion API. [OMP #15422](https://github.com/can1357/oh-my-pi/issues/15422) owns the requested per-review outcome handoff. The shared [Real Async Runtime Barriers in Integration Tests](https://github.com/klondikemarlen/marlens-skills-rules-and-tools/blob/main/docs/references/engineering-techniques-reference.md#real-async-runtime-barriers-in-integration-tests) owns the general synchronization technique.
 
 ## Learner Promotion Path
 
