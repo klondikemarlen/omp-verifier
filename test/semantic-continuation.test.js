@@ -62,17 +62,37 @@ async function createFixture({ count = 2, bytes = 140_000, guidance = GUIDE, unt
 
 function assessmentFor(review, status = "PASS") {
   const batchIndex = review.reviewRequest.continuation.batchIndex;
-  const path = batchIndex === null
-    ? review.reviewRequest.scope.changedPaths[0]
-    : review.reviewRequest.continuation.batches[batchIndex].changedPaths[0];
-  const index = Number(path.match(/value-(\d+)/)[1]);
+  const sourcePath = review.reviewRequest.scope.changedPaths[0];
+  const sourceIndex = Number(sourcePath.match(/value-(\d+)/)[1]);
+  let citation = {
+    path: sourcePath,
+    line: 1,
+    quote: `export const value${sourceIndex} = ${sourceIndex};`,
+  };
+  if (batchIndex !== null) {
+    const context = review.reviewRequest.context;
+    const record = [...context.changedCode, ...context.projectGuidance, ...context.targetedContext]
+      .find(entry => entry.content?.trim());
+    const lines = record.content.split("\n");
+    const firstLine = lines.findIndex(line => line.trim());
+    citation = {
+      path: record.path,
+      line: (record.startLine ?? 1) + firstLine,
+      quote: lines[firstLine],
+    };
+  }
   return {
     requestId: review.reviewRequest.requestId,
     status,
     summary: status === "PASS" ? "Values satisfy the supplied standard." : "A required value check remains unresolved.",
     rationale: "Source values are nonnegative; cross-file integration must also respect the shared limits.",
-    citations: [{ path, line: 1, quote: `export const value${index} = ${index};` }],
-    ...(status === "FAIL" ? { findings: [{ path, summary: "The value violates the shared limit." }] } : {}),
+    citations: [citation],
+    ...(status === "FAIL" ? {
+      findings: [{
+        path: sourcePath,
+        summary: "The value violates the shared limit.",
+      }],
+    } : {}),
     ...(batchIndex === null
       ? { coveredBatches: review.reviewRequest.continuation.batches.map(batch => batch.index) }
       : { batchIndex, crossBatchNotes: "Compare the exported values with the other batches under the same source ownership guide." }),
@@ -335,17 +355,24 @@ test("when required cardinality exceeds one capture, continuation retains every 
   }
 });
 
-test("when an indivisible source and guide exceed a batch, continuation names the capacity prerequisite", async () => {
+test("when a source and guide exceed a batch, evidence checkpoints retain both before whole-scope approval", async () => {
   // Arrange
-  const fixture = await createFixture({ count: 5, bytes: 250_000, guidance: GUIDE.repeat(190) });
+  const fixture = await createFixture({
+    count: 5,
+    bytes: 250_000,
+    guidance: GUIDE.repeat(190),
+  });
   try {
     // Act
-    const result = fixture.continued;
+    const aggregate = await completeBatches(fixture);
+    const final = await finalize(fixture, aggregate);
 
     // Assert
-    assert.equal(result.status, "BLOCKED");
-    assert.match(result.evidence, /256000 bytes \/ 256 paths/);
-    assert.match(result.evidence, /single changed file cannot be split/);
+    assert.equal(final.status, "PASS", final.evidence);
+    assert.deepEqual(aggregate.reviewRequest.scope.changedPaths, fixture.changedPaths);
+    const ledger = aggregate.reviewRequest.continuation.batches;
+    assert.ok(ledger.every(batch => batch.usedBytes <= 256_000));
+    assert.ok(ledger.some(batch => batch.evidenceRecords.some(record => record.path === "src/README.md")));
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -447,3 +474,80 @@ for (const status of ["FAIL", "BLOCKED"]) {
     }
   });
 }
+
+for (const changedAfterCheckpoint of [false, true]) {
+  test(`when one changed source spans batches, complete original-line coverage ${changedAfterCheckpoint ? "rejects a later mutation" : "supports one final assessment"}`, async () => {
+    // Arrange
+    const fixture = await createFixture({
+      count: 1,
+      bytes: 300_000,
+    });
+    try {
+      const path = fixture.changedPaths[0];
+      const original = await readFile(join(fixture.root, path), "utf8");
+      const lineCount = original.split("\n").length;
+      const contextPaths = [];
+      for (let startLine = 1; startLine <= lineCount; startLine += 250) {
+        const endLine = Math.min(startLine + 249, lineCount);
+        contextPaths.push(`${path}#L${startLine}-L${endLine}`);
+      }
+      fixture.continued = await readSemanticEvaluation({
+        cwd: fixture.root,
+        requestPath: fixture.continued.reviewRequest.path,
+        contextPaths,
+        continuation: true,
+      });
+      const chunks = [];
+      for (const batch of fixture.continued.reviewRequest.continuation.batches) {
+        const review = await readSemanticEvaluation({
+          cwd: fixture.root,
+          requestPath: fixture.continued.reviewRequest.path,
+          batchIndex: batch.index,
+        });
+        chunks.push(...review.reviewRequest.context.changedCode.filter(record => typeof record.content === "string"));
+      }
+      const aggregate = await completeBatches(fixture);
+      if (changedAfterCheckpoint) {
+        await writeFile(join(fixture.root, path), `${original}// Changed after the last captured line.\n`);
+      }
+
+      // Act
+      const final = await finalize(fixture, aggregate);
+
+      // Assert
+      assert.equal(chunks.map(record => record.content).join("\n"), original);
+      assert.equal(chunks[0].startLine ?? 1, 1);
+      const lastChunk = chunks.at(-1);
+      assert.equal((lastChunk.startLine ?? 1) + lastChunk.content.split("\n").length - 1, lineCount);
+      assert.equal(final.status, changedAfterCheckpoint ? "BLOCKED" : "PASS", final.evidence);
+      if (changedAfterCheckpoint) assert.match(final.evidence, /changed/);
+    } finally {
+      await rm(fixture.root, {
+        recursive: true,
+        force: true,
+      });
+    }
+  });
+}
+
+test("when required evidence needs more than thirty-two batches, continuation retains an explicit capacity blocker", async () => {
+  // Arrange
+  const fixture = await createFixture({
+    count: 33,
+    bytes: 250_000,
+    guidance: GUIDE.repeat(190),
+  });
+  try {
+    // Act
+    const result = fixture.continued;
+
+    // Assert
+    assert.equal(result.status, "BLOCKED");
+    assert.match(result.evidence, /32 batches of 256000 bytes \/ 256 paths/);
+  } finally {
+    await rm(fixture.root, {
+      recursive: true,
+      force: true,
+    });
+  }
+});
