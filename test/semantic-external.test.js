@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { captureSemanticContext, semanticContextMissing, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
 import { completeSemanticEvaluation, prepareSemanticEvaluation, readSemanticEvaluation, recordSemanticReviewPage } from "#root/omp-plugin/semantic-evaluations.js";
@@ -152,3 +154,146 @@ for (const [description, body, selector, reason] of [
     assert.match(semanticContextMissing(["changed-code"], captured).join("\n"), reason);
   });
 }
+
+async function localGitFixture(t) {
+  const repositoryRoot = await mkdtemp(join(tmpdir(), "omp-verifier-private-"));
+  t.after(() => rm(repositoryRoot, {
+    recursive: true,
+    force: true,
+  }));
+  await writeFile(join(repositoryRoot, "contract.md"), SOURCE);
+  await symlink("contract.md", join(repositoryRoot, "link.md"));
+  const options = {
+    cwd: repositoryRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  };
+  execFileSync("git", ["init", "--quiet"], options);
+  execFileSync("git", ["add", "contract.md", "link.md"], options);
+  execFileSync("git", ["-c", "user.name=Verifier Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "Pin synthetic contract"], options);
+  const revision = execFileSync("git", ["rev-parse", "HEAD"], options).trim();
+  const sourceURL = `git+${pathToFileURL(repositoryRoot).href}?revision=${revision}&path=contract.md`;
+  return {
+    repositoryRoot,
+    revision,
+    sourceURL,
+  };
+}
+
+test("when private Git and public evidence are selected, one complete review retains both immutable sources", async t => {
+  // Arrange
+  const { root, check } = await fixture(t);
+  const { repositoryRoot, revision, sourceURL } = await localGitFixture(t);
+  await writeFile(join(repositoryRoot, "contract.md"), "Uncommitted content must not be reviewed.\n");
+  t.mock.method(globalThis, "fetch", async () => new Response(SOURCE));
+  const prepared = await prepareSemanticEvaluation({
+    cwd: root,
+    check,
+    changedPaths: ["README.md"],
+  });
+
+  // Act
+  const recovered = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: prepared.reviewRequest.path,
+    externalContextPaths: [URL, `${sourceURL}#L2-L3`],
+  });
+  await rm(repositoryRoot, {
+    recursive: true,
+    force: true,
+  });
+  t.mock.method(globalThis, "fetch", async () => { throw new Error("network unavailable"); });
+  const page = buildSemanticReviewPage(recovered, 0);
+  await recordSemanticReviewPage({
+    cwd: root,
+    page,
+  });
+  const result = assessment(recovered.reviewRequest.requestId);
+  result.citations.push({
+    path: sourceURL,
+    line: 2,
+    quote: "Always ask for restricted paths.",
+  });
+  const completed = await completeSemanticEvaluation({
+    cwd: root,
+    requestPath: recovered.reviewRequest.path,
+    assessment: result,
+  });
+
+  // Assert
+  const privateRecord = recovered.reviewRequest.context.externalContext[1];
+  assert.equal(recovered.status, "PENDING");
+  assert.deepEqual(recovered.reviewRequest.missingContext, []);
+  assert.equal(privateRecord.revision, revision);
+  assert.equal(privateRecord.sha256, createHash("sha256").update(SOURCE).digest("hex"));
+  assert.equal(privateRecord.startLine, 2);
+  assert.equal(privateRecord.content, "Always ask for restricted paths.\nHeadless requests are refused.");
+  assert.equal(completed.status, "PASS");
+});
+
+test("when captured private evidence is altered, the saved review cannot be reused", async t => {
+  // Arrange
+  const { root, check } = await fixture(t);
+  const { sourceURL } = await localGitFixture(t);
+  const prepared = await prepareSemanticEvaluation({
+    cwd: root,
+    check,
+    changedPaths: ["README.md"],
+  });
+  const recovered = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: prepared.reviewRequest.path,
+    externalContextPaths: [sourceURL],
+  });
+  const stored = JSON.parse(await readFile(recovered.reviewRequest.path, "utf8"));
+  stored.payload.context.externalContext[0].revision = "0".repeat(40);
+  await writeFile(recovered.reviewRequest.path, JSON.stringify(stored));
+
+  // Act
+  const result = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: recovered.reviewRequest.path,
+  });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /integrity|tamper|signature/i);
+});
+
+test("when a selected Git path is a symlink or missing, capture retains an explicit evidence prerequisite", async t => {
+  // Arrange
+  const { root } = await fixture(t);
+  const { sourceURL } = await localGitFixture(t);
+
+  // Act
+  const captured = await captureSemanticContext({
+    repositoryRoot: root,
+    changedPaths: ["README.md"],
+    externalContextPaths: [sourceURL.replace("path=contract.md", "path=link.md"), sourceURL.replace("path=contract.md", "path=missing.md")],
+  });
+
+  // Assert
+  assert.deepEqual(captured.context.externalContext.map(record => record.state), ["unavailable", "unavailable"]);
+  assert.match(semanticContextMissing(["changed-code"], captured).join("\n"), /not a regular committed file/);
+});
+
+test("when a private selector escapes its Git tree or uses a mutable ref, capture rejects the selection", async t => {
+  // Arrange
+  const { root } = await fixture(t);
+  const { sourceURL, revision } = await localGitFixture(t);
+  const invalidSelectors = [
+    sourceURL.replace(revision, "HEAD"),
+    sourceURL.replace("path=contract.md", "path=../secret"),
+    sourceURL.replace("path=contract.md", "path=%2Fetc%2Fpasswd"),
+    `${sourceURL}&token=secret`,
+  ];
+
+  // Act / Assert
+  for (const selector of invalidSelectors) {
+    await assert.rejects(captureSemanticContext({
+      repositoryRoot: root,
+      changedPaths: ["README.md"],
+      externalContextPaths: [selector],
+    }), /local Git context requires/);
+  }
+});
