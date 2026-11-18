@@ -116,74 +116,46 @@ function partitionEvidence(context) {
 
 export async function captureSemanticContinuation(options, requiredContext) {
   if (!Array.isArray(requiredContext)) throw new TypeError("requiredContext must be an array");
-  const firstCapture = await captureSemanticContext({ ...options, boundedBatch: true, legacyRequest: false });
-  const changedPaths = firstCapture.context.changedPaths;
-  const batches = [];
-  const captures = [];
-
-  // Successful immutable external snapshots can be shared without refetching.
-  // An admission failure is not a source snapshot: retry it in the smaller bundle.
-  const externalSnapshots = new Map((options.externalSnapshot ?? []).map(record => [record.selector, record]));
-  function retainExternalSnapshots(context) {
-    const rejectedPaths = new Set(requiredCapacityRejections(context).filter(record => record.source === "external-context").map(record => record.path));
-    for (const record of context.externalContext ?? []) {
+  let captured = await captureSemanticContext({
+    ...options,
+    boundedBatch: true,
+    legacyRequest: false,
+  });
+  const changedPaths = captured.context.changedPaths;
+  const rejections = requiredCapacityRejections(captured.context);
+  const partitioned = rejections.length > 0;
+  if (partitioned) {
+    // Retain successful immutable snapshots, not failed admission placeholders.
+    const externalSnapshots = new Map((options.externalSnapshot ?? []).map(record => [record.selector, record]));
+    const rejectedPaths = new Set(rejections.filter(record => record.source === "external-context").map(record => record.path));
+    for (const record of captured.context.externalContext ?? []) {
       if (!rejectedPaths.has(record.path)) externalSnapshots.set(record.selector, record);
     }
-  }
-
-  async function capturePaths(paths, captured) {
-    captured ??= await captureSemanticContext({
+    captured = await captureSemanticContext({
       ...options,
-      changedPaths: paths,
       externalSnapshot: [...externalSnapshots.values()],
       boundedBatch: true,
+      continuationBundle: true,
       legacyRequest: false,
     });
-    retainExternalSnapshots(captured.context);
-    const rejections = requiredCapacityRejections(captured.context);
-    if (rejections.length) {
-      if (paths.length > 1) {
-        const midpoint = Math.floor(paths.length / 2);
-        await capturePaths(paths.slice(0, midpoint));
-        await capturePaths(paths.slice(midpoint));
-        return;
-      }
-      captured = await captureSemanticContext({
-        ...options,
-        changedPaths: paths,
-        externalSnapshot: [...externalSnapshots.values()],
-        boundedBatch: true,
-        continuationBundle: true,
-        legacyRequest: false,
-      });
-      retainExternalSnapshots(captured.context);
-      const remaining = requiredCapacityRejections(captured.context);
-      if (remaining.length) throw capacityPrerequisite(paths, remaining);
-    }
-    const partitioned = rejections.length > 0;
-    const contexts = partitioned ? partitionEvidence(captured.context) : [captured.context];
-    if (batches.length + contexts.length > LIMITS.maxBatches) {
-      throw capacityPrerequisite(paths, rejections);
-    }
-    const missingContext = semanticContextMissing(requiredContext, captured);
-    const captureIndex = captures.length;
-    captures.push({
-      changedPaths: [...paths],
-      partitioned,
-      fingerprint: captured.fingerprint,
-      missingContext,
-    });
-    for (const context of contexts) {
-      batches.push({
-        captureIndex,
-        changedPaths: [...paths],
-        context,
-        missingContext,
-      });
-    }
+    const remaining = requiredCapacityRejections(captured.context);
+    if (remaining.length) throw capacityPrerequisite(changedPaths, remaining);
   }
-
-  await capturePaths(changedPaths, firstCapture);
+  const contexts = partitioned ? partitionEvidence(captured.context) : [captured.context];
+  if (contexts.length > LIMITS.maxBatches) throw capacityPrerequisite(changedPaths, rejections);
+  const missingContext = semanticContextMissing(requiredContext, captured);
+  const captures = [{
+    changedPaths,
+    partitioned,
+    fingerprint: captured.fingerprint,
+    missingContext,
+  }];
+  const batches = contexts.map(context => ({
+    captureIndex: 0,
+    changedPaths,
+    context,
+    missingContext,
+  }));
   return {
     version: 2,
     limits: { ...LIMITS },
