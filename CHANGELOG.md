@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.1 - 2026-11-18
+
+- Make closeout test resource construction and expected assertion data explicit without changing runtime behavior.
+
 ## 1.13.0 - 2026-11-18
 
 - Capture bounded task-resource inventories before cleanup and independently verify fresh final Git, filesystem, and Docker dispositions.
