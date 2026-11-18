@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.0 - 2026-11-18
+
+- Admit pinned local Git evidence into semantic reviews without credentials, a new approval workflow, or copying private source into the reviewed repository.
+- Preserve immutable revisions, full-source hashes, original lines, bounded capture, and request integrity alongside public external evidence. Reject mutable refs, traversal, symlinks, and non-file selections.
+
 ## 1.7.1 - 2026-11-17
 
 - Prefer a validated retained edit-owning checkout during delivery handoff verification, preserving its existing ignored runtime environment.
