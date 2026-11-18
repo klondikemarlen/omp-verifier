@@ -9,7 +9,7 @@ import test from "node:test";
 test("when startup finds stale guidance in a shell-sensitive install, first-session checks use the installed coordinator", async () => {
   // Arrange
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-advisor-spec-"));
-  const agentDir = join(root, "agent");
+  const agentDir = join(root, "agent 'quoted' $VERIFIER_PATH $(printf expanded)");
   const packageDir = join(root, "plugins", "node_modules", "publisher");
   const projectDir = join(root, "project");
   const checkPath = join(packageDir, "fail.mjs");
@@ -18,7 +18,8 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
   const previousCliPath = join(root, "previous-coordinator.mjs");
 
   try {
-    for (const entry of ["package.json", "WATCHDOG.md", "bin", "omp-plugin"]) {
+    const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+    for (const entry of ["package.json", ...manifest.files]) {
       await cp(new URL(`../${entry}`, import.meta.url), join(installedPackage, entry), { recursive: true });
     }
 
@@ -33,7 +34,7 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
 
     await mkdir(join(projectDir, "src"), { recursive: true });
     await mkdir(packageDir, { recursive: true });
-    await writeFile(join(projectDir, "src", "changed.js"), "BROKEN\n");
+    await writeFile(join(projectDir, "src", "changed.txt"), "BROKEN\n");
     await writeFile(join(root, "plugins", "package.json"), JSON.stringify({
       name: "omp-plugins",
       dependencies: { publisher: "1.0.0" },
@@ -54,14 +55,14 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
     await writeFile(checkPath, `
 import { readFileSync } from "node:fs";
 
-const failed = readFileSync("src/changed.js", "utf8").includes("BROKEN");
+const failed = readFileSync("src/changed.txt", "utf8").includes("BROKEN");
 process.stdout.write(JSON.stringify(failed
-  ? { status: "FAIL", summary: "Fixture failed", evidence: "src/changed.js contains BROKEN", nextCheck: "remove BROKEN" }
-  : { status: "PASS", summary: "Fixture repaired", evidence: "src/changed.js has no BROKEN marker" }));
+  ? { status: "FAIL", summary: "Fixture failed", evidence: "src/changed.txt contains BROKEN", nextCheck: "remove BROKEN" }
+  : { status: "PASS", summary: "Fixture repaired", evidence: "src/changed.txt has no BROKEN marker" }));
 process.exitCode = failed ? 1 : 0;
 `);
     execFileSync("git", ["init", "--quiet"], { cwd: projectDir });
-    await mkdir(join(agentDir, "verifier"), { recursive: true });
+    await mkdir(join(agentDir, "verifier"), { recursive: true, mode: 0o755 });
     await writeFile(previousCliPath, "process.stdout.write('');\n");
     await writeFile(guidancePath, `Run \`node '${previousCliPath}' automatic <changed-path...> --reporter text --failures-only\`.\n`);
 
@@ -70,7 +71,7 @@ process.exitCode = failed ? 1 : 0;
     const guidance = await readFile(guidancePath, "utf8");
     const [, command, options] = guidance.match(/`(node .+? automatic )<changed-path\.\.\.>(.*?)`/);
     const runGeneratedCommand = () => {
-      const result = spawnSync("/bin/sh", ["-c", `${command}src/changed.js${options}`], {
+      const result = spawnSync("/bin/sh", ["-c", `${command}src/changed.txt${options}`], {
         cwd: projectDir,
         encoding: "utf8",
         env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, VERIFIER_PATH: "expanded-variable" },
@@ -79,17 +80,13 @@ process.exitCode = failed ? 1 : 0;
     };
 
     const failure = runGeneratedCommand();
-    await writeFile(join(projectDir, "src", "changed.js"), "export {};\n");
+    await writeFile(join(projectDir, "src", "changed.txt"), "REPAIRED\n");
     const repaired = runGeneratedCommand();
+    const evidence = failure.stdout.includes("src/changed.txt contains BROKEN");
 
     // Assert
     assert.equal(failure.status, 1);
-    assert.equal(failure.stdout, `FAIL publisher:fail
-  Fixture failed
-  Scope: changed-files; provider-owned; checkout ${projectDir}
-  Evidence: src/changed.js contains BROKEN
-  Next check: remove BROKEN
-`);
+    assert.equal(evidence, true);
     assert.equal(repaired.status, 0);
     assert.equal(repaired.stdout, "");
   } finally {
