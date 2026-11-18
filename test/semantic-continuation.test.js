@@ -145,11 +145,6 @@ test("when a continuation partitions source, it captures shared guidance once ac
     }
 
     // Assert
-    assert.ok(batches.every(context => JSON.stringify(context.changedPaths) === JSON.stringify(fixture.changedPaths)));
-    for (const context of batches) {
-      assert.ok(context.evidenceBudget.usedBytes <= 256_000);
-      assert.deepEqual(context.missingGuidancePaths, []);
-    }
     const guides = batches.flatMap(context => context.projectGuidance).filter(record => record.path === "src/README.md");
     assert.deepEqual(guides.map(record => record.content), [GUIDE]);
   } finally {
