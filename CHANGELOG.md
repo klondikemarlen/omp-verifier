@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.0 - 2026-11-18
+
+- Expose source-free semantic review diagnostics: current request, selection and renewal reasons, page progress, terminal state, measured coordinator/capture time, and unattributed elapsed time.
+- Preserve equivalent pending requests and real page receipts during opted-in reuse; changed evidence, scope, provider, or capture policy still requires a new complete review.
+- Remove indentation from bounded evidence pages without dropping source, citation coordinates, or fields. Full JSON export remains indented.
+
 ## 1.8.0 - 2026-11-18
 
 - Admit pinned local Git evidence into semantic reviews without credentials, a new approval workflow, or copying private source into the reviewed repository.
