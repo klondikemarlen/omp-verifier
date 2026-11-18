@@ -30,7 +30,7 @@ sequenceDiagram
 
 The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts and owns only its marked `verifier` block immediately after `default`; independent advisors remain untouched.
 
-`default` receives OMP's stock advisor prompt. On every setup, `verifier` copies this repository's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md`, substitutes the coordinator path derived from the installed package, and imports that generated file. The verifier model receives `bash` to select and execute applicable checks. Generic quality, scope, strategy, style, and workflow review remain with `default`; they are not verification results.
+`default` receives OMP's stock advisor prompt. On setup, `verifier` copies the active runtime generation's `WATCHDOG.md` to `<agent-dir>/verifier/WATCHDOG.md`, substitutes the persistent launcher path, and imports that generated file. The verifier model receives `bash` to select and execute applicable checks. Generic quality, scope, strategy, style, and workflow review remain with `default`; they are not verification results.
 
 ## Lifecycle
 
@@ -39,6 +39,18 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 - `/verifier status` reports global and project roster entries plus the guidance-file path.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
+
+### Runtime Generations
+
+The persistent launcher lives at `<agent-dir>/verifier/omp-verifier.mjs`, outside package-manager replacement paths. Its private `runtime` directory contains an atomic active-generation pointer and independent artifact directories. A generation captures the coordinator, registered verification providers, supplied standards, executable entries, and installed runtime/peer/optional dependencies. Copies have independent contents, not hard links to development or installed files; package-internal symlinks remain internal. Missing required dependencies or a package changing during capture blocks preparation.
+
+`/verifier generation prepare` snapshots the installed artifacts without activating them. Preparation and activation validate the content digest, coordinator catalog, semantic contracts, and deterministic-entry syntax. These checks do not replace release tests or prove semantic PASS. `activate <generation-id>` changes the pointer only after validation. `status` exposes generation ID, digest, provider versions, and source installation paths. `npm run reinstall` preserves the existing runtime during uninstall/install, then prepares and activates the remote replacement. A failed install or candidate validation does not replace the active pointer. After an independent provider update, explicitly prepare and activate a generation to adopt it.
+
+Each invocation leases one generation. Later `review`, `evaluate`, and `diagnostics` calls select the original generation encoded in the private request path. Review caches are generation-specific: neither pending state nor accepted results are silently reused by a new generation. Results identify their artifact generation; an old-generation PASS is not proof from its replacement. Project source and captured evidence still undergo the ordinary freshness checks. New invocations through the same persistent launcher adopt the active generation without restarting an already bootstrapped OMP session.
+
+Explicit `generation collect` removes inactive, previously activated generations with no execution leases and no pending semantic states. Normal commands retain completed generations so accepted results can still be read and freshness-checked after assessment. Collection makes those old executable artifacts unavailable; retained review records are not a substitute for executable freshness validation. Prepared candidates remain available for activation. Abandoned execution leases retain artifacts because their child processes may survive; inspect the recorded process and its children before manually removing an abandoned lease. Never remove a pending review's generation merely to reclaim space.
+
+Linux `flock` supplies process-lifetime locking, including kernel release after interruption; no daemon or model runtime is added. Provider dependency closure consumes disk space per retained generation. Installs predating generation isolation may still have live package paths embedded in existing sessions and saved requests. They are not retroactively pinned: finish those reviews with their original coordinator before replacement, or prepare a fresh complete review after adopting this release. Native extension hot reload remains separate; this mechanism changes no models, credentials, advisor cadence, or unrelated sessions.
 
 ### Delivery Handoff
 

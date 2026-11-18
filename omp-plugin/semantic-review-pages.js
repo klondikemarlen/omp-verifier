@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-const COORDINATOR_PATH = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
+const COORDINATOR_PATH = process.env.OMP_VERIFIER_COORDINATOR
+  || fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const MAX_FORMATTED_PAGE_BYTES = 24_000;
 const MAX_DISPLAY_LINE_BYTES = 600;
 // UTF-8-safe cuts can use three fewer bytes; each continuation adds backslash + newline.

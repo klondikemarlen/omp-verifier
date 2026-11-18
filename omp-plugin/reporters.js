@@ -16,6 +16,9 @@ function indented(value) {
 
 function formatVerificationResult(result) {
   const lines = [`${result.status} ${result.id}`, `  ${indented(result.summary)}`];
+  if (result.generation) {
+    lines.push(`  Generation: ${result.generation.id} (${result.generation.digest})`);
+  }
 
   if (result.standard) {
     lines.push(`  Standard: ${indented(result.standard.source)}`);

@@ -26,7 +26,10 @@ import {
 import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
 
 const execFileAsync = promisify(execFile);
-const CACHE_DIRECTORY = resolve(tmpdir(), `omp-verifier-semantic-${process.getuid?.() ?? "user"}`);
+const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
+  || resolve(tmpdir(), `omp-verifier-semantic-${process.getuid?.() ?? "user"}`);
+const GENERATION = process.env.OMP_VERIFIER_GENERATION
+  ? JSON.parse(process.env.OMP_VERIFIER_GENERATION) : undefined;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const MAX_ASSESSMENT_LENGTH = 4_000;
 const LOCK_WAIT_MS = 15_000;
@@ -196,8 +199,12 @@ async function requestCacheRoot(repositoryRoot) {
   const statesDirectory = join(cacheDirectory, "states");
   await ensurePrivateDirectory(requestsDirectory);
   await ensurePrivateDirectory(statesDirectory);
-  await pruneDirectory(requestsDirectory, MAX_CACHED_REQUESTS);
-  await pruneDirectory(statesDirectory, MAX_CACHED_CHECKS);
+  // Generation collection needs every pending state, including quiet projects.
+  // Legacy caches retain their existing bounded retention policy.
+  if (!GENERATION) {
+    await pruneDirectory(requestsDirectory, MAX_CACHED_REQUESTS);
+    await pruneDirectory(statesDirectory, MAX_CACHED_CHECKS);
+  }
   return cacheDirectory;
 }
 
@@ -329,6 +336,7 @@ async function captureRequest({
   const payload = {
     version: 1,
     requestId,
+    ...(GENERATION ? { generation: GENERATION } : {}),
     nonce: randomUUID(),
     check: {
       id: check.id,
