@@ -10,9 +10,12 @@ import {
   completeSemanticEvaluation,
   prepareSemanticEvaluation,
   readSemanticEvaluation,
+  readSemanticDiagnostics,
+  recordSemanticReviewPage,
 } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
+import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
 
 const CHECK_ID = "publisher:reuse";
 const SOURCE = "export const helper = 1;\n";
@@ -200,11 +203,14 @@ test("when an unassessed request exists, reuse does not fabricate a final assess
   const prepared = await prepareSemanticEvaluation(options);
 
   // Act
-  const fresh = await prepareSemanticEvaluation({ ...options, reuseExisting: true });
+  const fresh = await prepareSemanticEvaluation({
+    ...options,
+    reuseExisting: true,
+  });
 
   // Assert
   assert.equal(fresh.status, "PENDING");
-  assert.notEqual(fresh.reviewRequest.requestId, prepared.reviewRequest.requestId);
+  assert.equal(fresh.reviewRequest.requestId, prepared.reviewRequest.requestId);
 });
 
 test("when only an enrolled caller changes, accepted proof is not reused", async t => {
@@ -382,5 +388,185 @@ for (const difference of ["incidental metadata", "base", "merge base", "base ref
       assert.equal(result.status, "PENDING");
       assert.notEqual(result.reviewRequest.requestId, prepared.reviewRequest.requestId);
     }
+  });
+}
+
+test("when a pending request is reused, real page receipts survive and an invalid assessment cannot finish review", async t => {
+  // Arrange
+  const { root, options } = await fixture(t, {
+    source: SOURCE + "// private-source-marker\n".repeat(2_000),
+  });
+  const prepared = await prepareSemanticEvaluation({
+    ...options,
+    sourceRecovery: RECOVERY,
+  });
+  const page = buildSemanticReviewPage(prepared);
+  assert.ok(page.count > 1);
+  await recordSemanticReviewPage({
+    cwd: root,
+    page,
+  });
+  await recordSemanticReviewPage({
+    cwd: root,
+    page,
+  });
+
+  // Act
+  const reused = await prepareSemanticEvaluation({
+    ...options,
+    sourceRecovery: RECOVERY,
+    reuseExisting: true,
+  });
+  const pending = await complete(options, reused, "FAIL");
+  const progress = await readSemanticDiagnostics({
+    cwd: root,
+    requestPath: reused.reviewRequest.path,
+  });
+
+  // Assert
+  assert.equal(reused.reviewRequest.requestId, prepared.reviewRequest.requestId);
+  assert.equal(pending.status, "PENDING");
+  assert.equal(pending.reviewProgress.nextPage, 1);
+  assert.equal(progress.progress.uniquePages, 1);
+  assert.equal(progress.progress.repeatedPages, 1);
+  assert.equal(progress.phase, "reading-pages");
+
+  // Finish the real review, not a synthetic receipt copy.
+  for (let index = 1; index < page.count; index += 1) {
+    await recordSemanticReviewPage({
+      cwd: root,
+      page: buildSemanticReviewPage(reused, index),
+    });
+  }
+  const invalid = await complete(options, reused, "FAIL", [{
+    path: "src/helper.js",
+    line: 1,
+    quote: "not the captured source",
+  }]);
+  assert.equal(invalid.status, "BLOCKED");
+  const stillPending = await readSemanticDiagnostics({
+    cwd: root,
+    requestPath: reused.reviewRequest.path,
+  });
+  assert.equal(stillPending.status, "PENDING");
+  assert.equal(stillPending.phase, "awaiting-assessment");
+  const failed = await complete(options, reused, "FAIL");
+  assert.equal(failed.status, "FAIL");
+  const final = await readSemanticDiagnostics({
+    cwd: root,
+    requestPath: reused.reviewRequest.path,
+  });
+  assert.equal(final.status, "FAIL");
+  assert.equal(final.phase, "complete");
+});
+
+for (const change of ["source", "provider", "scope"]) {
+  test(`when pending ${change} changes, reuse resets identity and page coverage`, async t => {
+    // Arrange
+    const { root, packagePath, options } = await fixture(t);
+    const prepared = await prepareSemanticEvaluation(options);
+    await recordSemanticReviewPage({
+      cwd: root,
+      page: buildSemanticReviewPage(prepared),
+    });
+    const nextOptions = {
+      ...options,
+      reuseExisting: true,
+    };
+    if (change === "source") await writeFile(join(root, "src/helper.js"), "export const helper = 2;\n");
+    if (change === "scope") nextOptions.changedPaths = ["src/helper.js", "src/caller.js"];
+    if (change === "provider") {
+      const path = join(packagePath, "package.json");
+      const manifest = JSON.parse(await readFile(path, "utf8"));
+      manifest.version = "2.0.0";
+      await writeFile(path, JSON.stringify(manifest));
+    }
+
+    // Act
+    const renewed = await prepareSemanticEvaluation(nextOptions);
+    const diagnostics = await readSemanticDiagnostics({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+    });
+
+    // Assert
+    assert.equal(renewed.status, "PENDING");
+    assert.notEqual(renewed.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.equal(diagnostics.superseded, true);
+    assert.equal(diagnostics.currentId, renewed.reviewRequest.requestId);
+    assert.equal(diagnostics.progress.uniquePages, 0);
+    assert.equal(diagnostics.renewal.reason, "evidence-scope-provider-or-policy-changed");
+  });
+}
+
+for (const readAllPages of [false, true]) {
+  test(`when context is enriched after ${readAllPages ? "all" : "some"} pages, the new evidence requires a fresh read`, async t => {
+    // Arrange
+    const { root, options } = await fixture(t, {
+      source: SOURCE + "// dependency-contract\n".repeat(2_000),
+    });
+    const prepared = await prepareSemanticEvaluation({
+      ...options,
+      sourceRecovery: RECOVERY,
+    });
+    const count = buildSemanticReviewPage(prepared).count;
+    for (let index = 0; index < (readAllPages ? count : 1); index += 1) {
+      await recordSemanticReviewPage({
+        cwd: root,
+        page: buildSemanticReviewPage(prepared, index),
+      });
+    }
+
+    // Act
+    const enriched = await readSemanticEvaluation({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["src/caller.js#L1-L1"],
+    });
+    const diagnostics = await readSemanticDiagnostics({
+      cwd: root,
+      requestPath: enriched.reviewRequest.path,
+    });
+
+    // Assert
+    assert.equal(enriched.status, "PENDING");
+    assert.notEqual(enriched.reviewRequest.requestId, prepared.reviewRequest.requestId);
+    assert.equal(diagnostics.renewal.reason, "context-enrichment");
+    assert.equal(diagnostics.renewal.previousRequestId, prepared.reviewRequest.requestId);
+    assert.equal(diagnostics.progress.uniquePages, 0);
+    assert.equal(diagnostics.progress.nextPage, 0);
+    assert.deepEqual(enriched.reviewRequest.scope.changedPaths, prepared.reviewRequest.scope.changedPaths);
+  });
+}
+
+for (const status of ["PASS", "BLOCKED"]) {
+  test(`when diagnostics observe ${status}, they disclose no source and do not mutate or reapprove the request`, async t => {
+    // Arrange
+    const { root, options } = await fixture(t);
+    const prepared = await prepareSemanticEvaluation({
+      ...options,
+      selectionReason: "secret-prompt-or-credential",
+    });
+    await complete(options, prepared, status);
+    await writeFile(join(root, "src/helper.js"), "export const helper = 'changed after assessment';\n");
+    const path = stateFile(prepared.reviewRequest.path);
+    const before = await readFile(path, "utf8");
+
+    // Act
+    const diagnostics = await readSemanticDiagnostics({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+    });
+
+    // Assert
+    assert.equal(diagnostics.status, status);
+    assert.equal(diagnostics.freshness, "not-checked");
+    assert.equal(diagnostics.selection.reason, "unrecorded");
+    assert.equal(await readFile(path, "utf8"), before);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /secret-prompt|src\/helper|export const|Observed the selected|Retain the owning|plugins|sha256/);
+    assert.ok(diagnostics.timing.captureMs >= 0);
+    assert.ok(diagnostics.timing.coordinatorMs >= 0);
+    assert.ok(diagnostics.timing.wallAgeMs >= diagnostics.timing.coordinatorMs);
+    assert.equal(diagnostics.timing.unclassifiedMs, diagnostics.timing.wallAgeMs - diagnostics.timing.coordinatorMs);
   });
 }
