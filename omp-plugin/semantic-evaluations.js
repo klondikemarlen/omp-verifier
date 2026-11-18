@@ -12,6 +12,7 @@ import { validateFindings, verificationScope } from "#root/omp-plugin/finding-sc
 import {
   captureSemanticContext,
   semanticContextMissing,
+  validateContextPathLimit,
   validateSemanticCitations,
   validateSourceByteLimit,
 } from "#root/omp-plugin/semantic-context.js";
@@ -300,6 +301,7 @@ async function captureRequest({
   externalContextPaths = [],
   previousContext,
   maxSourceBytes,
+  maxContextPaths,
   sourceRecovery,
   automaticScope,
   continuation = false,
@@ -319,6 +321,7 @@ async function captureRequest({
     externalContextPaths,
     previousContext,
     maxSourceBytes: sourceByteLimit,
+    maxContextPaths,
     sourceRecovery,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
@@ -348,6 +351,9 @@ async function captureRequest({
       callerContextPaths: [...callerContextPaths],
       ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
       maxSourceBytes: sourceByteLimit,
+      ...(maxContextPaths === undefined ? {} : {
+        maxContextPaths,
+      }),
       ...(sourceRecovery ? { sourceRecovery: { ...sourceRecovery } } : {}),
       ...(automaticScope ? { automatic: automaticScope } : {}),
     },
@@ -364,6 +370,7 @@ async function captureRequest({
       externalSnapshot: captured.context.externalContext,
       previousContext,
       maxSourceBytes: sourceByteLimit,
+      maxContextPaths,
       sourceRecovery,
       automaticScope,
     }, definition.contract.requiredContext);
@@ -470,6 +477,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     externalSnapshot: payload.context.externalContext,
     previousContext: previousSourceContext(payload),
     maxSourceBytes: sourceByteLimit,
+    maxContextPaths: payload.scope.maxContextPaths,
     sourceRecovery: payload.scope.sourceRecovery,
     legacyRequest: usesLegacySourceLimit,
   });
@@ -549,6 +557,7 @@ async function reconcileAutomaticScope(target, current) {
     externalContextPaths: payload.scope.externalContextPaths,
     previousContext: previousSourceContext(payload),
     maxSourceBytes: payload.scope.maxSourceBytes,
+    maxContextPaths: payload.scope.maxContextPaths,
     sourceRecovery: payload.scope.sourceRecovery,
     continuation: Boolean(payload.continuation),
     automaticScope: { packageDirectory: plan.packageDirectory, delivery, ...(automatic.workLevel ? { workLevel: automatic.workLevel } : {}) },
@@ -696,6 +705,7 @@ export async function prepareSemanticEvaluation({
         externalContextPaths: retainedScope?.externalContextPaths,
         previousContext: previousSourceContext(previous?.payload),
         maxSourceBytes: sourceByteLimit,
+        maxContextPaths: retainedScope?.maxContextPaths,
         sourceRecovery,
         automaticScope,
         continuation: isSameEvidenceScope && Boolean(previous?.payload.continuation),
@@ -714,7 +724,7 @@ export async function prepareSemanticEvaluation({
 
 export async function readSemanticEvaluation({
   cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [],
-  removeContextPaths = [], continuation = false, batchIndex,
+  removeContextPaths = [], continuation = false, batchIndex, maxContextPaths,
 }) {
   let target;
   try {
@@ -752,15 +762,18 @@ export async function readSemanticEvaluation({
         ...previousExternalContext.filter(selector => !removedSelectors.has(selector)),
         ...externalContextPaths,
       ])];
+      const requestedContextPathLimit = maxContextPaths === undefined ? stored.payload.scope.maxContextPaths : maxContextPaths;
+      const contextPathLimit = validateContextPathLimit(requestedContextPathLimit);
+      const hasLimitChange = maxContextPaths !== undefined && maxContextPaths !== stored.payload.scope.maxContextPaths;
       const hasContextChanges = removedSelectors.size > 0
         || additionalContextPaths.length !== previousContextPaths.length
         || additionalCallerContext.length !== previousCallerContext.length
         || additionalExternalContext.length !== previousExternalContext.length;
       if (typeof continuation !== "boolean") throw new Error("continuation must be a boolean");
-      if (batchIndex !== undefined && (continuation || hasContextChanges)) {
-        throw new Error("batch selection cannot be combined with continuation renewal or context changes");
+      if (batchIndex !== undefined && (continuation || hasContextChanges || hasLimitChange)) {
+        throw new Error("batch selection cannot be combined with continuation renewal, context changes, or selector-limit changes");
       }
-      if (!hasContextChanges && !continuation) {
+      if (!hasContextChanges && !continuation && !hasLimitChange) {
         return requestEnvelope(stored.payload, target.absoluteRequestPath, currentState, batchIndex);
       }
 
@@ -779,12 +792,13 @@ export async function readSemanticEvaluation({
         callerContextPaths: additionalCallerContext,
         externalContextPaths: additionalExternalContext,
         maxSourceBytes: stored.payload.scope.maxSourceBytes,
+        maxContextPaths: maxContextPaths === undefined ? stored.payload.scope.maxContextPaths : contextPathLimit,
         sourceRecovery: stored.payload.scope.sourceRecovery,
         previousContext: previousSourceContext(stored.payload),
         automaticScope: stored.payload.scope.automatic,
         continuation: continuation || Boolean(stored.payload.continuation),
         selectionReason: stored.diagnostics?.selectionReason,
-        renewalReason: hasContextChanges ? "context-enrichment" : "bounded-continuation",
+        renewalReason: hasLimitChange ? "selector-limit-changed" : hasContextChanges ? "context-enrichment" : "bounded-continuation",
         previousRequestId: stored.payload.requestId,
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));

@@ -19,7 +19,8 @@ const MAX_LARGE_SCOPE_EVIDENCE_BYTES = 1_024_000;
 const MAX_LARGE_SCOPE_EVIDENCE_FILES = 256;
 const DEFAULT_MAX_SOURCE_BYTES = MAX_FILE_EVIDENCE_BYTES;
 const MAX_SOURCE_BYTES = MAX_INVENTORY_FILE_BYTES;
-const MAX_CONTEXT_PATHS = 30;
+const DEFAULT_MAX_CONTEXT_PATHS = 30;
+const MAX_CONTEXT_PATHS = 256;
 const CODE_EXTENSIONS = new Set([
   ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".java", ".js", ".jsx", ".mjs", ".cjs", ".kt", ".mts", ".php",
   ".py", ".rb", ".rs", ".ts", ".tsx", ".vue", ".svelte",
@@ -39,6 +40,13 @@ function sha256(value) {
 export function validateSourceByteLimit(value = DEFAULT_MAX_SOURCE_BYTES) {
   if (!Number.isSafeInteger(value) || value < DEFAULT_MAX_SOURCE_BYTES || value > MAX_SOURCE_BYTES) {
     throw new RangeError(`maxSourceBytes must be a safe integer from ${DEFAULT_MAX_SOURCE_BYTES} through ${MAX_SOURCE_BYTES}`);
+  }
+  return value;
+}
+
+export function validateContextPathLimit(value = DEFAULT_MAX_CONTEXT_PATHS) {
+  if (!Number.isSafeInteger(value) || value < DEFAULT_MAX_CONTEXT_PATHS || value > MAX_CONTEXT_PATHS) {
+    throw new RangeError(`maxContextPaths must be a safe integer from ${DEFAULT_MAX_CONTEXT_PATHS} through ${MAX_CONTEXT_PATHS}`);
   }
   return value;
 }
@@ -541,6 +549,9 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
   };
   if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
+  if (context.evidenceBudget.maxContextPaths !== undefined) {
+    fingerprint.maxContextPaths = context.evidenceBudget.maxContextPaths;
+  }
   if (context.sourceRecovery) fingerprint.sourceRecovery = context.sourceRecovery;
   if (context.evidenceBudget.boundedBatch) {
     fingerprint.evidenceBudget = context.evidenceBudget;
@@ -562,11 +573,13 @@ export async function captureSemanticContext({
   externalSnapshot,
   previousContext,
   maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
+  maxContextPaths,
   sourceRecovery,
   legacyRequest = false,
   boundedBatch = false,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
+  const contextPathLimit = validateContextPathLimit(maxContextPaths);
   if (typeof boundedBatch !== "boolean") throw new TypeError("boundedBatch must be a boolean");
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
@@ -585,8 +598,11 @@ export async function captureSemanticContext({
     const range = contextRange(selector);
     return { selector, ...range, ...pinnedExternalSource(range.path) };
   });
-  if (selectors.length + externalSelectors.length > MAX_CONTEXT_PATHS) {
-    throw new Error(`local and external context must not exceed ${MAX_CONTEXT_PATHS} selectors`);
+  if (selectors.length + externalSelectors.length > contextPathLimit) {
+    const nextAction = contextPathLimit < MAX_CONTEXT_PATHS
+      ? `renew with review --max-context-paths <${contextPathLimit + 1}-${MAX_CONTEXT_PATHS}> to select a larger request-local allowance`
+      : "recover the same required evidence with fewer selectors; no larger selector allowance is supported";
+    throw new Error(`local and external context must not exceed ${contextPathLimit} selectors; ${nextAction}, within unchanged source/file/byte limits`);
   }
   const requestedContext = selectors.filter(context =>
     context.startLine || !selectors.some(other => other.path === context.path && other.startLine));
@@ -1003,6 +1019,9 @@ export async function captureSemanticContext({
       maxFiles: budget.maxFiles,
       requiredFiles: requiredEvidencePaths.size,
       maxSourceBytes: sourceByteLimit,
+      ...(maxContextPaths === undefined ? {} : {
+        maxContextPaths: contextPathLimit,
+      }),
       usedBytes: budget.used,
       usedFiles: budget.paths.size,
       records: budget.records,
