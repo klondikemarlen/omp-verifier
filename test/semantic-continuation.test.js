@@ -75,9 +75,10 @@ function assessmentFor(review, status = "PASS") {
       .find(entry => entry.content?.trim());
     const lines = record.content.split("\n");
     const firstLine = lines.findIndex(line => line.trim());
+    const citationLine = (record.startLine ?? 1) + firstLine;
     citation = {
       path: record.path,
-      line: (record.startLine ?? 1) + firstLine,
+      line: citationLine,
       quote: lines[firstLine],
     };
   }
@@ -456,7 +457,10 @@ for (const status of ["FAIL", "BLOCKED"]) {
     const fixture = await createFixture();
     try {
       const aggregate = await completeBatches(fixture, "FAIL");
-      const finding = { path: "src/value-0.js", summary: "The value violates the shared limit." };
+      const finding = {
+        path: "src/value-0.js",
+        summary: "The value violates the shared limit.",
+      };
 
       // Act
       const final = await finalize(fixture, aggregate, {
@@ -530,10 +534,11 @@ for (const changedAfterCheckpoint of [false, true]) {
 
 test("when required evidence needs more than thirty-two batches, continuation retains an explicit capacity blocker", async () => {
   // Arrange
+  const guidance = GUIDE.repeat(190);
   const fixture = await createFixture({
     count: 33,
     bytes: 250_000,
-    guidance: GUIDE.repeat(190),
+    guidance,
   });
   try {
     // Act
