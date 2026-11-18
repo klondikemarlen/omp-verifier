@@ -111,11 +111,14 @@ omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--max-sour
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
+omp-verifier diagnostics <request-file> [--reporter json|text]
 ```
 
 JSON remains the default reporter; `--reporter json` selects it explicitly. `checks` writes `{ "checks": [...], "blockedResults": [...] }`; discovery never executes checks. `verify`, `automatic`, and `evaluate` write result arrays and support `--reporter text` and `--failures-only`. Failure-only output retains `PENDING` review requests and `SUPERSEDED` lifecycle results needed for recovery, as well as final `FAIL`/`BLOCKED`; successful results are omitted. Any final `FAIL`/`BLOCKED` exits `1`; otherwise successful execution exits `0`, including semantic preparation, retrieval, and missing-page recovery. Invocation errors exit `2`. Exit `0` alone is not PASS: a PENDING result still requires assessment, and a skipped or suppressed check is not approval. `evaluate --assessment -` reads literal JSON from stdin. Named verification shares its runner with `/verifier verify`; the generated prompt uses the installed CLI's absolute path rather than requiring it on `PATH`.
 
 Use `review <request-file> --reporter text` to inspect a semantic request. Follow its page-footer commands until the complete scope has been reviewed and assessed; retrieval success alone is not PASS. The [semantic protocol reference](docs/references/verifier-concepts-reference.md#agentic-standards-contract) owns page delivery, request identity, recovery, and citation details.
+
+To see why a semantic review is still pending, use `diagnostics <request-file>`. It reports source-free progress and measured coordinator time without reading pages on the reviewer's behalf or approving the source. The [diagnostics contract](docs/references/verifier-concepts-reference.md#review-diagnostics) explains timing limits and cached terminal status.
 
 Private dependencies already available in a local Git checkout can use `--external-context 'git+file:///absolute/repository?revision=<full-commit>&path=<file>#Lstart-Lend'`. Select only material evidence within the task's existing permissions; no new approval prompt or grant file is required. The [external evidence contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) explains provenance, limits, recovery, and private-output handling.
 

@@ -126,7 +126,9 @@ test("when a long review line contains multibyte characters, page boundaries pre
   // Arrange
   const sourceContent = `export const title = "${"界🙂é".repeat(8_000)}";`;
   const result = reviewResult({ sourceContent });
-  const expectedView = serializeSemanticReviewResults([result]);
+  const expectedView = serializeSemanticReviewResults([result], {
+    compact: true,
+  });
 
   // Act
   const pages = collectPages(result);
