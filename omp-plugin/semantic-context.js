@@ -733,7 +733,11 @@ export async function captureSemanticContext({
       let rangeRecovery = false;
       let identity;
       for (const [startLine, endLine] of disjointLineRanges(selectorsForPath)) {
-        const chunk = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine, endLine });
+        const range = {
+          startLine,
+          endLine,
+        };
+        const chunk = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
         if (chunk.error || chunk.missing) {
           failed = true;
           failureReason = chunk.error ?? "source disappeared while selected ranges were being captured";
