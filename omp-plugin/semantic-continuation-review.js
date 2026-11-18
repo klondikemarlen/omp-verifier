@@ -22,10 +22,12 @@ export function continuationReviewPayload(payload, state, batchIndex) {
   const batch = index === null ? undefined : continuationBatch(payload, index);
   const ledger = batches.map((entry, entryIndex) => ({
     index: entryIndex,
+    captureIndex: entry.captureIndex,
     changedPaths: entry.changedPaths,
     contextFingerprint: entry.context.fingerprint,
     guidancePaths: entry.context.guidanceRequirements.map(requirement => requirement.path),
     usedBytes: entry.context.evidenceBudget.usedBytes,
+    evidenceRecords: entry.context.evidenceBudget.records,
     ...(assessments[entryIndex] ? { assessment: assessments[entryIndex] } : {}),
   }));
   if (Buffer.byteLength(JSON.stringify(ledger)) > MAX_LEDGER_BYTES) {

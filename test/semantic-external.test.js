@@ -70,10 +70,17 @@ test("when pinned upstream evidence is admitted, review pages and final assessme
   assert.equal(recovered.status, "PENDING");
   assert.deepEqual(recovered.reviewRequest.scope.changedPaths, ["README.md"]);
   assert.deepEqual(recovered.reviewRequest.context.externalContext, [{
-    path: URL, state: "present", source: "external-context", sha256: createHash("sha256").update(SOURCE).digest("hex"),
-    lineCount: 4, startLine: 2, partial: true, omittedRanges: [[1, 1], [4, 4]],
+    path: URL,
+    state: "present",
+    source: "external-context",
+    sha256: createHash("sha256").update(SOURCE).digest("hex"),
+    lineCount: 4,
+    startLine: 2,
+    partial: true,
+    omittedRanges: [[1, 1], [4, 4]],
     content: "Always ask for restricted paths.\nHeadless requests are refused.",
-    selector: `${URL}#L2-L3`, revision: "0123456789abcdef0123456789abcdef01234567",
+    selector: `${URL}#L2-L3`,
+    revision: "0123456789abcdef0123456789abcdef01234567",
   }]);
   assert.equal(completed.status, "PASS");
   assert.throws(() => validateSemanticCitations([{ path: URL, line: 1, quote: "Always ask for restricted paths." }], recovered.reviewRequest.context), /does not match/);

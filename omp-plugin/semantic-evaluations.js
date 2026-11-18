@@ -938,7 +938,7 @@ function missingReviewPages(presentation) {
   return missing;
 }
 
-function normalizedAssessment(assessment, payload) {
+function normalizedAssessment(assessment, payload, { checkpoint = false } = {}) {
   if (!assessment || typeof assessment !== "object" || Array.isArray(assessment)) {
     throw new Error("assessment must be an object");
   }
@@ -953,10 +953,10 @@ function normalizedAssessment(assessment, payload) {
   if (assessment.status === "PASS" || assessment.status === "FAIL") {
     if (payload.missingContext.length) throw new Error(`required context is unavailable: ${payload.missingContext.join("; ")}`);
     const validatedCitations = validateSemanticCitations(citations, payload.context);
-    if (!validatedCitations.some(citation => payload.scope.changedPaths.includes(citation.path))) {
+    if (!checkpoint && !validatedCitations.some(citation => payload.scope.changedPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL citations must include a path in the current changed scope");
     }
-    if (payload.context.callerContextPaths.length
+    if (!checkpoint && payload.context.callerContextPaths.length
       && !validatedCitations.some(citation => payload.context.callerContextPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL assessments using explicit caller context must cite its captured caller or runtime source");
     }
@@ -1043,7 +1043,9 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
       try {
         validateContinuationAssessment(assessment, stored.payload, currentState);
         const assessmentPayload = continuationAssessmentPayload(stored.payload, batchIndex);
-        result = normalizedAssessment(assessment, assessmentPayload);
+        result = normalizedAssessment(assessment, assessmentPayload, {
+          checkpoint: batchIndex !== undefined,
+        });
       } catch (error) {
         const invalid = blocked(target.checkId, "Semantic assessment is invalid", error.message);
         return {
