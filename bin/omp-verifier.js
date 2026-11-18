@@ -9,7 +9,7 @@ import {
 } from "#root/omp-plugin/delivery-handoff.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
-import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
+import { validateContextPathLimit, validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import {
@@ -141,6 +141,9 @@ try {
     options: {
       reporter: { type: "string", default: "json" },
       "max-source-bytes": { type: "string" },
+      "max-context-paths": {
+        type: "string",
+      },
       "budget-ms": { type: "string" },
       "failures-only": { type: "boolean", default: false },
       worktree: { type: "boolean", default: false },
@@ -174,10 +177,18 @@ try {
     }
     maxSourceBytes = validateSourceByteLimit(Number(values["max-source-bytes"]));
   }
+  let maxContextPaths;
+  if (values["max-context-paths"] !== undefined) {
+    if (command !== "review") throw new Error("--max-context-paths is only supported by review");
+    if (!/^\d+$/.test(values["max-context-paths"])) {
+      throw new Error("--max-context-paths must be a whole number between 30 and 256");
+    }
+    maxContextPaths = validateContextPathLimit(Number(values["max-context-paths"]));
+  }
   const reporter = values.reporter;
   const failuresOnly = values["failures-only"];
   const hasContextOptions = values.context.length > 0 || values["caller-context"].length > 0
-    || values["external-context"].length > 0 || values["remove-context"].length > 0;
+    || values["external-context"].length > 0 || values["remove-context"].length > 0 || maxContextPaths !== undefined;
   const hasSemanticOptions = values.assessment !== undefined || hasContextOptions;
   const baseRef = values.base;
   if (baseRef !== undefined && command !== "automatic" && command !== "handoff") {
@@ -264,6 +275,7 @@ try {
       callerContextPaths: values["caller-context"],
       externalContextPaths: values["external-context"],
       removeContextPaths: values["remove-context"],
+      maxContextPaths,
       continuation: values.continue,
       batchIndex,
     })], { reporter, failuresOnly, pageIndex });
@@ -286,6 +298,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | diagnostics <request-file> [--reporter json|text] | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | diagnostics <request-file> [--reporter json|text] | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

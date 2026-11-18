@@ -15,6 +15,7 @@ function continuationFingerprint(options, requiredContext, batches) {
     callerContextPaths: options.callerContextPaths ?? [],
     externalContextPaths: options.externalContextPaths ?? [],
     maxSourceBytes: options.maxSourceBytes ?? batches[0].context.evidenceBudget.maxSourceBytes,
+    maxContextPaths: options.maxContextPaths,
     sourceRecovery: options.sourceRecovery ? {
       chunkBytes: options.sourceRecovery.chunkBytes,
       maxSourceBytes: options.sourceRecovery.maxSourceBytes,
@@ -153,6 +154,7 @@ export async function validateSemanticContinuation(payload) {
       externalSnapshot: batch.context.externalContext,
       previousContext: batch.context,
       maxSourceBytes: scope.maxSourceBytes,
+      maxContextPaths: scope.maxContextPaths,
       sourceRecovery: scope.sourceRecovery,
       boundedBatch: true,
     });

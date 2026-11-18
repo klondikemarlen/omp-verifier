@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { captureSemanticContext, semanticContextMissing, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
 import { completeSemanticEvaluation, prepareSemanticEvaluation, readSemanticEvaluation, recordSemanticReviewPage } from "#root/omp-plugin/semantic-evaluations.js";
@@ -14,6 +14,7 @@ import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalo
 
 const URL = "https://raw.githubusercontent.com/example/contracts/0123456789abcdef0123456789abcdef01234567/docs/approval.md";
 const SOURCE = "# Approval Contract\nAlways ask for restricted paths.\nHeadless requests are refused.\n";
+const CLI = fileURLToPath(import.meta.resolve("#root/bin/omp-verifier.js"));
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-external-"));
@@ -297,3 +298,174 @@ test("when a private selector escapes its Git tree or uses a mutable ref, captur
     }), /local Git context requires/);
   }
 });
+
+async function selectorFixture(t) {
+  const { root, check } = await fixture(t);
+  const { sourceURL } = await localGitFixture(t);
+  const contextPaths = [];
+  for (let index = 0; index < 30; index += 1) {
+    const path = `dependency-${index}.md`;
+    await writeFile(join(root, path), `Dependency ${index} requires approval.\n`);
+    contextPaths.push(path);
+  }
+  const prepared = await prepareSemanticEvaluation({
+    cwd: root,
+    check,
+    changedPaths: ["README.md"],
+  });
+  return {
+    root,
+    prepared,
+    contextPaths,
+    sourceURL,
+  };
+}
+
+for (const outcome of ["PASS", "FAIL", "stale"]) {
+  test(`when thirty-one mixed selectors are explicitly admitted, complete review preserves ${outcome}`, async t => {
+    // Arrange
+    const { root, prepared, contextPaths, sourceURL } = await selectorFixture(t);
+    const recovered = await readSemanticEvaluation({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths,
+      externalContextPaths: [`${sourceURL}#L2-L3`],
+      maxContextPaths: 31,
+    });
+    const review = recovered.reviewRequest;
+    const firstPage = buildSemanticReviewPage(recovered);
+    for (let index = 0; index < firstPage.count; index += 1) {
+      const page = buildSemanticReviewPage(recovered, index);
+      await recordSemanticReviewPage({
+        cwd: root,
+        page,
+      });
+    }
+    const result = {
+      requestId: review.requestId,
+      status: outcome === "FAIL" ? "FAIL" : "PASS",
+      summary: "The selected document was assessed against the captured contracts.",
+      rationale: "All selected dependency contracts require approval, and the changed document describes that requirement.",
+      citations: [
+        {
+          path: "README.md",
+          line: 2,
+          quote: "Restricted paths always require approval.",
+        },
+        {
+          path: sourceURL,
+          line: 2,
+          quote: "Always ask for restricted paths.",
+        },
+      ],
+    };
+    if (outcome === "FAIL") {
+      result.summary = "The selected document omits the headless restriction.";
+      result.rationale = "The captured upstream contract refuses headless requests, but the changed integration document describes only approval.";
+      result.findings = [{
+        path: "README.md",
+        summary: "Document the headless restriction from the captured contract.",
+      }];
+    }
+    if (outcome === "stale") {
+      await writeFile(join(root, contextPaths[0]), "Dependency policy changed after capture.\n");
+    }
+
+    // Act
+    const completed = await completeSemanticEvaluation({
+      cwd: root,
+      requestPath: review.path,
+      assessment: result,
+    });
+
+    // Assert
+    assert.equal(recovered.status, "PENDING");
+    assert.deepEqual(review.scope.changedPaths, ["README.md"]);
+    assert.deepEqual(review.missingContext, []);
+    assert.equal(review.scope.maxContextPaths, 31);
+    assert.deepEqual(review.context.targetedContext.map(record => record.path), contextPaths);
+    assert.equal(review.context.externalContext[0].content, "Always ask for restricted paths.\nHeadless requests are refused.");
+    assert.equal(completed.status, outcome === "stale" ? "BLOCKED" : outcome);
+    if (outcome === "stale") assert.match(completed.evidence, /context changed/);
+  });
+}
+
+test("when selector recovery exceeds its allowance, the pending request remains recoverable with an explicit larger bound", async t => {
+  // Arrange
+  const { root, prepared, contextPaths, sourceURL } = await selectorFixture(t);
+  const options = {
+    cwd: root,
+    requestPath: prepared.reviewRequest.path,
+    contextPaths,
+    externalContextPaths: [`${sourceURL}#L2-L3`],
+  };
+
+  // Act
+  const rejected = await readSemanticEvaluation(options);
+  const recoveryArgs = contextPaths.flatMap(path => ["--context", path]);
+  const recoveredOutput = execFileSync(process.execPath, [
+    CLI,
+    "review",
+    prepared.reviewRequest.path,
+    "--max-context-paths", "31",
+    "--external-context", `${sourceURL}#L2-L3`,
+    ...recoveryArgs,
+  ], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  const [recovered] = JSON.parse(recoveredOutput);
+  const continued = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: recovered.reviewRequest.path,
+    continuation: true,
+  });
+  const reread = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: continued.reviewRequest.path,
+  });
+  const overflow = await readSemanticEvaluation({
+    cwd: root,
+    requestPath: reread.reviewRequest.path,
+    contextPaths: ["one-more.md"],
+  });
+
+  // Assert
+  assert.equal(rejected.status, "BLOCKED");
+  assert.match(rejected.evidence, /30 selectors.*review --max-context-paths/);
+  assert.equal(recovered.status, "PENDING");
+  assert.equal(continued.status, "PENDING");
+  assert.equal(reread.reviewRequest.scope.maxContextPaths, 31);
+  assert.deepEqual(reread.reviewRequest.missingContext, []);
+  assert.equal(overflow.status, "BLOCKED");
+  assert.match(overflow.evidence, /31 selectors/);
+});
+
+for (const maxContextPaths of [29, 257, 31.5, "64", null]) {
+  test(`when selector allowance is invalid (${JSON.stringify(maxContextPaths)}), recovery rejects it without consuming the request`, async t => {
+    // Arrange
+    const { root, check } = await fixture(t);
+    const prepared = await prepareSemanticEvaluation({
+      cwd: root,
+      check,
+      changedPaths: ["README.md"],
+    });
+
+    // Act
+    const rejected = await readSemanticEvaluation({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+      maxContextPaths,
+    });
+    const pending = await readSemanticEvaluation({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+    });
+
+    // Assert
+    assert.equal(rejected.status, "BLOCKED");
+    assert.match(rejected.evidence, /safe integer from 30 through 256/);
+    assert.equal(pending.status, "PENDING");
+    assert.equal(pending.reviewRequest.requestId, prepared.reviewRequest.requestId);
+  });
+}
