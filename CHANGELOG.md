@@ -5,6 +5,7 @@
 - Continue oversized required source bundles across bounded evidence batches while retaining complete original-line source, guidance, material context, and freshness checks.
 - Expose capture identities and evidence locations in the checkpoint ledger; require one final whole-scope assessment rather than independently approving source fragments.
 - Preserve the 256,000-byte/256-file batch limits and 32-batch ceiling. Native advisor context rollover remains outside this continuation protocol.
+- Correct recovery guidance to distinguish the default 30 selectors from the explicit request-local allowance up to 256.
 
 ## 1.10.0 - 2026-11-18
 
