@@ -13,6 +13,7 @@ const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta
 const SUPPRESSION_FILE = ".omp-verifier.json";
 
 function defaultPackageDirectory() {
+  if (process.env.OMP_VERIFIER_PACKAGE_DIRECTORY) return process.env.OMP_VERIFIER_PACKAGE_DIRECTORY;
   const parent = dirname(packageRoot);
   if (basename(parent) === "node_modules") return parent;
   const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
@@ -292,9 +293,10 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
     for (const entry of manifest.omp.verifications) {
       let check;
       try {
+        const packagePath = await realpath(directory);
         check = await manifestCheck(
           packageName,
-          directory,
+          packagePath,
           manifestPath,
           typeof manifest.version === "string" ? manifest.version : undefined,
           entry,

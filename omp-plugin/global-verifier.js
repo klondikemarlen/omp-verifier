@@ -1,7 +1,9 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+
+import { installRuntime, runtimePaths } from "#root/omp-plugin/runtime-generations.js";
+import { activeGeneration, generationDirectory, withRuntimeLock } from "#root/bin/omp-verifier-runtime.mjs";
 
 const WATCHDOG_FILE = "WATCHDOG.md";
 const ROSTER_FILE = "WATCHDOG.yml";
@@ -9,8 +11,6 @@ const VERIFIER_DIR = "verifier";
 const VERIFIER_ADVISOR_START = "# omp-verifier: advisor begin";
 const VERIFIER_ADVISOR_END = "# omp-verifier: advisor end";
 const LEGACY_GENERATED_MARKER = "# omp-verifier: generated";
-const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const cliPath = join(packageRoot, "bin", "omp-verifier.js");
 
 function resolveAgentDir(ctx) {
   return ctx.agentDir || process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
@@ -83,14 +83,19 @@ async function readText(path) {
   }
 }
 
-async function shippedGuidance() {
-  const template = await readFile(new URL("../WATCHDOG.md", import.meta.url), "utf8");
-  const quotedCliPath = `'${cliPath.replaceAll("'", "'\"'\"'")}'`;
-  return template.replaceAll("{{OMP_VERIFIER_CLI}}", () => quotedCliPath);
+async function shippedGuidance(agentDir) {
+  const paths = runtimePaths(agentDir);
+  return withRuntimeLock(paths.root, async () => {
+    const generation = await activeGeneration(paths.root);
+    const directory = generationDirectory(paths.root, generation.id);
+    const template = await readFile(join(directory, "node_modules", "omp-verifier", "WATCHDOG.md"), "utf8");
+    const quotedCliPath = `'${paths.launcher.replaceAll("'", "'\"'\"'")}'`;
+    return template.replaceAll("{{OMP_VERIFIER_CLI}}", () => quotedCliPath);
+  });
 }
 
-async function writeGuidanceFile(path) {
-  const content = await shippedGuidance();
+async function writeGuidanceFile(path, agentDir) {
+  const content = await shippedGuidance(agentDir);
   const current = await readText(path);
   if (current === content) {
     return `kept verifier guidance ${path}`;
@@ -101,13 +106,13 @@ async function writeGuidanceFile(path) {
   return `${current === null ? "created" : "refreshed"} verifier guidance ${path}`;
 }
 
-async function removeGuidanceFile(path) {
+async function removeGuidanceFile(path, agentDir) {
   const current = await readText(path);
   if (current === null) {
     return `already absent verifier guidance ${path}`;
   }
 
-  if (current !== await shippedGuidance()) {
+  if (current !== await shippedGuidance(agentDir)) {
     return `kept customized verifier guidance ${path}`;
   }
 
@@ -150,17 +155,19 @@ export async function installGlobalVerifier(ctx) {
   const agentDir = resolveAgentDir(ctx);
   const guidancePath = join(agentDir, VERIFIER_DIR, WATCHDOG_FILE);
   await mkdir(agentDir, { recursive: true, mode: 0o700 });
+  await installRuntime(agentDir);
   return [
-    await writeGuidanceFile(guidancePath),
+    await writeGuidanceFile(guidancePath, agentDir),
     await writeWatchdogFile(join(agentDir, ROSTER_FILE), guidancePath),
   ];
 }
 
 export async function uninstallGlobalVerifier(ctx) {
+  if (process.env.OMP_VERIFIER_UPGRADE === "1") return ["retained active verifier during package replacement"];
   const agentDir = resolveAgentDir(ctx);
   return [
     await removeWatchdogFile(join(agentDir, ROSTER_FILE)),
-    await removeGuidanceFile(join(agentDir, VERIFIER_DIR, WATCHDOG_FILE)),
+    await removeGuidanceFile(join(agentDir, VERIFIER_DIR, WATCHDOG_FILE), agentDir),
   ];
 }
 
@@ -168,31 +175,26 @@ function advisorNames(content) {
   return [...content.matchAll(/^ {2}- name: (.+)$/gm)].map(([, name]) => name);
 }
 
-async function packageVersion() {
-  try {
-    const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-    return pkg.version || "unknown";
-  } catch {
-    return "unknown";
-  }
-}
 
 export async function buildGlobalVerifierStatus(cwd, ctx) {
   const agentDir = resolveAgentDir(ctx);
   const globalPath = join(agentDir, ROSTER_FILE);
   const projectPath = join(cwd, ROSTER_FILE);
   const guidancePath = join(agentDir, VERIFIER_DIR, WATCHDOG_FILE);
-  const [global, project, guidance, version] = await Promise.all([
+  const paths = runtimePaths(agentDir);
+  const [global, project, guidance, generation] = await Promise.all([
     readText(globalPath),
     readText(projectPath),
     readText(guidancePath),
-    packageVersion(),
+    activeGeneration(paths.root),
   ]);
   const names = global === null ? [] : advisorNames(global);
+  const version = generation.identity.packages.find(provider => provider.package === "omp-verifier")?.version;
 
   return [
     "Verifier status:",
     `plugin version: ${version}`,
+    `generation: ${generation.id} (${generation.identity.digest})`,
     `global roster: ${global === null ? "absent" : names.join(", ") || "no advisors"} — ${globalPath}`,
     `project roster: ${project === null ? "absent" : advisorNames(project).join(", ") || "no advisors"} — ${projectPath}`,
     `guidance: ${guidance === null ? "absent" : "installed"} — ${guidancePath}`,

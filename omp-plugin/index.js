@@ -1,4 +1,5 @@
-import { fileURLToPath } from "node:url";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 
 import {
   buildGlobalVerifierStatus,
@@ -9,16 +10,35 @@ import { formatVerificationInventory, formatVerificationResults } from "#root/om
 import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
+import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|demo|uninstall]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
   { name: "demo", description: "Preview actual advisor cards without running checks" },
   { name: "uninstall", description: "Remove the verifier advisor" },
+  {
+    name: "generation",
+    description: "Prepare, activate, inspect, or collect verifier artifacts",
+  },
 ];
-const COORDINATOR = `'${fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url)).replaceAll("'", "'\"'\"'")}'`;
+const execute = promisify(execFile);
+
+async function runtimeCommand(agentDir, cwd, args) {
+  const paths = runtimePaths(agentDir);
+  try {
+    const result = await execute(process.execPath, [paths.launcher, ...args], {
+      cwd,
+      timeout: 600_000,
+      maxBuffer: 1_000_000,
+    });
+    return result.stdout;
+  } catch (error) {
+    return error.stdout || `BLOCKED verifier:generation\n${error.stderr || error.message}`;
+  }
+}
 
 async function buildChecks(packageDirectory) {
   return formatVerificationInventory(await discoverVerificationChecks({ packageDirectory }));
@@ -135,6 +155,9 @@ export default async function verifierPlugin(pi) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    const agentDir = ctx.agentDir || pi.pi.getAgentDir();
+    const coordinatorPath = runtimePaths(agentDir).launcher;
+    const COORDINATOR = `'${coordinatorPath.replaceAll("'", "'\"'\"'")}'`;
     let intent = { level: "normal", diagnostic: "No proven current request identity; using normal with no request handle." };
     try {
       const sessionId = ctx?.sessionManager?.getSessionId();
@@ -177,6 +200,7 @@ export default async function verifierPlugin(pi) {
     handler: async (args, ctx) => {
       const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
       const cwd = ctx.cwd || process.cwd();
+      const agentDir = ctx.agentDir || pi.pi.getAgentDir();
 
       if (action === "status" && rest.length === 0) {
         const agentDir = ctx.agentDir || pi.pi.getAgentDir();
@@ -189,7 +213,10 @@ export default async function verifierPlugin(pi) {
       }
 
       if (action === "checks" && rest.length === 0) {
-        return ctx.ui.notify(await buildChecks(ctx.verificationPackageDirectory), "info");
+        const output = ctx.verificationPackageDirectory
+          ? await buildChecks(ctx.verificationPackageDirectory)
+          : await runtimeCommand(agentDir, cwd, ["checks", "--reporter", "text"]);
+        return ctx.ui.notify(output, "info");
       }
 
       if (action === "demo" && rest.length === 0) {
@@ -197,7 +224,18 @@ export default async function verifierPlugin(pi) {
       }
 
       if (action === "verify") {
-        return ctx.ui.notify(await buildVerification(cwd, rest, ctx.verificationPackageDirectory), "info");
+        const output = ctx.verificationPackageDirectory
+          ? await buildVerification(cwd, rest, ctx.verificationPackageDirectory)
+          : await runtimeCommand(agentDir, cwd, ["verify", ...rest, "--reporter", "text"]);
+        return ctx.ui.notify(output, "info");
+      }
+
+      if (action === "generation") {
+        const output = await runtimeCommand(agentDir, cwd, ["generation", ...rest]);
+        if (rest[0] === "activate" && !output.startsWith("BLOCKED")) {
+          await installGlobalVerifier({ agentDir });
+        }
+        return ctx.ui.notify(output, "info");
       }
 
       return ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");

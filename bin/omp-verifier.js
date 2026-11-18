@@ -12,6 +12,7 @@ import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { validateContextPathLimit, validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
+import { generationCommand } from "#root/omp-plugin/runtime-generations.js";
 import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
@@ -31,8 +32,16 @@ import {
 
 const [command, ...args] = process.argv.slice(2);
 const cwd = process.cwd();
+const generation = process.env.OMP_VERIFIER_GENERATION
+  ? JSON.parse(process.env.OMP_VERIFIER_GENERATION) : undefined;
 
 async function writeResults(results, { reporter, failuresOnly, pageIndex = 0 }) {
+  if (generation) {
+    results = results.map(result => ({
+      ...result,
+      generation,
+    }));
+  }
   const failures = results.filter(result => result.status === "FAIL" || result.status === "BLOCKED");
   let reported = results;
   if (failuresOnly) {
@@ -235,7 +244,10 @@ try {
     batchIndex = Number(values.batch);
   }
 
-  if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
+  if (command === "generation" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
+    const result = await generationCommand(positionals);
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     await handoffCommand(positionals, values, reporter);
   } else if (command === "diagnostics" && positionals.length === 1 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     try {
