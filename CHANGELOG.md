@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.10.0 - 2026-11-18
+
+- Support explicit request-local evidence selector allowances from 30 through 256 with `review --max-context-paths`, including mixed local and pinned external dependencies.
+- Preserve the 30-selector default, complete review and freshness requirements, and existing source, file, byte, and continuation-batch limits.
+
 ## 1.9.1 - 2026-11-18
 
 - Recover explicit changed-source ranges with the existing bounded streaming scanner, preserving complete original-line coverage and full-source freshness.
