@@ -12,7 +12,7 @@ import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalo
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|closeout prepare|verify <file>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
@@ -22,6 +22,10 @@ const SUBCOMMANDS = [
   {
     name: "generation",
     description: "Prepare, activate, inspect, or collect verifier artifacts",
+  },
+  {
+    name: "closeout",
+    description: "Capture or verify declared final resource dispositions",
   },
 ];
 const execute = promisify(execFile);
@@ -190,6 +194,7 @@ export default async function verifierPlugin(pi) {
       systemPrompt: [
         ...event.systemPrompt,
         `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. Leave the handoff for the verifier to recover, freshly check, and release; preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
+        `Verifier resource closeout: when this task creates or disposes temporary resources, declare the exact owned and protected inventory, authorization and intended dispositions before cleanup. Run node ${COORDINATOR} closeout prepare <declaration.json> in the surviving primary checkout; use version 1, taskId, repositoryRoot, authorization and resources as documented in the installed Verifier reference. Keep cleanup with the authorized project wrapper. At final closeout after cleanup or retention, emit a standalone line "Verifier closeout: <receiptPath>" using the returned receipt. This is a declared check trigger even for cleanup-only work; the named verifier independently checks fresh final state. Preparation, source PASS and successful cleanup commands are not disposition PASS. Do not alter receipts or delete protected/uncertain resources to clear a finding.`,
       ],
     };
   });
@@ -235,6 +240,11 @@ export default async function verifierPlugin(pi) {
         if (rest[0] === "activate" && !output.startsWith("BLOCKED")) {
           await installGlobalVerifier({ agentDir });
         }
+        return ctx.ui.notify(output, "info");
+      }
+
+      if (action === "closeout") {
+        const output = await runtimeCommand(agentDir, cwd, ["closeout", ...rest, "--reporter", "text"]);
         return ctx.ui.notify(output, "info");
       }
 

@@ -22,7 +22,7 @@ const ctx = { ui: { notify(message, level) { registrations.notices.push({ messag
 await verifierPlugin(pi);
 
 const verifier = registrations.commands.get("verifier");
-assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "demo", "uninstall", "generation"]);
+assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), ["status", "checks", "verify", "demo", "uninstall", "generation", "closeout"]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
 
 await verifier.handler("status", { ...ctx, cwd: startupAgentDir });
