@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.12.0 - 2026-11-18
+
+- Pin coordinator, provider standards, executable checks, and their installed dependencies to isolated runtime generations.
+- Activate validated replacements atomically; retain pending reviews and active executions on their original generation, with explicit result provenance and drain-aware cleanup.
+- Keep the generated coordinator launcher available during package replacement and expose generation preparation, activation, status, and collection.
+
 ## 1.11.0 - 2026-11-18
 
 - Continue oversized required source bundles across bounded evidence batches while retaining complete original-line source, guidance, material context, and freshness checks.
