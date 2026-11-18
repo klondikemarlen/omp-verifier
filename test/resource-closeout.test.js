@@ -76,7 +76,8 @@ test("when a disposable path remains or reappears, every closeout observes the c
   const current = await fixture(context);
   const path = join(current.root, ".env");
   await writeFile(path, "secret-value\n");
-  const prepared = await current.prepare([resource(path)]);
+  const disposableEnvironment = resource(path);
+  const prepared = await current.prepare([disposableEnvironment]);
 
   // Act
   const leftover = await current.verify(prepared.receiptPath);
@@ -120,7 +121,8 @@ test("when an inventory includes an absent path, closeout distinguishes already 
   // Arrange
   const current = await fixture(context);
   const path = join(current.root, "absent");
-  const prepared = await current.prepare([resource(path)]);
+  const absentResource = resource(path);
+  const prepared = await current.prepare([absentResource]);
 
   // Act
   const result = await current.verify(prepared.receiptPath);
@@ -150,7 +152,8 @@ test("when a receipt is changed, verification refuses the altered inventory", as
   // Arrange
   const current = await fixture(context);
   const path = join(current.root, "absent");
-  const prepared = await current.prepare([resource(path)]);
+  const absentResource = resource(path);
+  const prepared = await current.prepare([absentResource]);
   const receipt = JSON.parse(await readFile(prepared.receiptPath, "utf8"));
   receipt.payload.declaration.resources[0].path = join(current.root, "substituted");
   await writeFile(prepared.receiptPath, JSON.stringify(receipt));
@@ -167,7 +170,8 @@ test("when receipt permissions expose private evidence, verification reports the
   // Arrange
   const current = await fixture(context);
   const path = join(current.root, "absent");
-  const prepared = await current.prepare([resource(path)]);
+  const absentResource = resource(path);
+  const prepared = await current.prepare([absentResource]);
   await chmod(prepared.receiptPath, 0o644);
 
   // Act
@@ -183,7 +187,8 @@ test("when automatic verification has no source paths, explicit closeout still r
   const current = await fixture(context);
   const path = join(current.root, "leftover");
   await writeFile(path, "owned temporary content\n");
-  const prepared = await current.prepare([resource(path)]);
+  const leftoverResource = resource(path);
+  const prepared = await current.prepare([leftoverResource]);
 
   // Act
   const failed = spawnSync(process.execPath, [cli, "automatic", "--closeout", prepared.receiptPath], {
