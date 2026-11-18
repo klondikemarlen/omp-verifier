@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.13.0 - 2026-11-18
+
+- Capture bounded task-resource inventories before cleanup and independently verify fresh final Git, filesystem, and Docker dispositions.
+- Distinguish removed, already absent, and intentionally retained resources; report unexplained leftovers, preservation violations, and unavailable evidence.
+- Add explicit cleanup-only advisor triggers and `closeout prepare|verify` commands without executing cleanup or changing native completion policy.
+
 ## 1.12.0 - 2026-11-18
 
 - Pin coordinator, provider standards, executable checks, and their installed dependencies to isolated runtime generations.

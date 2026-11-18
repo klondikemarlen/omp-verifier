@@ -73,6 +73,54 @@ The reviewer releases its handoff after all applicable assessments finish, befor
 
 Successful lifecycle operations return JSON objects with non-verdict statuses `PREPARED`, `RECOVERED`, `RELEASED`, or `CANCELLED` and exit 0 (`--reporter text` pretty-prints the same object). Invalid command syntax exits 2; unavailable source/ownership prerequisites return structured `BLOCKED verifier:delivery-handoff` and exit 1. Real check FAIL/BLOCKED remains reportable even if disposal also fails. If no matching handoff exists after checkout removal, source recovery remains unavailable rather than falling back to another checkout.
 
+### Resource Closeout
+
+`verifier:resource-closeout` verifies an explicitly declared final inventory independently of source review. The primary owns resource creation, cleanup authority, project wrappers, and retention decisions. Verifier only observes; it cannot authorize deletion, run cleanup commands, prove an omitted resource absent, or enforce native host settlement.
+
+Before cleanup, write a JSON declaration and invoke `omp-verifier closeout prepare <declaration.json>` from the surviving repository. The declaration contains `version: 1`, a nonempty `taskId`, absolute normalized `repositoryRoot`, concrete `authorization` evidence, and between 1 and 64 exact `resources`. Every resource has unique `id`, `kind`, `disposition` (`absent` or `retained`), `ownership` (`task`, `protected`, or `unknown`), `ownershipEvidence`, and a concrete `reason`. Only task-owned resources may request absence. Declare protected or uncertain resources as retained, including shared resources whose preservation matters to this cleanup.
+
+Kind-specific fields:
+
+| Kind | Required identity |
+| --- | --- |
+| `path` | Absolute normalized `path`; contents are hashed, never copied into results. |
+| `git-worktree` | Absolute `path`; both exact Git registration and filesystem presence are checked. |
+| `git-ref` | Exact fully qualified local `ref`. |
+| `git-remote-ref` | Configured `remote` name and exact fully qualified `ref`. |
+| `docker-container`, `docker-volume`, `docker-network`, `docker-image` | Exact `name` (tag for images), Compose `project`, and absolute project `wrapper` path. |
+
+A present Git resource declared absent also requires `delivery`: full `baseCommit`, `tipCommit`, `deliveredCommit`, configured `remote`, and exact remote `targetRef`. The declared tip must match the actual resource. Fresh remote evidence must contain the delivered commit. Ordinary merge ancestry proves delivery; rewritten delivery additionally needs `deliveredBaseCommit` and complete changed-path/tree equivalence. Required objects must already be available locally; Verifier never fetches or prunes. Uncommitted tracked work blocks preparation; untracked/ignored worktree contents require explicit `disposableContents: true`. This is evidence capture, not permission to delete the worktree.
+
+For example, a temporary ignored file outside the surviving checkout:
+
+```json
+{
+  "version": 1,
+  "taskId": "issue-123",
+  "repositoryRoot": "/work/project",
+  "authorization": "Maintainer authorized removal of this task's disposable QA environment",
+  "resources": [
+    {
+      "id": "qa-environment",
+      "kind": "path",
+      "path": "/work/project-worktrees/issue-123/.env",
+      "disposition": "absent",
+      "ownership": "task",
+      "ownershipEvidence": "Created for this task's isolated QA only",
+      "reason": "QA completed; no pending consumer needs this file"
+    }
+  ]
+}
+```
+
+Preparation validates the repository and baseline observations, captures Docker wrapper hashes, and returns `PREPARED` with a private `receiptPath`. It is not PASS. Keep that exact receipt; do not edit it. Input and receipt size is limited to 256,000 bytes; filesystem inventories are bounded to 4,096 entries and 64 MiB of content per resource. An unavailable or oversized inventory is BLOCKED rather than partially approved. Receipt permissions must remain owner-only. Evidence hashes detect accidental changes, not a malicious same-user process that can rewrite the receipt.
+
+After primary-owned cleanup through the documented project wrapper, run `omp-verifier closeout verify <receiptPath>`. Each call freshly observes resources and compares authority with the baseline. Retained resources must preserve identity and captured content/configuration; absence is classified as `removed` or `already absent`. Successful retention is `intentionally retained`. Existing disposable resources and damaged preservation are FAIL; unavailable prerequisites or changed repository/remote/Docker authority are BLOCKED. A known failure remains FAIL when another resource is blocked; per-resource evidence preserves both. JSON includes capture/observation timestamps and dispositions. Text supports the ordinary failure-only reporter; successful checks remain silent with `--failures-only`.
+
+Docker discovery distinguishes a successful exact absence from daemon/permission/inspection failures. Compose labels establish identity, not disposability. The check captures daemon/context identity, stable configuration hashes, and bounded container mount evidence without exposing environment values. The wrapper must exist at preparation but need not survive cleanup; Verifier never invokes it. Use a real isolated Compose project and its wrapper for release QA, covering disposal and protected resources. Existing/shared/uncertain databases, volumes, containers, networks, and images must not be removed to make a check pass.
+
+The primary's new standalone `Verifier closeout: <receiptPath>` message after cleanup is the native advisor's declared trigger, even when no source changed. `automatic --closeout <receiptPath>` combines source selection with this independent check; empty source selection does not bypass it. Historical receipts, quoted examples, child transcripts, and preparation alone are not final triggers. A later resource-affecting action needs a fresh trigger and observation. Native scheduling, automatic repair rechecks, and fail-closed settlement remain separate host capabilities; this check does not change model routes or advisor cadence.
+
 
 ## Requirement Contract
 
