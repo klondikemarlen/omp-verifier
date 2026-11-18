@@ -106,7 +106,7 @@ function admitSourceChunks(records, chunks, budget) {
 function normalizedProjectPath(value, name) {
   if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty project-relative path`);
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
-    throw new Error(`${name} is external evidence, not a project file; use review --external-context with a commit-pinned raw GitHub URL. Project-path capture never fetches URLs.`);
+    throw new Error(`${name} is external evidence, not a project file; use review --external-context with a commit-pinned raw GitHub or local Git URL. Project-path capture never fetches URLs.`);
   }
   const path = value.replaceAll("\\", "/").replace(/^\.\//, "");
   if (!path || path === "." || isAbsolute(path) || path.startsWith("//") || /^[a-zA-Z]:/.test(path) || path.split("/").includes("..")) {
