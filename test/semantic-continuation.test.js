@@ -133,7 +133,7 @@ test("when required source exceeds the aggregate tier, complete checkpoints perm
   }
 });
 
-test("when a continuation partitions source, each bounded batch retains its applicable guidance", async () => {
+test("when a continuation partitions source, it captures shared guidance once across bounded batches", async () => {
   // Arrange
   const fixture = await createFixture();
   try {
@@ -145,12 +145,13 @@ test("when a continuation partitions source, each bounded batch retains its appl
     }
 
     // Assert
-    assert.deepEqual(batches.map(context => context.changedPaths), [[fixture.changedPaths[0]], [fixture.changedPaths[1]]]);
+    assert.ok(batches.every(context => JSON.stringify(context.changedPaths) === JSON.stringify(fixture.changedPaths)));
     for (const context of batches) {
       assert.ok(context.evidenceBudget.usedBytes <= 256_000);
       assert.deepEqual(context.missingGuidancePaths, []);
-      assert.ok(context.projectGuidance.some(record => record.path === "src/README.md" && record.content === GUIDE));
     }
+    const guides = batches.flatMap(context => context.projectGuidance).filter(record => record.path === "src/README.md");
+    assert.deepEqual(guides.map(record => record.content), [GUIDE]);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -349,7 +350,9 @@ test("when required cardinality exceeds one capture, continuation retains every 
 
     // Assert
     assert.equal(final.status, "PASS", final.evidence);
-    assert.deepEqual(aggregate.reviewRequest.continuation.batches.flatMap(batch => batch.changedPaths), fixture.changedPaths.toSorted());
+    const records = aggregate.reviewRequest.continuation.batches.flatMap(batch => batch.evidenceRecords);
+    const changedPaths = records.filter(record => record.source === "changed-code").map(record => record.path);
+    assert.deepEqual([...new Set(changedPaths)].toSorted(), fixture.changedPaths.toSorted());
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
