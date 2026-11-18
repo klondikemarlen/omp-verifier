@@ -338,7 +338,7 @@ test("when source changes outside the recovered excerpt, the captured request is
   }
 });
 
-test("when changed source exceeds the source-size limit, requested excerpts cannot establish completeness", async () => {
+test("when partial ranges recover oversized changed source, attempted approval stays pending for complete coverage", async () => {
   // Arrange
   const source = oversizedHelperSource(5_000);
   const fixture = await createSemanticFixture({ helperSource: source });
@@ -366,7 +366,10 @@ test("when changed source exceeds the source-size limit, requested excerpts cann
     // Assert
     assert.ok(Buffer.byteLength(source) > 256_000);
     assert.ok(recovered.reviewRequest.context.missingChangedPaths.includes("src/helper.js"));
-    assert.equal(completed.status, "BLOCKED");
+    assert.equal(completed.status, "PENDING");
+    assert.equal(completed.reviewRequest.requestId, recovered.reviewRequest.requestId);
+    assert.equal(completed.reviewRequest.context.changedCodeCoverage[0].complete, false);
+    assert.deepEqual(completed.reviewRequest.context.changedCodeCoverage[0].omittedRanges, [[21, source.split("\n").length]]);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

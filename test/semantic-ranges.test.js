@@ -89,8 +89,76 @@ test("when the large lockfile is changed source, a dependency excerpt cannot est
   // Assert
   assert.deepEqual(captured.context.missingChangedPaths, ["package-lock.json"]);
   assert.equal(captured.context.changedCodeCoverage[0].complete, false);
-  assert.match(captured.context.changedCode.find(record => record.state === "unavailable").reason, /256000-byte range scan limit/);
+  assert.deepEqual(captured.context.changedCodeCoverage[0].omittedRanges, [[1, 4], [8, 10]]);
 });
+
+for (const sourceState of ["unchanged", "modified"]) {
+  test(`when complete ranges recover a large changed source and it remains ${sourceState}, assessment preserves coverage and freshness`, async t => {
+    // Arrange
+    const entries = Array.from({
+      length: 2_400,
+    }, (_, index) => `  "package-${index}": "${"x".repeat(100)}"`);
+    const content = `{\n${entries.join(",\n")}\n}\n`;
+    const { root, check } = await fixture(t, content);
+    const prepared = await prepareSemanticEvaluation({
+      cwd: root,
+      check,
+      changedPaths: ["package-lock.json"],
+    });
+    const lineCount = content.split("\n").length;
+    const contextPaths = [];
+    for (let startLine = 1; startLine <= lineCount; startLine += 100) {
+      const endLine = Math.min(startLine + 99, lineCount);
+      contextPaths.push(`package-lock.json#L${startLine}-L${endLine}`);
+    }
+    const sourceHash = createHash("sha256").update(content).digest("hex");
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths,
+    });
+    const records = recovered.reviewRequest.context.changedCode;
+    const coverage = recovered.reviewRequest.context.changedCodeCoverage[0];
+    if (sourceState === "modified") {
+      await writeFile(join(root, "package-lock.json"), content.replace("package-2399", "package-last"));
+    }
+    const reviewedAssessment = {
+      requestId: recovered.reviewRequest.requestId,
+      status: "PASS",
+      summary: "All selected package entries are available for review.",
+      rationale: "The complete changed lockfile is captured with original lines and a consistent source identity.",
+      citations: [
+        {
+          path: "package-lock.json",
+          line: 2,
+          quote: `${entries[0]},`,
+        },
+      ],
+    };
+    const completed = await completeSemanticEvaluation({
+      cwd: root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: reviewedAssessment,
+    });
+
+    // Assert
+    assert.equal(recovered.status, "PENDING");
+    assert.deepEqual(recovered.reviewRequest.missingContext, []);
+    assert.equal(coverage.complete, true);
+    assert.deepEqual(coverage.coveredRanges, [[1, lineCount]]);
+    assert.deepEqual(coverage.omittedRanges, []);
+    assert.equal(records.map(record => record.content).join("\n"), content);
+    assert.ok(records.every(record => record.sha256 === sourceHash));
+    if (sourceState === "modified") {
+      assert.equal(completed.status, "BLOCKED");
+      assert.match(completed.evidence, /context changed/);
+    } else {
+      assert.equal(completed.status, "PASS", completed.evidence);
+    }
+  });
+}
 
 test("when unselected lockfile bytes change, evaluation rejects the stale dependency evidence", async t => {
   // Arrange
@@ -136,6 +204,28 @@ for (const [description, content, selector, reason] of [
     // Assert
     assert.match(captured.context.targetedContext[0].reason, reason);
     assert.deepEqual(captured.context.missingContextPaths, ["package-lock.json"]);
+  });
+}
+
+for (const [description, content] of [
+  ["binary tail", sourceWithBinaryTail],
+  ["scan ceiling", sourceBeyondScanCeiling],
+]) {
+  test(`when changed-source ranges encounter a ${description}, capture cannot approve incomplete source`, async t => {
+    // Arrange
+    const { root } = await fixture(t, content);
+
+    // Act
+    const captured = await captureSemanticContext({
+      repositoryRoot: root,
+      changedPaths: ["package-lock.json"],
+      contextPaths: ["package-lock.json#L1"],
+    });
+
+    // Assert
+    assert.deepEqual(captured.context.missingChangedPaths, ["package-lock.json"]);
+    assert.equal(captured.context.changedCodeCoverage[0].complete, false);
+    assert.deepEqual(captured.context.changedCodeCoverage[0].coveredRanges, []);
   });
 }
 

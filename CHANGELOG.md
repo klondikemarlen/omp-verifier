@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.9.1 - 2026-11-18
+
+- Recover explicit changed-source ranges with the existing bounded streaming scanner, preserving complete original-line coverage and full-source freshness.
+- Keep automatic whole-source, excerpt, selector, aggregate, and continuation-batch limits unchanged. Larger complete review bundles can still require unavailable capacity.
+
 ## 1.9.0 - 2026-11-18
 
 - Expose source-free semantic review diagnostics: current request, selection and renewal reasons, page progress, terminal state, measured coordinator/capture time, and unattributed elapsed time.
