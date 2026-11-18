@@ -83,9 +83,11 @@ function partitionEvidence(context) {
     };
     for (const group of SOURCE_GROUPS) {
       if (!Array.isArray(context[group])) continue;
+      const unavailableRecords = context[group].filter(record => typeof record.content !== "string");
+      const partitionRecords = partition.filter(entry => entry.group === group).map(entry => entry.record);
       selected[group] = [
-        ...context[group].filter(record => typeof record.content !== "string"),
-        ...partition.filter(entry => entry.group === group).map(entry => entry.record),
+        ...unavailableRecords,
+        ...partitionRecords,
       ];
     }
     const admittedRecords = partition.map(({ record }) => {
