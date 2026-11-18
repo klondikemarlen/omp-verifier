@@ -126,12 +126,17 @@ async function deliveryFixture(t, mode) {
 
 test("when a Git declaration uses a pattern or command-like remote, rejects it before observation", () => {
   // Arrange
+  const unqualifiedRef = localRef("main");
+  const wildcardRef = localRef("refs/heads/*");
+  const rangeRef = localRef("refs/heads/topic..other");
+  const hiddenRef = localRef("refs/heads/.hidden");
+  const lockRef = localRef("refs/heads/topic.lock");
   const invalidResources = [
-    localRef("main"),
-    localRef("refs/heads/*"),
-    localRef("refs/heads/topic..other"),
-    localRef("refs/heads/.hidden"),
-    localRef("refs/heads/topic.lock"),
+    unqualifiedRef,
+    wildcardRef,
+    rangeRef,
+    hiddenRef,
+    lockRef,
     {
       kind: "git-worktree",
       path: "relative/path",
@@ -155,7 +160,10 @@ test("when exact local refs include backup refs and tags, observes object identi
   await git(repositoryRoot, "update-ref", "refs/backup/task", baseCommit);
   await git(repositoryRoot, "tag", "-a", "release", "-m", "annotated tag");
   const tagObject = await git(repositoryRoot, "rev-parse", "refs/tags/release");
-  const resources = [localRef("refs/backup/task"), localRef("refs/backup/tas"), localRef("refs/tags/release")];
+  const backupRef = localRef("refs/backup/task");
+  const partialBackupRef = localRef("refs/backup/tas");
+  const releaseTag = localRef("refs/tags/release");
+  const resources = [backupRef, partialBackupRef, releaseTag];
 
   // Act
   const results = await observe(repositoryRoot, resources);
@@ -378,14 +386,16 @@ test("when a checkout is replaced by a foreign repository at the registered path
 test("when a resource was already absent without delivery, observes absence without inventing historical proof", async (t) => {
   // Arrange
   const { root, repositoryRoot } = await repositoryFixture(t);
+  const absentBackupRef = localRef("refs/backup/already-absent", {
+    disposition: "absent",
+  });
+  const missingWorktreePath = join(root, "never-created");
   const resources = [
-    localRef("refs/backup/already-absent", {
-      disposition: "absent",
-    }),
+    absentBackupRef,
     {
       id: "missing-worktree",
       kind: "git-worktree",
-      path: join(root, "never-created"),
+      path: missingWorktreePath,
       disposition: "absent",
     },
   ];
@@ -512,7 +522,9 @@ test("when repository prerequisites are missing, returns aligned errors instead 
   // Arrange
   const { root } = await repositoryFixture(t);
   const repositoryRoot = join(root, "not-a-repository");
-  const resources = [localRef("refs/heads/main"), localRef("refs/heads/other")];
+  const mainRef = localRef("refs/heads/main");
+  const otherRef = localRef("refs/heads/other");
+  const resources = [mainRef, otherRef];
 
   // Act
   const results = await observe(repositoryRoot, resources);
@@ -528,7 +540,9 @@ test("when repository prerequisites are missing, returns aligned errors instead 
 test("when one resource is malformed, continues independently observing later resources", async (t) => {
   // Arrange
   const { repositoryRoot } = await repositoryFixture(t);
-  const resources = [localRef("refs/heads/*"), localRef("refs/heads/main")];
+  const malformedRef = localRef("refs/heads/*");
+  const mainRef = localRef("refs/heads/main");
+  const resources = [malformedRef, mainRef];
 
   // Act
   const results = await observe(repositoryRoot, resources);

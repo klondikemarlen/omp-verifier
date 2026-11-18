@@ -221,8 +221,16 @@ assert.equal(failureResults.find(result => result.id === "publisher-fail:check")
 
 const malformedResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-invalid:check"]);
 assert.deepEqual(
-  malformedResults.map(({ id, status, evidence }) => ({ id, status, evidence })),
-  [{ id: "publisher-invalid:check", status: "BLOCKED", evidence: "STATUS" }],
+  malformedResults.map(({ id, status, evidence }) => ({
+    id,
+    status,
+    evidence,
+  })),
+  [{
+    id: "publisher-invalid:check",
+    status: "BLOCKED",
+    evidence: "STATUS",
+  }],
 );
 
 const automaticResults = await runAutomaticVerification({
@@ -232,7 +240,10 @@ const automaticResults = await runAutomaticVerification({
   packageDirectory: verificationPackageDirectory,
 });
 const automaticPass = automaticResults.find(result => result.id === "publisher-pass:check" && result.status === "PASS");
-assert.deepEqual(automaticPass.matches, [{ path: "tests/active/example.test.js", trigger: "tests/**" }]);
+assert.deepEqual(automaticPass.matches, [{
+  path: "tests/active/example.test.js",
+  trigger: "tests/**",
+}]);
 assert.equal(automaticResults.some(result => result.id === "publisher-unrelated:check"), false);
 assert.equal(automaticResults.find(result => result.id === "publisher-fail:check").status, "FAIL");
 assert.equal(automaticResults.find(result => result.id === "publisher-scoped:check").evidence, JSON.stringify(["tests/active/example.test.js"]));
