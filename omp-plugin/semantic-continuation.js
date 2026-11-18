@@ -88,12 +88,16 @@ function partitionEvidence(context) {
         ...partition.filter(entry => entry.group === group).map(entry => entry.record),
       ];
     }
-    const admittedRecords = partition.map(({ record }) => ({
-      path: record.path,
-      source: record.source,
-      bytes: Buffer.byteLength(record.content),
-      startLine: record.startLine ?? 1,
-    }));
+    const admittedRecords = partition.map(({ record }) => {
+      const bytes = Buffer.byteLength(record.content);
+      const startLine = record.startLine ?? 1;
+      return {
+        path: record.path,
+        source: record.source,
+        bytes,
+        startLine,
+      };
+    });
     const usedBytes = admittedRecords.reduce((total, record) => total + record.bytes, 0);
     const usedFiles = new Set(admittedRecords.map(record => record.path)).size;
     selected.evidenceBudget = {
@@ -141,7 +145,12 @@ export async function captureSemanticContinuation(options, requiredContext) {
     const remaining = requiredCapacityRejections(captured.context);
     if (remaining.length) throw capacityPrerequisite(changedPaths, remaining);
   }
-  const contexts = partitioned ? partitionEvidence(captured.context) : [captured.context];
+  let contexts;
+  if (partitioned) {
+    contexts = partitionEvidence(captured.context);
+  } else {
+    contexts = [captured.context];
+  }
   if (contexts.length > LIMITS.maxBatches) throw capacityPrerequisite(changedPaths, rejections);
   const missingContext = semanticContextMissing(requiredContext, captured);
   const captures = [{
