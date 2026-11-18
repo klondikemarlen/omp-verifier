@@ -577,10 +577,14 @@ export async function captureSemanticContext({
   sourceRecovery,
   legacyRequest = false,
   boundedBatch = false,
+  continuationBundle = false,
 }) {
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const contextPathLimit = validateContextPathLimit(maxContextPaths);
   if (typeof boundedBatch !== "boolean") throw new TypeError("boundedBatch must be a boolean");
+  if (typeof continuationBundle !== "boolean" || (continuationBundle && !boundedBatch)) {
+    throw new TypeError("continuationBundle requires bounded continuation capture");
+  }
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -652,9 +656,16 @@ export async function captureSemanticContext({
 
   const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths, ...externalSelectors.map(source => source.url)]);
   const largeScope = requiredEvidencePaths.size > MAX_EVIDENCE_FILES;
+  let maxFiles = largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES;
+  let maxBytes = largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES;
+  if (boundedBatch) {
+    const batchCapacity = continuationBundle ? 32 : 1;
+    maxFiles = MAX_LARGE_SCOPE_EVIDENCE_FILES * batchCapacity;
+    maxBytes = MAX_TOTAL_EVIDENCE_BYTES * batchCapacity;
+  }
   const budget = {
-    maxFiles: boundedBatch || largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES,
-    maxBytes: boundedBatch ? MAX_TOTAL_EVIDENCE_BYTES : largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES,
+    maxFiles,
+    maxBytes,
     boundedBatch,
     used: 0,
     paths: new Set(),
