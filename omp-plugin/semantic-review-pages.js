@@ -84,7 +84,7 @@ function orderedReviewResult(result) {
   return orderedObject(canonicalResult, REVIEW_RESULT_ORDER);
 }
 
-export function serializeSemanticReviewResults(results) {
+export function serializeSemanticReviewResults(results, { compact = false } = {}) {
   return JSON.stringify(results, function (key, value) {
     if (key === "content" && typeof value === "string") {
       const startLine = this.startLine ?? 1;
@@ -94,7 +94,7 @@ export function serializeSemanticReviewResults(results) {
       return value.split(/\r?\n/);
     }
     return value;
-  }, 2);
+  }, compact ? undefined : 2);
 }
 
 function quoteShellArgument(value) {
@@ -229,7 +229,9 @@ export function buildSemanticReviewPage(result, pageIndex = 0) {
     throw new TypeError("Semantic batch review requires a batch index.");
   }
 
-  const serialized = serializeSemanticReviewResults([orderedReviewResult(result)]);
+  const serialized = serializeSemanticReviewResults([orderedReviewResult(result)], {
+    compact: true,
+  });
   const buffer = Buffer.from(serialized, "utf8");
   const capacity = contentCapacity(path, requestId, phase, batchIndex);
   const offsets = pageOffsets(buffer, capacity);

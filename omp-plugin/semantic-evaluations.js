@@ -22,12 +22,26 @@ import {
   continuationReviewPayload,
   validateContinuationAssessment,
 } from "#root/omp-plugin/semantic-continuation-review.js";
+import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = resolve(tmpdir(), `omp-verifier-semantic-${process.getuid?.() ?? "user"}`);
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const MAX_ASSESSMENT_LENGTH = 4_000;
 const LOCK_WAIT_MS = 15_000;
+const SELECTION_REASONS = new Set([
+  "automatic-normal",
+  "explicit-check",
+  "manual-automatic",
+  "default-normal",
+  "explicit-quick-tweak",
+  "explicit-normal",
+  "explicit-rearchitecture",
+  "full-delivery",
+  "ambiguous-declaration",
+  "unknown-declaration",
+  "unrecorded",
+]);
 
 const MAX_CACHED_REQUESTS = 100;
 const MAX_CACHED_CHECKS = 200;
@@ -120,7 +134,23 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
   }
 
   try {
-    return await callback();
+    const operationStartedAt = performance.now();
+    const operationStartedWall = Date.now();
+    const result = await callback();
+    const state = await readCurrentState(cacheDirectory, checkId);
+    if (state?.diagnostics && state.diagnostics.completedAt === undefined) {
+      const now = Date.now();
+      const diagnostics = state.diagnostics;
+      // A renewal starts a new clock; do not charge its predecessor's work twice.
+      const elapsed = performance.now() - operationStartedAt;
+      const requestElapsed = Math.max(0, now - Math.max(operationStartedWall, diagnostics.createdAt));
+      diagnostics.coordinatorMs += Math.min(elapsed, requestElapsed);
+      diagnostics.operations += 1;
+      diagnostics.lastOperationAt = now;
+      if (state.consumed) diagnostics.completedAt = now;
+      await atomicWrite(statePath(cacheDirectory, checkId), JSON.stringify(state));
+    }
+    return result;
   } finally {
     await lockHandle.close();
     await rm(filePath, { force: true });
@@ -273,7 +303,12 @@ async function captureRequest({
   sourceRecovery,
   automaticScope,
   continuation = false,
+  selectionReason,
+  renewalReason = "initial",
+  previousRequestId,
 }) {
+  const createdAt = Date.now();
+  const captureStartedAt = performance.now();
   const sourceByteLimit = validateSourceByteLimit(maxSourceBytes);
   const definition = await currentDefinition(check);
   const captured = await captureSemanticContext({
@@ -335,6 +370,14 @@ async function captureRequest({
   }
   const stored = {
     payload,
+    diagnostics: {
+      createdAt,
+      captureMs: performance.now() - captureStartedAt,
+      selectionReason: selectionReason === undefined ? (automaticScope ? "automatic-normal" : "explicit-check")
+        : SELECTION_REASONS.has(selectionReason) ? selectionReason : "unrecorded",
+      renewalReason,
+      previousRequestId,
+    },
     runtime: {
       manifestPath: check.manifestPath,
       packagePath: check.packagePath,
@@ -375,6 +418,11 @@ async function persistRequest(cacheDirectory, checkId, requestPath, stored) {
     requestId: stored.payload.requestId,
     requestHash: hash(requestContents),
     consumed: false,
+    diagnostics: {
+      ...stored.diagnostics,
+      coordinatorMs: 0,
+      operations: 0,
+    },
   };
   await atomicWrite(statePath(cacheDirectory, checkId), JSON.stringify(state));
 }
@@ -504,6 +552,9 @@ async function reconcileAutomaticScope(target, current) {
     sourceRecovery: payload.scope.sourceRecovery,
     continuation: Boolean(payload.continuation),
     automaticScope: { packageDirectory: plan.packageDirectory, delivery, ...(automatic.workLevel ? { workLevel: automatic.workLevel } : {}) },
+    selectionReason: current.stored.diagnostics?.selectionReason,
+    renewalReason: sameScope ? "evidence-or-provider-changed" : "delivery-scope-changed",
+    previousRequestId: payload.requestId,
   });
   const requestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, captured.requestId));
   await persistRequest(target.cacheDirectory, target.checkId, requestPath, captured.stored);
@@ -574,12 +625,14 @@ function automaticEvidenceScope(automatic) {
 async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPaths, contextPaths, maxSourceBytes, sourceRecovery, automaticScope }) {
   try {
     const state = await readCurrentState(cacheDirectory, check.id);
-    if (state?.consumed !== true || !state.requestId) return undefined;
-    const { stored } = await readStoredRequest(cacheDirectory, check.id, state.requestId, { requireCurrent: false });
+    if (!state?.requestId) return undefined;
+    const { stored, requestPath } = await readStoredRequest(cacheDirectory, check.id, state.requestId, {
+      requireCurrent: false,
+    });
     const { payload, runtime } = stored;
     const result = state.finalResult;
-    if (result?.id !== check.id || result.evaluation?.mode !== "agentic"
-      || result.evaluation.requestId !== state.requestId || !STATUSES.has(result.status)) return undefined;
+    if (state.consumed && (result?.id !== check.id || result.evaluation?.mode !== "agentic"
+      || result.evaluation.requestId !== state.requestId || !STATUSES.has(result.status))) return undefined;
 
     const selectedPaths = [...new Set(changedPaths)].sort();
     if (payload.scope.repositoryRoot !== repositoryRoot
@@ -590,10 +643,10 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
       || !isDeepStrictEqual(payload.scope.sourceRecovery, sourceRecovery)
       || !isDeepStrictEqual(automaticEvidenceScope(payload.scope.automatic), automaticEvidenceScope(automaticScope))) return undefined;
 
-    // Validate the whole accepted capture, including selectors enrolled during review.
+    // Validate the whole capture, including selectors enrolled during review.
     // A narrower automatic invocation must not silently discard material evidence.
     await validateFreshness({ checkId: check.id, repositoryRoot, stored });
-    return result;
+    return state.consumed ? result : requestEnvelope(payload, requestPath, state);
   } catch {
     // Missing, damaged, or stale prior proof is not an execution failure.
     // Normal capture below must establish a fresh request instead.
@@ -611,6 +664,7 @@ export async function prepareSemanticEvaluation({
   sourceRecovery,
   automaticScope,
   reuseExisting = false,
+  selectionReason,
 }) {
   if (!check || check.mode !== "agentic" || !check.manifestPath || !check.packagePath) {
     return blocked(check?.id || "semantic-evaluation", "Semantic verification check is not supported by this runtime");
@@ -645,6 +699,9 @@ export async function prepareSemanticEvaluation({
         sourceRecovery,
         automaticScope,
         continuation: isSameEvidenceScope && Boolean(previous?.payload.continuation),
+        selectionReason,
+        renewalReason: previous ? (reuseExisting ? "evidence-scope-provider-or-policy-changed" : "fresh-preparation") : "initial",
+        previousRequestId: previous?.payload.requestId,
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
       await persistRequest(cacheDirectory, check.id, requestPath, result.stored);
@@ -726,6 +783,9 @@ export async function readSemanticEvaluation({
         previousContext: previousSourceContext(stored.payload),
         automaticScope: stored.payload.scope.automatic,
         continuation: continuation || Boolean(stored.payload.continuation),
+        selectionReason: stored.diagnostics?.selectionReason,
+        renewalReason: hasContextChanges ? "context-enrichment" : "bounded-continuation",
+        previousRequestId: stored.payload.requestId,
       });
       const nextRequestPath = join(target.cacheDirectory, "requests", requestFileName(target.checkId, result.requestId));
       await persistRequest(target.cacheDirectory, target.checkId, nextRequestPath, result.stored);
@@ -764,6 +824,8 @@ export async function recordSemanticReviewPage({ cwd, page }) {
       viewFingerprint: page.viewFingerprint,
       count: page.count,
       deliveredPages: [...delivered].sort((left, right) => left - right),
+      totalBytes: page.totalBytes,
+      deliveries: (previous?.viewFingerprint === page.viewFingerprint ? previous.deliveries ?? deliveredPages.length : 0) + 1,
     };
     const nextState = { ...currentState };
     if (isBatch) {
@@ -773,6 +835,76 @@ export async function recordSemanticReviewPage({ cwd, page }) {
     }
     await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify(nextState));
   });
+}
+
+// Observation only: never reconciles scope, records page delivery, or approves freshness.
+export async function readSemanticDiagnostics({ cwd, requestPath }) {
+  const target = await loadRequestForOperation({
+    cwd,
+    requestPath,
+  });
+  const state = await readCurrentState(target.cacheDirectory, target.checkId);
+  if (!state) throw new Error("No current semantic request");
+  const { stored, currentState, requestPath: currentPath } = await readStoredRequest(
+    target.cacheDirectory,
+    target.checkId,
+    state.requestId,
+    {
+      requireCurrent: false,
+    },
+  );
+  const result = requestEnvelope(stored.payload, currentPath, currentState);
+  const page = buildSemanticReviewPage(result);
+  const presentation = page.batchIndex === undefined
+    ? currentState.pagePresentation
+    : currentState.batchPagePresentations?.[page.batchIndex];
+  const sameView = presentation?.viewFingerprint === page.viewFingerprint && presentation.count === page.count;
+  const delivered = new Set(sameView ? presentation.deliveredPages : []);
+  let nextPage = 0;
+  while (delivered.has(nextPage)) nextPage += 1;
+  const diagnostics = currentState.diagnostics;
+  const wallAgeMs = diagnostics ? Math.max(0, (diagnostics.completedAt ?? Date.now()) - diagnostics.createdAt) : null;
+  const status = currentState.consumed ? currentState.finalResult.status : "PENDING";
+  const phase = currentState.consumed ? "complete"
+    : result.reviewRequest.missingContext.length ? "context-recovery"
+      : nextPage < page.count ? "reading-pages" : "awaiting-assessment";
+  return {
+    checkId: target.checkId,
+    requestedId: target.requestId,
+    currentId: currentState.requestId,
+    superseded: target.requestId !== currentState.requestId,
+    status,
+    phase,
+    freshness: "not-checked",
+    selection: {
+      reason: diagnostics?.selectionReason ?? "unrecorded",
+      changedPaths: stored.payload.scope.changedPaths.length,
+      contextSelectors: stored.payload.scope.contextPaths.length
+        + (stored.payload.scope.callerContextPaths?.length ?? 0)
+        + (stored.payload.scope.externalContextPaths?.length ?? 0),
+    },
+    renewal: {
+      reason: diagnostics?.renewalReason ?? "unrecorded",
+      previousRequestId: diagnostics?.previousRequestId ?? null,
+    },
+    progress: {
+      payloadBytes: page.totalBytes,
+      pages: page.count,
+      uniquePages: delivered.size,
+      repeatedPages: sameView ? Math.max(0, (presentation.deliveries ?? delivered.size) - delivered.size) : 0,
+      nextPage: nextPage < page.count ? nextPage : null,
+      batchIndex: page.batchIndex ?? null,
+      batches: stored.payload.continuation?.batches.length ?? 0,
+      completedBatches: Object.keys(currentState.batchAssessments ?? {}).length,
+    },
+    timing: {
+      wallAgeMs,
+      captureMs: diagnostics?.captureMs ?? null,
+      coordinatorMs: diagnostics?.coordinatorMs ?? null,
+      unclassifiedMs: diagnostics ? Math.max(0, wallAgeMs - diagnostics.coordinatorMs) : null,
+      operations: diagnostics?.operations ?? null,
+    },
+  };
 }
 
 function missingReviewPages(presentation) {

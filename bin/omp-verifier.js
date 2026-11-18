@@ -20,6 +20,7 @@ import {
 import {
   completeSemanticEvaluation,
   readSemanticEvaluation,
+  readSemanticDiagnostics,
   recordSemanticReviewPage,
 } from "#root/omp-plugin/semantic-evaluations.js";
 import {
@@ -97,6 +98,8 @@ async function automaticResults(paths, worktree, baseRef, maxSourceBytes, reques
     maxSourceBytes,
     workLevel: full ? "normal" : intent?.level,
     reuseExisting: !full && intent?.level === "normal",
+    selectionReason: full ? "full-delivery" : intent?.selectionReason === "explicit-work-level"
+      ? `explicit-${intent.level}` : intent?.selectionReason ?? "manual-automatic",
   };
   if (worktree) return runCurrentAutomaticVerification(options);
   if (paths.length === 0 && baseRef === undefined) return [];
@@ -223,6 +226,21 @@ try {
 
   if (command === "handoff" && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     await handoffCommand(positionals, values, reporter);
+  } else if (command === "diagnostics" && positionals.length === 1 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
+    try {
+      const diagnostics = await readSemanticDiagnostics({
+        cwd,
+        requestPath: positionals[0],
+      });
+      process.stdout.write(`${JSON.stringify(diagnostics, null, reporter === "text" ? 2 : undefined)}\n`);
+    } catch {
+      // Routine telemetry must not echo private paths or source-bearing errors.
+      process.stdout.write(`${JSON.stringify({
+        status: "BLOCKED",
+        reason: "diagnostics-unavailable",
+      })}\n`);
+      process.exitCode = 1;
+    }
   } else if (command === "checks" && positionals.length === 0 && !values.worktree && !failuresOnly && !hasSemanticOptions) {
     const { checks, blockedResults } = await discoverVerificationChecks();
     const inventory = {
@@ -268,6 +286,6 @@ try {
     throw new Error("Invalid command or arguments");
   }
 } catch (error) {
-  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
+  process.stderr.write(`${error.message}\nUsage: omp-verifier handoff prepare --base <base> | handoff recover|release <handoff-file> | handoff cancel <handoff-file> --reason <reason> | checks | diagnostics <request-file> [--reporter json|text] | lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only] | verify [<check-id>...] [--max-source-bytes <bytes>] | automatic [--base <ref>] [--request <intent-handle> [--full]] [--max-source-bytes <bytes>] [--worktree|<changed-path>...] | review <request-file> [--continue|--batch <index>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>] | evaluate <request-file> --assessment <JSON|-> [--reporter json|text] [--failures-only]\n`);
   process.exitCode = 2;
 }

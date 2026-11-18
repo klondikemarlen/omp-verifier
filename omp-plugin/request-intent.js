@@ -17,12 +17,31 @@ function parseIntent(prompt) {
   const lines = prompt.split("\n");
   const declarations = lines.filter(line => line.startsWith("Verifier work level:"));
   if (declarations.length > 1) {
-    return { level: "normal", diagnostic: "Multiple work-level declarations are ambiguous; using normal with no exemption." };
+    return {
+      level: "normal",
+      selectionReason: "ambiguous-declaration",
+      diagnostic: "Multiple work-level declarations are ambiguous; using normal with no exemption.",
+    };
   }
   const firstLine = lines[0].replace(/\r$/, "");
-  if (!firstLine.startsWith("Verifier work level:")) return { level: "normal" };
+  if (!firstLine.startsWith("Verifier work level:")) {
+    return {
+      level: "normal",
+      selectionReason: "default-normal",
+    };
+  }
   const level = firstLine.startsWith(PREFIX) ? LEVELS.get(firstLine.slice(PREFIX.length)) : undefined;
-  return level ? { level } : { level: "normal", diagnostic: "Unknown explicit work-level declaration; using normal with no exemption." };
+  if (level) {
+    return {
+      level,
+      selectionReason: "explicit-work-level",
+    };
+  }
+  return {
+    level: "normal",
+    selectionReason: "unknown-declaration",
+    diagnostic: "Unknown explicit work-level declaration; using normal with no exemption.",
+  };
 }
 
 async function privateEntry(path, directory) {
@@ -44,7 +63,16 @@ async function ensureDirectory(path) {
 }
 
 function descriptor(record, path) {
-  return { handle: `${hash(record.sessionId).slice(0, 32)}.${record.requestId}`, path, level: record.level, requestId: record.requestId, ...(record.diagnostic ? { diagnostic: record.diagnostic } : {}) };
+  return {
+    handle: `${hash(record.sessionId).slice(0, 32)}.${record.requestId}`,
+    path,
+    level: record.level,
+    requestId: record.requestId,
+    selectionReason: record.selectionReason ?? "unrecorded",
+    ...(record.diagnostic ? {
+      diagnostic: record.diagnostic,
+    } : {}),
+  };
 }
 
 // Only an actual host prompt creates an instance. Identical text is still a new request.

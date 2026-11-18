@@ -60,7 +60,7 @@ function verificationEnvironment(changedPaths) {
   return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
   if (check.mode === "agentic") {
     let scopePaths = changedPaths;
     let scopeRoot = repositoryRoot;
@@ -82,6 +82,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
       sourceRecovery,
       automaticScope,
       reuseExisting,
+      selectionReason,
     });
   }
 
@@ -140,6 +141,7 @@ export async function runAutomaticVerification({
   delivery,
   workLevel = "normal",
   reuseExisting = false,
+  selectionReason = "automatic-normal",
 }) {
   const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({
     repositoryRoot, changedPaths, packageDirectory, workLevel,
@@ -155,7 +157,7 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting);
+    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason);
     if (!result) continue;
     const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({
@@ -167,7 +169,7 @@ export async function runAutomaticVerification({
   return results;
 }
 
-export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes, workLevel, reuseExisting }) {
+export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes, workLevel, reuseExisting, selectionReason }) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
     if (baseRef !== undefined) return [blocked("verifier:auto-selection", "Could not inspect base changes", root.error)];
@@ -197,10 +199,11 @@ export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [],
     delivery,
     workLevel,
     reuseExisting,
+    selectionReason,
   });
 }
 
-export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes, workLevel, reuseExisting }) {
+export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes, workLevel, reuseExisting, selectionReason }) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
@@ -217,6 +220,7 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory, m
     maxSourceBytes,
     workLevel,
     reuseExisting,
+    selectionReason,
   });
 }
 
