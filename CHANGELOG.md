@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.0 - 2026-11-19
+
+- Show task cleanup as a compact primary-check result with expandable receipts instead of ending the conversation with paths. Independent verification is reported separately from the primary result.
+
 ## 1.15.0 - 2026-11-19
 
 - Limit PR semantic findings to changed lines by default. Use `automatic --base <ref> --whole-file <path>` to review unchanged lines in a selected cleanup file.
