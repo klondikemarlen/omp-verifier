@@ -22,6 +22,11 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
     for (const entry of ["package.json", ...manifest.files]) {
       await cp(new URL(`../${entry}`, import.meta.url), join(installedPackage, entry), { recursive: true });
     }
+    const installedDependency = join(installedPackage, "node_modules", "commander");
+    await cp(new URL("../node_modules/commander/", import.meta.url), installedDependency, {
+      recursive: true,
+      dereference: true,
+    });
 
     const { default: verifierPlugin } = await import(pathToFileURL(join(installedPackage, "omp-plugin", "index.js")));
     const pi = {

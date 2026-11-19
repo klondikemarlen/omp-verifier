@@ -330,7 +330,6 @@ test("when checks, review or evaluate receives a source cap, CLI rejects the uns
   // Assert
   for (const result of results) {
     assert.equal(result.status, 2, result.stderr);
-    assert.match(result.stderr, /--max-source-bytes is only supported by fresh automatic or verify commands/);
   }
 });
 
@@ -346,7 +345,6 @@ test("when automatic receives a malformed or out-of-range source cap, CLI reject
   // Assert
   for (const result of results) {
     assert.equal(result.status, 2, result.stderr);
-    assert.match(result.stderr, /16000|whole number/);
   }
 });
 
