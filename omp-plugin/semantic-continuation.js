@@ -122,8 +122,10 @@ function partitionEvidence(context) {
 
 export async function captureSemanticContinuation(options, requiredContext) {
   if (!Array.isArray(requiredContext)) throw new TypeError("requiredContext must be an array");
+  const delivery = options.automaticScope?.delivery;
   let captured = await captureSemanticContext({
     ...options,
+    delivery,
     boundedBatch: true,
     legacyRequest: false,
   });
@@ -139,6 +141,7 @@ export async function captureSemanticContinuation(options, requiredContext) {
     }
     captured = await captureSemanticContext({
       ...options,
+      delivery,
       externalSnapshot: [...externalSnapshots.values()],
       boundedBatch: true,
       continuationBundle: true,
@@ -250,6 +253,7 @@ export async function validateSemanticContinuation(payload) {
       maxSourceBytes: scope.maxSourceBytes,
       maxContextPaths: scope.maxContextPaths,
       sourceRecovery: scope.sourceRecovery,
+      delivery: scope.automatic?.delivery,
       boundedBatch: true,
       continuationBundle: capture.partitioned,
     });

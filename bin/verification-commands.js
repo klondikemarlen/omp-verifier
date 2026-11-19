@@ -39,6 +39,7 @@ export function registerVerificationCommands(program) {
     .description("Select checks for changed paths, the current worktree, or declared closeout")
     .option("--worktree", "inspect current worktree changes instead of supplied paths")
     .addOption(base)
+    .option("--whole-file <path...>", "include unchanged lines in these selected PR files for cleanup; requires --base")
     .option("--request <intent-handle>", "current request intent for work-level selection")
     .option("--full", "perform full delivery verification; requires --request")
     .option("--closeout <receipt.json>", "also verify declared final resource dispositions")
@@ -110,6 +111,9 @@ async function lintPaths(paths, options) {
 async function verifyAutomatic(paths, options) {
   if (options.full && options.request === undefined) throw new Error("--full requires --request");
   if (options.worktree && paths.length > 0) throw new Error("--worktree cannot be combined with changed paths");
+  if (options.wholeFile && options.base === undefined) {
+    throw new Error("--whole-file requires --base and exact paths in the PR");
+  }
 
   let intent;
   if (options.request !== undefined) {
@@ -147,6 +151,7 @@ async function verifyAutomatic(paths, options) {
       ...verification,
       changedPaths: paths,
       baseRef: options.base,
+      wholeFilePaths: options.wholeFile,
     });
   }
   if (options.closeout !== undefined) {

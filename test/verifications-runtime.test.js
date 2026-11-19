@@ -177,7 +177,13 @@ if (violations.length) process.exitCode = 1;
     encoding: "utf8",
     env: { ...process.env, PI_CODING_AGENT_DIR: join(root, "agent") },
   });
-  return { projectDirectory, git, commit, run };
+  return {
+    projectDirectory,
+    packageDirectory,
+    git,
+    commit,
+    run,
+  };
 }
 
 test("when PR verification has an earlier committed violation, the actual base includes it but excludes untouched baseline failures", async t => {
@@ -195,7 +201,7 @@ test("when PR verification has an earlier committed violation, the actual base i
   // Act
   const failing = run("automatic", "--base", base, "current.js");
   await writeFile(join(projectDirectory, "earlier.js"), "export const earlier = true;\n");
-  const repaired = run("automatic", "--base", base, "current.js");
+  const repaired = run("automatic", "--base", base, "current.js", "earlier.js");
 
   // Assert
   assert.equal(failing.status, 1);
@@ -207,6 +213,45 @@ test("when PR verification has an earlier committed violation, the actual base i
   ]));
   assert.equal(repaired.status, 0);
   assert.equal(JSON.parse(repaired.stdout)[0].status, "PASS");
+});
+
+test("when an executable provider applies the PR scope, only an explicit cleanup selection admits a legacy violation", async t => {
+  // Arrange
+  const { projectDirectory, packageDirectory, commit, run } = await baseScopeFixture(t);
+  const source = join(projectDirectory, "policy.js");
+  await writeFile(source, "// violation: legacy\n// allowed\n");
+  const base = commit("existing policy");
+  await writeFile(source, "// violation: legacy\n// violation: introduced\n");
+  commit("change second policy line");
+  await writeFile(join(packageDirectory, "check.mjs"), `
+import { readFile } from "node:fs/promises";
+const scope = JSON.parse(process.env.OMP_VERIFIER_PR_SCOPE);
+const problems = [];
+for (const path of JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS)) {
+  const lines = (await readFile(path, "utf8")).split("\\n");
+  for (const [index, text] of lines.entries()) {
+    const line = index + 1;
+    const eligible = scope.wholeFilePaths.includes(path)
+      || scope.lineRanges[path].some(([first, last]) => first <= line && line <= last);
+    if (eligible && text.startsWith("// violation:")) {
+      problems.push(text);
+    }
+  }
+}
+console.log(JSON.stringify({
+  status: problems.length ? "FAIL" : "PASS",
+  summary: "Policy findings",
+  evidence: problems.join("\\n"),
+}));
+`);
+
+  // Act
+  const changedLines = run("automatic", "--base", base);
+  const cleanup = run("automatic", "--base", base, "--whole-file", "policy.js");
+
+  // Assert
+  assert.equal(JSON.parse(changedLines.stdout)[0].evidence, "// violation: introduced");
+  assert.equal(JSON.parse(cleanup.stdout)[0].evidence, "// violation: legacy\n// violation: introduced");
 });
 
 test("when a stacked PR names its parent as base, parent-only violations are not attributed to the child", async t => {

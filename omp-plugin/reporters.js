@@ -14,6 +14,17 @@ function indented(value) {
   return lines.join("\n  ");
 }
 
+function findingLocation(path, line, state) {
+  let location = path;
+  if (line !== undefined) {
+    location += `:${line}`;
+  }
+  if (state === "deleted") {
+    location += " (deleted)";
+  }
+  return location;
+}
+
 function formatVerificationResult(result) {
   const lines = [`${result.status} ${result.id}`, `  ${indented(result.summary)}`];
   if (result.generation) {
@@ -31,12 +42,17 @@ function formatVerificationResult(result) {
     if (scope.baseRef) {
       lines.push(`  Base: ${scope.baseRef} (${scope.baseCommit}); merge base ${scope.mergeBaseCommit}; head ${scope.headCommit}`);
     }
+    if (scope.wholeFilePaths?.length) {
+      lines.push(`  Whole-file cleanup: ${indented(scope.wholeFilePaths.join(", "))}`);
+    }
   }
 
   for (const finding of result.findings ?? []) {
-    lines.push(`  Finding: ${indented(`${finding.path}: ${finding.summary}`)}`);
+    const location = findingLocation(finding.path, finding.line, finding.state);
+    lines.push(`  Finding: ${indented(`${location}: ${finding.summary}`)}`);
     if (finding.introducedBy) {
-      lines.push(`  Introduced by: ${indented(`${finding.introducedBy}: ${finding.regression}`)}`);
+      const introducer = findingLocation(finding.introducedBy, finding.introducedByLine, finding.introducedByState);
+      lines.push(`  Introduced by: ${indented(`${introducer}: ${finding.regression}`)}`);
     }
   }
 

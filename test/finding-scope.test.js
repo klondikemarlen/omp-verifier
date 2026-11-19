@@ -12,8 +12,32 @@ import { formatVerificationResults } from "#root/omp-plugin/reporters.js";
 
 const CLI = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const ID = "publisher:values";
-const CHANGED = { path: "src/value.js", line: 1, quote: "export const value = -1;" };
-const CALLER = { path: "src/caller.js", line: 2, quote: "export const result = Math.sqrt(value);" };
+const CHANGED = {
+  path: "src/value.js",
+  line: 1,
+  quote: "export const value = -1;",
+};
+const UNCHANGED = {
+  path: "src/value.js",
+  line: 2,
+  quote: "export const untouched = -2;",
+};
+const UNCHANGED_CALCULATION = {
+  path: "src/value.js",
+  line: 3,
+  quote: "export const computed = Math.sqrt(value);",
+};
+const UNCHANGED_SOURCE = `${UNCHANGED.quote}\n${UNCHANGED_CALCULATION.quote}\n`;
+const CALLER = {
+  path: "src/caller.js",
+  line: 2,
+  quote: "export const result = Math.sqrt(value);",
+};
+const LEGACY = {
+  path: "src/legacy.js",
+  line: 1,
+  quote: "export const legacy = -10;",
+};
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-findings-"));
@@ -37,9 +61,9 @@ async function fixture(t) {
     gold: "Exported values must be nonnegative.", requiredContext: ["changed-code"],
     rubric: [{ id: "nonnegative", question: "Are exported values nonnegative?" }],
   }));
-  await writeFile(join(root, "src/value.js"), "export const value = 1;\n");
+  await writeFile(join(root, CHANGED.path), `export const value = 1;\n${UNCHANGED_SOURCE}`);
   await writeFile(join(root, "src/caller.js"), 'import { value } from "./value.js";\nexport const result = Math.sqrt(value);\n');
-  await writeFile(join(root, "src/legacy.js"), "export const legacy = -10;\n");
+  await writeFile(join(root, LEGACY.path), `${LEGACY.quote}\n`);
   const git = (...args) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-C", root, ...args], { encoding: "utf8" }).trim();
   git("init", "--quiet", "--initial-branch=main");
   git("config", "user.name", "Finding scope tests");
@@ -47,20 +71,27 @@ async function fixture(t) {
   git("add", ".");
   git("commit", "--quiet", "-m", "baseline");
   const baseRef = git("rev-parse", "HEAD");
-  await writeFile(join(root, "src/value.js"), `${CHANGED.quote}\n`);
+  await writeFile(join(root, CHANGED.path), `${CHANGED.quote}\n${UNCHANGED_SOURCE}`);
   git("add", "src/value.js");
   git("commit", "--quiet", "-m", "change value");
   const headCommit = git("rev-parse", "HEAD");
-  const prepare = async () => (await runAutomaticVerificationForPaths({ cwd: root, packageDirectory, baseRef }))[0];
+  const prepare = async (options = {}) => (await runAutomaticVerificationForPaths({
+    cwd: root,
+    packageDirectory,
+    baseRef,
+    ...options,
+  }))[0];
   return { root, provider, packageDirectory, baseRef, headCommit, git, prepare };
 }
 
 function failure(prepared, findings, citations = [CHANGED]) {
   return {
     requestId: prepared.reviewRequest.requestId,
-    status: "FAIL", summary: "The changed value violates the standard.",
+    status: "FAIL",
+    summary: "The delivery violates the standard.",
     rationale: "A negative export violates the nonnegative requirement.",
-    findings, citations,
+    findings,
+    citations,
   };
 }
 
@@ -68,23 +99,109 @@ async function evaluate(f, prepared, assessment) {
   return completeSemanticEvaluation({ cwd: f.root, requestPath: prepared.reviewRequest.path, assessment });
 }
 
+function findingAt(citation, summary) {
+  return {
+    path: citation.path,
+    line: citation.line,
+    summary,
+  };
+}
+
 test("when legacy context is captured, it cannot become a finding without attributed regression evidence", async t => {
   // Arrange
   const f = await fixture(t);
   const initial = await f.prepare();
   const prepared = await readSemanticEvaluation({ cwd: f.root, requestPath: initial.reviewRequest.path, contextPaths: ["src/legacy.js"] });
-  const citations = [CHANGED, { path: "src/legacy.js", line: 1, quote: "export const legacy = -10;" }];
+  const citations = [CHANGED, LEGACY];
+  const changedFinding = findingAt(CHANGED, "The changed export is negative.");
 
   // Act
-  const rejected = await evaluate(f, prepared, failure(prepared, [{ path: "src/legacy.js", summary: "Legacy value is negative." }], citations));
-  const accepted = await evaluate(f, prepared, failure(prepared, [{ path: "src/value.js", summary: "The changed export is negative." }], citations));
+  const rejected = await evaluate(f, prepared, failure(prepared, [findingAt(LEGACY, "Legacy value is negative.")], citations));
+  const accepted = await evaluate(f, prepared, failure(prepared, [changedFinding], citations));
 
   // Assert
   assert.equal(rejected.status, "BLOCKED");
   assert.match(rejected.evidence, /unchanged-context finding introducedBy/);
   assert.equal(accepted.status, "FAIL");
-  assert.deepEqual(accepted.findings, [{ path: "src/value.js", summary: "The changed export is negative." }]);
+  assert.deepEqual(accepted.findings, [changedFinding]);
   assert.match(accepted.evidence, /src\/legacy.js/);
+});
+
+test("when a file has changed and unchanged lines, only exact citations to changed lines support direct findings", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const prepared = await f.prepare();
+  const unchangedFinding = findingAt(UNCHANGED, "Untouched export is negative.");
+  const changedFinding = findingAt(CHANGED, "Changed export is negative.");
+
+  // Act
+  const wrongLine = await evaluate(f, prepared, failure(prepared, [unchangedFinding]));
+  const unchangedLine = await evaluate(f, prepared, failure(prepared, [unchangedFinding], [CHANGED, UNCHANGED]));
+  const accepted = await evaluate(f, prepared, failure(prepared, [changedFinding], [CHANGED, UNCHANGED]));
+
+  // Assert
+  assert.equal(wrongLine.status, "BLOCKED");
+  assert.match(wrongLine.evidence, /requires an exact captured source citation: src\/value\.js:2/);
+  assert.equal(unchangedLine.status, "BLOCKED");
+  assert.match(unchangedLine.evidence, /unchanged-context finding introducedBy/);
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.equal(accepted.scope.mode, "changed-lines");
+  assert.deepEqual(accepted.scope.lineRanges, {
+    "src/value.js": [[1, 1]],
+  });
+  assert.deepEqual(accepted.findings, [changedFinding]);
+});
+
+test("when an unchanged line regresses in the same file, its finding requires an actually changed introducer line", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const prepared = await f.prepare();
+  const finding = {
+    ...findingAt(UNCHANGED_CALCULATION, "Unchanged calculation now exports NaN."),
+    introducedBy: CHANGED.path,
+    introducedByLine: UNCHANGED.line,
+    regression: "The changed negative input makes the existing square root return NaN.",
+  };
+  const citations = [CHANGED, UNCHANGED, UNCHANGED_CALCULATION];
+
+  // Act
+  const wrongIntroducer = await evaluate(f, prepared, failure(prepared, [finding], citations));
+  const causalFinding = {
+    ...finding,
+    introducedByLine: CHANGED.line,
+  };
+  const accepted = await evaluate(f, prepared, failure(prepared, [causalFinding], citations));
+
+  // Assert
+  assert.equal(wrongIntroducer.status, "BLOCKED");
+  assert.match(wrongIntroducer.evidence, /requires a cited changed line: src\/value\.js:2/);
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.deepEqual(accepted.findings, [causalFinding]);
+});
+
+test("when a request with whole-file cleanup is reconciled, untouched lines remain eligible", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const wholeFilePaths = [CHANGED.path];
+  const prepared = await f.prepare({
+    wholeFilePaths,
+  });
+  f.git("commit", "--quiet", "--allow-empty", "-m", "update delivery head");
+  const finding = findingAt(UNCHANGED, "Clean up the untouched negative export.");
+
+  // Act
+  const renewed = await evaluate(f, prepared, failure(prepared, [finding], [UNCHANGED]));
+  const accepted = await evaluate(f, renewed, failure(renewed, [finding], [UNCHANGED]));
+
+  // Assert
+  assert.equal(renewed.status, "PENDING");
+  assert.notEqual(renewed.reviewRequest.requestId, prepared.reviewRequest.requestId);
+  assert.deepEqual(renewed.reviewRequest.scope.automatic.delivery.wholeFilePaths, wholeFilePaths);
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.deepEqual(accepted.findings, [finding]);
+  assert.equal(accepted.scope.mode, "changed-lines-and-files");
+  assert.deepEqual(accepted.scope.wholeFilePaths, wholeFilePaths);
+  assert.match(formatVerificationResults([accepted]), /Whole-file cleanup: src\/value\.js/);
 });
 
 test("when a changed export breaks an unchanged caller, its cited causal attribution survives reporting", async t => {
@@ -93,7 +210,9 @@ test("when a changed export breaks an unchanged caller, its cited causal attribu
   const initial = await f.prepare();
   const prepared = await readSemanticEvaluation({ cwd: f.root, requestPath: initial.reviewRequest.path, callerContextPaths: ["src/caller.js"] });
   const findings = [{
-    path: "src/caller.js", summary: "The caller now exports NaN.", introducedBy: "src/value.js",
+    ...findingAt(CALLER, "The caller now exports NaN."),
+    introducedBy: CHANGED.path,
+    introducedByLine: CHANGED.line,
     regression: "The changed negative input makes the unchanged square root return NaN.",
   }];
 
@@ -104,13 +223,25 @@ test("when a changed export breaks an unchanged caller, its cited causal attribu
   // Assert
   assert.equal(accepted.status, "FAIL", accepted.evidence);
   assert.deepEqual(accepted.findings, findings);
-  assert.match(report, /Finding: src\/caller.js: The caller now exports NaN/);
-  assert.match(report, /Introduced by: src\/value.js/);
+  assert.match(report, /Finding: src\/caller.js:2: The caller now exports NaN/);
+  assert.match(report, /Introduced by: src\/value.js:1/);
   assert.equal(accepted.scope.baseCommit, f.baseRef);
   assert.equal(accepted.scope.headCommit, f.headCommit);
 });
 
-for (const findings of [undefined, [], [{ path: "src/missing.js", summary: "No captured evidence." }]]) {
+const missingCitation = {
+  path: "src/missing.js",
+  line: 1,
+};
+for (const findings of [
+  undefined,
+  [],
+  [{
+    path: CHANGED.path,
+    summary: "Missing finding line.",
+  }],
+  [findingAt(missingCitation, "No captured evidence.")],
+]) {
   test(`when FAIL has ${findings === undefined ? "no" : JSON.stringify(findings)} attribution, correction can still complete the request`, async t => {
     // Arrange
     const f = await fixture(t);
@@ -118,7 +249,7 @@ for (const findings of [undefined, [], [{ path: "src/missing.js", summary: "No c
 
     // Act
     const rejected = await evaluate(f, prepared, failure(prepared, findings));
-    const accepted = await evaluate(f, prepared, failure(prepared, [{ path: "src/value.js", summary: "Negative export." }]));
+    const accepted = await evaluate(f, prepared, failure(prepared, [findingAt(CHANGED, "Negative export.")]));
 
     // Assert
     assert.equal(rejected.status, "BLOCKED");
@@ -133,32 +264,139 @@ test("when a named regression introducer is outside the selected delivery, its f
   const f = await fixture(t);
   const initial = await f.prepare();
   const prepared = await readSemanticEvaluation({ cwd: f.root, requestPath: initial.reviewRequest.path, contextPaths: ["src/caller.js", "src/legacy.js"] });
-  const findings = [{ path: "src/caller.js", summary: "Broken caller.", introducedBy: "src/legacy.js", regression: "The legacy export is negative." }];
+  const findings = [{
+    ...findingAt(CALLER, "Broken caller."),
+    introducedBy: LEGACY.path,
+    introducedByLine: LEGACY.line,
+    regression: "The legacy export is negative.",
+  }];
 
   // Act
-  const result = await evaluate(f, prepared, failure(prepared, findings, [CHANGED, CALLER, { path: "src/legacy.js", line: 1, quote: "export const legacy = -10;" }]));
+  const result = await evaluate(f, prepared, failure(prepared, findings, [CHANGED, CALLER, LEGACY]));
 
   // Assert
   assert.equal(result.status, "BLOCKED");
-  assert.match(result.evidence, /requires a cited changed path/);
+  assert.match(result.evidence, /requires a cited changed line/);
 });
 
 test("when delivery changes before assessment, old findings are discarded and the new scope must be reviewed", async t => {
   // Arrange
   const f = await fixture(t);
   const prepared = await f.prepare();
-  await writeFile(join(f.root, "src/value.js"), "export const value = 2;\n");
+  await writeFile(join(f.root, CHANGED.path), `export const value = 2;\n${UNCHANGED_SOURCE}`);
   f.git("add", "src/value.js");
   f.git("commit", "--quiet", "-m", "repair value");
 
   // Act
-  const renewed = await evaluate(f, prepared, failure(prepared, [{ path: "src/value.js", summary: "Negative export." }]));
+  const renewed = await evaluate(f, prepared, failure(prepared, [findingAt(CHANGED, "Negative export.")]));
 
   // Assert
   assert.equal(renewed.status, "PENDING");
   assert.notEqual(renewed.reviewRequest.requestId, prepared.reviewRequest.requestId);
   assert.equal(renewed.reviewRequest.scope.automatic.delivery.headCommit, f.git("rev-parse", "HEAD"));
   assert.equal(renewed.findings, undefined);
+});
+
+test("when a line is deleted after an intermediate edit, only the merge-base source authenticates its finding", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const intermediate = {
+    ...LEGACY,
+    quote: "export const legacy = 5;",
+  };
+  await writeFile(join(f.root, LEGACY.path), `${intermediate.quote}\n`);
+  f.git("add", LEGACY.path);
+  f.git("commit", "--quiet", "-m", "intermediate legacy edit");
+  const prepared = await f.prepare();
+  await rm(join(f.root, LEGACY.path));
+  f.git("add", LEGACY.path);
+  f.git("commit", "--quiet", "-m", "remove a required export");
+  const finding = findingAt(LEGACY, "The required legacy export was removed.");
+  const renewed = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: prepared.reviewRequest.path,
+  });
+
+  // Act
+  const wrongBase = await evaluate(f, renewed, failure(renewed, [finding], [intermediate]));
+  const accepted = await evaluate(f, renewed, failure(renewed, [finding], [LEGACY]));
+
+  // Assert
+  assert.equal(wrongBase.status, "BLOCKED");
+  assert.match(wrongBase.evidence, /does not match the captured source excerpt/);
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.deepEqual(accepted.findings, [{
+    ...finding,
+    state: "deleted",
+  }]);
+  assert.deepEqual(accepted.scope.deletedPaths, [LEGACY.path]);
+  assert.match(formatVerificationResults([accepted]), /Finding: src\/legacy\.js:1 \(deleted\)/);
+});
+
+test("when a file is renamed without edits, neither path authorizes findings on its unchanged source", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const renamed = {
+    ...LEGACY,
+    path: "src/renamed.js",
+  };
+  f.git("mv", LEGACY.path, renamed.path);
+  f.git("commit", "--quiet", "-m", "rename the legacy export without editing");
+  const prepared = await f.prepare();
+
+  // Act
+  const source = await evaluate(f, prepared, failure(prepared, [findingAt(LEGACY, "Old-path legacy export.")], [CHANGED, LEGACY]));
+  const target = await evaluate(f, prepared, failure(prepared, [findingAt(renamed, "New-path legacy export.")], [CHANGED, renamed]));
+
+  // Assert
+  assert.equal(source.status, "BLOCKED");
+  assert.match(source.evidence, /unchanged-context finding introducedBy/);
+  assert.equal(target.status, "BLOCKED");
+  assert.match(target.evidence, /unchanged-context finding introducedBy/);
+});
+
+test("when a finding is outside eligible lines, checkpoints and final aggregation both reject it", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const prepared = await f.prepare();
+  const batch = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: prepared.reviewRequest.path,
+    continuation: true,
+  });
+  const changedFinding = findingAt(CHANGED, "Changed export is negative.");
+  const unchangedFinding = findingAt(UNCHANGED, "Untouched export is negative.");
+  const citations = [CHANGED, UNCHANGED];
+  const batchAssessment = {
+    ...failure(batch, [unchangedFinding], citations),
+    batchIndex: 0,
+    crossBatchNotes: "The only batch contains the complete value source.",
+  };
+
+  // Act
+  const rejectedBatch = await evaluate(f, batch, batchAssessment);
+  const aggregate = await evaluate(f, batch, {
+    ...batchAssessment,
+    findings: [changedFinding],
+  });
+  const aggregateAssessment = {
+    ...failure(aggregate, [unchangedFinding], citations),
+    coveredBatches: [0],
+  };
+  const rejectedAggregate = await evaluate(f, aggregate, aggregateAssessment);
+  const accepted = await evaluate(f, aggregate, {
+    ...aggregateAssessment,
+    findings: [changedFinding],
+  });
+
+  // Assert
+  assert.equal(rejectedBatch.status, "BLOCKED");
+  assert.match(rejectedBatch.evidence, /unchanged-context finding introducedBy/);
+  assert.equal(aggregate.reviewRequest.continuation.phase, "aggregate");
+  assert.equal(rejectedAggregate.status, "BLOCKED");
+  assert.match(rejectedAggregate.evidence, /unchanged-context finding introducedBy/);
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.deepEqual(accepted.findings, [changedFinding]);
 });
 
 test("when unrelated dirty files exist, the CLI selects only delivery paths and labels opaque findings as provider owned", async t => {

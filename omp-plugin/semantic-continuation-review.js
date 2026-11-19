@@ -1,3 +1,5 @@
+import { deliveryFindingMode } from "#root/omp-plugin/finding-scope.js";
+
 const SOURCE_GROUPS = ["changedCode", "callers", "siblings", "projectGuidance", "targetedContext", "externalContext"];
 const MAX_CHECKPOINT_BYTES = 8_000;
 const MAX_LEDGER_BYTES = 512_000;
@@ -8,6 +10,15 @@ export function continuationBatch(payload, index) {
     throw new Error("batchIndex must identify a batch in this continuation request");
   }
   return payload.continuation.batches[index];
+}
+
+function batchFindingScope(scope, batch) {
+  const { changedPaths } = batch;
+  return {
+    ...scope,
+    changedPaths,
+    findingMode: deliveryFindingMode(scope.automatic?.delivery, changedPaths),
+  };
 }
 
 export function continuationReviewPayload(payload, state, batchIndex) {
@@ -41,6 +52,7 @@ export function continuationReviewPayload(payload, state, batchIndex) {
   };
   return {
     ...payload,
+    scope: batch ? batchFindingScope(payload.scope, batch) : payload.scope,
     context,
     missingContext,
     continuation: {
@@ -62,7 +74,7 @@ export function continuationAssessmentPayload(payload, batchIndex) {
     const batch = continuationBatch(payload, batchIndex);
     return {
       ...payload,
-      scope: { ...payload.scope, changedPaths: batch.changedPaths },
+      scope: batchFindingScope(payload.scope, batch),
       context: batch.context,
       missingContext: batch.missingContext,
     };
