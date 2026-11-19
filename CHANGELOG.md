@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.15.0 - 2026-11-19
+
+- Limit PR semantic findings to changed lines by default. Use `automatic --base <ref> --whole-file <path>` to review unchanged lines in a selected cleanup file.
+- Supply the PR scope to executable checks without suppressing diagnostics from providers that still evaluate whole files.
+
 ## 1.14.2 - 2026-11-19
 
 - Expand runtime generation guards and control-flow blocks for readability without changing activation, locking, or request dispatch behavior.

@@ -117,7 +117,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 ```text
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
-omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--max-source-bytes <bytes>]
+omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
