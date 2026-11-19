@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.0 - 2026-11-19
+
+- Provide generated command-local CLI help and reject irrelevant options before execution.
+- Replace global option/dispatch logic with Commander-backed verification, semantic review, and lifecycle command owners while retaining result and page-delivery semantics.
+
 ## 1.13.1 - 2026-11-18
 
 - Make closeout test resource construction and expected assertion data explicit without changing runtime behavior.
