@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
-import { verificationScope } from "#root/omp-plugin/finding-scope.js";
+import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -54,10 +54,25 @@ function resultFromOutput(check, output) {
   }
 }
 
-function verificationEnvironment(changedPaths) {
+function verificationEnvironment(changedPaths, delivery) {
   const environment = { ...process.env };
   delete environment.OMP_VERIFIER_CHANGED_PATHS;
-  return changedPaths ? { ...environment, OMP_VERIFIER_CHANGED_PATHS: JSON.stringify(changedPaths) } : environment;
+  delete environment.OMP_VERIFIER_PR_SCOPE;
+  if (!changedPaths) {
+    return environment;
+  }
+
+  environment.OMP_VERIFIER_CHANGED_PATHS = JSON.stringify(changedPaths);
+  if (delivery) {
+    environment.OMP_VERIFIER_PR_SCOPE = JSON.stringify({
+      version: 1,
+      baseCommit: delivery.baseCommit,
+      mergeBaseCommit: delivery.mergeBaseCommit,
+      headCommit: delivery.headCommit,
+      ...deliveryFindingEligibility(delivery, changedPaths),
+    });
+  }
+  return environment;
 }
 
 async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
@@ -90,7 +105,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
     await access(check.entryPath);
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
-      env: verificationEnvironment(changedPaths),
+      env: verificationEnvironment(changedPaths, automaticScope?.delivery),
       timeout: check.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
     });
@@ -169,7 +184,17 @@ export async function runAutomaticVerification({
   return results;
 }
 
-export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [], baseRef, packageDirectory, maxSourceBytes, workLevel, reuseExisting, selectionReason }) {
+export async function runAutomaticVerificationForPaths({
+  cwd,
+  changedPaths = [],
+  baseRef,
+  wholeFilePaths = [],
+  packageDirectory,
+  maxSourceBytes,
+  workLevel,
+  reuseExisting,
+  selectionReason,
+}) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
     if (baseRef !== undefined) return [blocked("verifier:auto-selection", "Could not inspect base changes", root.error)];
@@ -184,6 +209,7 @@ export async function runAutomaticVerificationForPaths({ cwd, changedPaths = [],
         repositoryRoot: root.repositoryRoot,
         baseRef,
         candidatePaths: changedPaths.map(path => projectPath(path, "changed path")),
+        wholeFilePaths: wholeFilePaths.map(path => projectPath(path, "whole-file path")),
       });
       changedPaths = delivery.changedPaths;
     } catch (error) {

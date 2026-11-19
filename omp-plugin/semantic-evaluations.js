@@ -8,7 +8,12 @@ import { isDeepStrictEqual, promisify } from "node:util";
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
-import { validateFindings, verificationScope } from "#root/omp-plugin/finding-scope.js";
+import {
+  deliveryFindingEligibility,
+  deliveryFindingMode,
+  validateFindings,
+  verificationScope,
+} from "#root/omp-plugin/finding-scope.js";
 import {
   captureSemanticContext,
   semanticContextMissing,
@@ -330,6 +335,7 @@ async function captureRequest({
     maxSourceBytes: sourceByteLimit,
     maxContextPaths,
     sourceRecovery,
+    delivery: automaticScope?.delivery,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
   const requestId = randomUUID();
@@ -354,7 +360,7 @@ async function captureRequest({
     scope: {
       repositoryRoot,
       changedPaths: captured.context.changedPaths,
-      findingMode: "changed-files",
+      findingMode: deliveryFindingMode(automaticScope?.delivery, captured.context.changedPaths),
       contextPaths: [...contextPaths],
       callerContextPaths: [...callerContextPaths],
       ...(externalContextPaths.length ? { externalContextPaths: [...externalContextPaths] } : {}),
@@ -456,8 +462,9 @@ async function loadRequestForOperation({ cwd, requestPath }) {
 
 async function validateFreshness({ checkId, repositoryRoot, stored }) {
   const { payload, runtime } = stored;
-  if (payload.scope.findingMode !== "changed-files") {
-    throw new Error("request predates finding attribution; prepare fresh verification with the complete current scope");
+  const delivery = payload.scope.automatic?.delivery;
+  if (payload.scope.findingMode !== deliveryFindingMode(delivery, payload.scope.changedPaths)) {
+    throw new Error("request predates current finding attribution; prepare fresh verification with the complete current scope");
   }
   // Older stored requests have no source cap and retain their original fingerprint shape.
   const usesLegacySourceLimit = payload.scope.maxSourceBytes === undefined;
@@ -488,6 +495,7 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     maxContextPaths: payload.scope.maxContextPaths,
     sourceRecovery: payload.scope.sourceRecovery,
     legacyRequest: usesLegacySourceLimit,
+    delivery,
   });
   if (captured.fingerprint !== runtime.contextFingerprint || captured.fingerprint !== payload.context.fingerprint) {
     throw new Error("captured source or project context changed after the request was prepared");
@@ -519,6 +527,7 @@ async function reconcileAutomaticScope(target, current) {
     repositoryRoot: target.repositoryRoot,
     baseRef: automatic.delivery.baseRef,
     candidatePaths: automatic.delivery.candidatePaths,
+    wholeFilePaths: automatic.delivery.wholeFilePaths,
   });
   const plan = await discoverAutomaticVerification({
     repositoryRoot: target.repositoryRoot,
@@ -628,14 +637,20 @@ async function reconcileRequest(target) {
   } };
 }
 
-function automaticEvidenceScope(automatic) {
-  if (!automatic) return undefined;
+function automaticEvidenceScope(automatic, changedPaths) {
+  if (!automatic) {
+    return undefined;
+  }
+  const { delivery } = automatic;
+  const eligibility = deliveryFindingEligibility(delivery, changedPaths);
   return {
     packageDirectory: automatic.packageDirectory,
     workLevel: automatic.workLevel,
-    baseRef: automatic.delivery?.baseRef,
-    baseCommit: automatic.delivery?.baseCommit,
-    mergeBaseCommit: automatic.delivery?.mergeBaseCommit,
+    baseRef: delivery.baseRef,
+    baseCommit: delivery.baseCommit,
+    mergeBaseCommit: delivery.mergeBaseCommit,
+    wholeFileSelectors: delivery.wholeFilePaths,
+    eligibility,
   };
 }
 
@@ -658,7 +673,9 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
       || !contextPaths.every(selector => payload.scope.contextPaths.includes(selector))
       || payload.scope.maxSourceBytes !== maxSourceBytes
       || !isDeepStrictEqual(payload.scope.sourceRecovery, sourceRecovery)
-      || !isDeepStrictEqual(automaticEvidenceScope(payload.scope.automatic), automaticEvidenceScope(automaticScope))) return undefined;
+      || !isDeepStrictEqual(automaticEvidenceScope(payload.scope.automatic, selectedPaths), automaticEvidenceScope(automaticScope, selectedPaths))) {
+      return undefined;
+    }
 
     // Validate the whole capture, including selectors enrolled during review.
     // A narrower automatic invocation must not silently discard material evidence.
@@ -968,12 +985,25 @@ function normalizedAssessment(assessment, payload, { checkpoint = false } = {}) 
       && !validatedCitations.some(citation => payload.context.callerContextPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL assessments using explicit caller context must cite its captured caller or runtime source");
     }
-    const findings = validateFindings(assessment, payload.scope.changedPaths, validatedCitations);
-    return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations, findings };
+    const findings = validateFindings(assessment, payload.scope, validatedCitations);
+    return {
+      status: assessment.status,
+      summary,
+      rationale,
+      nextCheck,
+      citations: validatedCitations,
+      findings,
+    };
   }
   const validatedCitations = citations.length ? validateSemanticCitations(citations, payload.context) : [];
-  validateFindings(assessment, payload.scope.changedPaths, validatedCitations);
-  return { status: assessment.status, summary, rationale, nextCheck, citations: validatedCitations };
+  validateFindings(assessment, payload.scope, validatedCitations);
+  return {
+    status: assessment.status,
+    summary,
+    rationale,
+    nextCheck,
+    citations: validatedCitations,
+  };
 }
 
 function resultFromAssessment(payload, assessment) {

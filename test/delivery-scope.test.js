@@ -66,6 +66,8 @@ test("when a deletion is committed, its missing path remains even without candid
   const scope = await captureDeliveryScope({ repositoryRoot, baseRef: "delivery-base" });
 
   // Assert
+  assert.deepEqual(scope.deletedPaths, ["removed.txt"]);
+  assert.deepEqual(scope.lineRanges, {});
   assert.deepEqual(scope.changedPaths, ["removed.txt"]);
   assert.deepEqual(scope.candidatePaths, []);
   assert.equal(scope.baseRef, "delivery-base");
@@ -86,6 +88,10 @@ test("when a committed rename is detected, both its removed and added paths rema
 
   // Assert
   assert.deepEqual(scope.changedPaths, ["removed.txt", "renamed.txt"]);
+  assert.deepEqual(scope.deletedPaths, []);
+  assert.deepEqual(scope.lineRanges, {
+    "renamed.txt": [],
+  });
 });
 
 test("when candidates have live tracked or untracked changes, staged and working tree edits are included", async t => {
@@ -107,6 +113,13 @@ test("when candidates have live tracked or untracked changes, staged and working
   // Assert
   assert.deepEqual(scope.changedPaths, ["new.txt", "removed.txt", "staged.txt", "tracked.txt", "untracked.txt"]);
   assert.deepEqual(scope.candidatePaths, ["new.txt", "removed.txt", "staged.txt", "tracked.txt", "untracked.txt"]);
+  assert.deepEqual(scope.deletedPaths, ["removed.txt"]);
+  assert.deepEqual(scope.lineRanges, {
+    "new.txt": [[1, 1]],
+    "staged.txt": [[1, 1]],
+    "tracked.txt": [[1, 1]],
+    "untracked.txt": [[1, 1]],
+  });
 });
 
 test("when untracked or tracked changes are unrelated to candidates, they are excluded and ignored candidates stay excluded", async t => {
@@ -180,4 +193,225 @@ test("when the base has unrelated history, capture rejects instead of returning 
 
   // Act / Assert
   await assert.rejects(captureDeliveryScope({ repositoryRoot, baseRef: unrelatedCommit }));
+});
+
+test("when a committed rename edits source, only changed destination lines are eligible", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const oldPath = "old name.txt";
+  const newPath = "new name\n@@ -12,0 +12 @@.txt";
+  const lines = Array.from({
+    length: 12,
+  }, (_, index) => `line ${index + 1}: keeps the rename recognizable`);
+  await writeFile(join(repositoryRoot, oldPath), `${lines.join("\n")}\n`);
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "parent implementation");
+  git(repositoryRoot, "tag", "stacked-parent");
+  await rm(join(repositoryRoot, oldPath));
+  lines[3] = "@@ -40,0 +55,3 @@ fake hunk";
+  lines[9] = "+++ b/unrelated.txt";
+  await writeFile(join(repositoryRoot, newPath), `${lines.join("\n")}\n`);
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "rename and edit");
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "stacked-parent",
+  });
+
+  // Assert
+  assert.deepEqual(scope.changedPaths, [newPath, oldPath]);
+  assert.deepEqual(scope.deletedPaths, []);
+  assert.deepEqual(scope.lineRanges, {
+    [newPath]: [[4, 4], [10, 10]],
+  });
+});
+
+test("when a committed file has a dirty noncandidate overlay, capture rejects misaligned coordinates", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const path = "tracked.txt";
+  await writeFile(join(repositoryRoot, path), "baseline\ncommitted edit\n");
+  git(repositoryRoot, "add", path);
+  git(repositoryRoot, "commit", "--quiet", "-m", "authored change");
+  git(repositoryRoot, "update-index", "--assume-unchanged", path);
+  await writeFile(join(repositoryRoot, path), "workspace insertion\nbaseline\ncommitted edit\n");
+
+  // Act
+  const [unowned, authored] = await Promise.allSettled([
+    captureDeliveryScope({
+      repositoryRoot,
+      baseRef: "delivery-base",
+    }),
+    captureDeliveryScope({
+      repositoryRoot,
+      baseRef: "delivery-base",
+      candidatePaths: [path],
+    }),
+  ]);
+
+  // Assert
+  assert.equal(unowned.status, "rejected");
+  assert.match(unowned.reason.message, /restore committed source or explicitly include the path/);
+  assert.equal(authored.status, "fulfilled");
+  assert.deepEqual(authored.value.lineRanges, {
+    [path]: [[1, 1], [3, 3]],
+  });
+});
+
+test("when candidates delete lines or add untracked files, capture uses their current coordinates", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  await writeFile(join(repositoryRoot, "tracked.txt"), "first\nremoved\nthird\nfourth\n");
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "fixture lines");
+  git(repositoryRoot, "tag", "fixture-base");
+  await writeFile(join(repositoryRoot, "tracked.txt"), "first\nthird\nfourth\n");
+  const newPath = "__proto__";
+  await writeFile(join(repositoryRoot, newPath), "first\n@@ -200,0 +300,7 @@ fake hunk\nlast");
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "fixture-base",
+    candidatePaths: ["tracked.txt", newPath],
+  });
+
+  // Assert
+  assert.deepEqual(scope.lineRanges, {
+    [newPath]: [[1, 3]],
+    "tracked.txt": [],
+  });
+});
+
+test("when a pure rename is still untracked, neither its unchanged lines nor its former path are eligible", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  await rename(join(repositoryRoot, "removed.txt"), join(repositoryRoot, "renamed.txt"));
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "delivery-base",
+    candidatePaths: ["removed.txt", "renamed.txt"],
+  });
+
+  // Assert
+  assert.deepEqual(scope.changedPaths, ["removed.txt", "renamed.txt"]);
+  assert.deepEqual(scope.deletedPaths, []);
+  assert.deepEqual(scope.lineRanges, {
+    "renamed.txt": [],
+  });
+});
+
+test("when a staged rename has later edits, capture uses working coordinates against the source baseline", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const oldPath = "source.txt";
+  const newPath = "destination.txt";
+  const lines = ["first unchanged line", "second unchanged line", "third unchanged line", "fourth unchanged line"];
+  await writeFile(join(repositoryRoot, oldPath), `${lines.join("\n")}\n`);
+  git(repositoryRoot, "add", oldPath);
+  git(repositoryRoot, "commit", "--quiet", "-m", "tracked rename source");
+  git(repositoryRoot, "tag", "rename-base");
+  await rename(join(repositoryRoot, oldPath), join(repositoryRoot, newPath));
+  git(repositoryRoot, "add", oldPath, newPath);
+  await writeFile(join(repositoryRoot, newPath), `inserted line\n${lines.slice(0, 2).join("\n")}\nreplacement line\n${lines[3]}\n`);
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "rename-base",
+    candidatePaths: [newPath, oldPath],
+  });
+
+  // Assert
+  assert.deepEqual(scope.changedPaths, [newPath, oldPath]);
+  assert.deepEqual(scope.deletedPaths, []);
+  assert.deepEqual(scope.lineRanges, {
+    [newPath]: [[1, 1], [4, 4]],
+  });
+});
+
+test("when cleanup paths are selected, only changed delivery files can be opted in", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  await writeFile(join(repositoryRoot, "tracked.txt"), "baseline\ncleanup target\n");
+  await writeFile(join(repositoryRoot, "fresh.txt"), "new cleanup target\n");
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "delivery-base",
+    wholeFilePaths: ["./tracked.txt", "fresh.txt", "tracked.txt"],
+  });
+
+  // Assert
+  assert.deepEqual(scope.changedPaths, ["fresh.txt", "tracked.txt"]);
+  assert.deepEqual(scope.wholeFilePaths, ["fresh.txt", "tracked.txt"]);
+  assert.deepEqual(scope.lineRanges, {
+    "fresh.txt": [[1, 1]],
+    "tracked.txt": [[2, 2]],
+  });
+
+  await assert.rejects(captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "delivery-base",
+    wholeFilePaths: ["staged.txt"],
+  }), /whole-file cleanup must target a changed delivery path/);
+  await assert.rejects(captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "delivery-base",
+    wholeFilePaths: ["../outside.txt"],
+  }), /project-relative file paths without traversal/);
+});
+
+test("when changed lines are large, capture does not buffer the whole patch", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  await writeFile(join(repositoryRoot, "tracked.txt"), `${"a".repeat(2_100_000)}\n`);
+  git(repositoryRoot, "add", "tracked.txt");
+  git(repositoryRoot, "commit", "--quiet", "-m", "large delivery edit");
+
+  // Act
+  const scope = await captureDeliveryScope({
+    repositoryRoot,
+    baseRef: "delivery-base",
+  });
+
+  // Assert
+  assert.deepEqual(scope.lineRanges, {
+    "tracked.txt": [[1, 1]],
+  });
+});
+
+test("when a candidate restores committed source to its base, whole-file cleanup is unavailable", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const path = "tracked.txt";
+  await writeFile(join(repositoryRoot, path), "committed edit\n");
+  git(repositoryRoot, "add", path);
+  git(repositoryRoot, "commit", "--quiet", "-m", "changed source");
+  await writeFile(join(repositoryRoot, path), "baseline\n");
+
+  // Act
+  const [candidate, cleanup] = await Promise.allSettled([
+    captureDeliveryScope({
+      repositoryRoot,
+      baseRef: "delivery-base",
+      candidatePaths: [path],
+    }),
+    captureDeliveryScope({
+      repositoryRoot,
+      baseRef: "delivery-base",
+      wholeFilePaths: [path],
+    }),
+  ]);
+
+  // Assert
+  assert.equal(candidate.status, "fulfilled");
+  assert.deepEqual(candidate.value.changedPaths, []);
+  assert.equal(cleanup.status, "rejected");
+  assert.match(cleanup.reason.message, /whole-file cleanup must target a changed delivery path/);
 });

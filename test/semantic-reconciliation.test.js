@@ -65,7 +65,7 @@ for (const mutation of ["restored source", "temporary cleanup", "provider update
     try {
       await writeFile(join(f.cwd, "src/restored.js"), "export const restored = false;\n");
       await writeFile(join(f.cwd, "src/temporary.js"), "export const diagnostic = 1;\n");
-      const original = await f.prepare(["src/restored.js", "src/temporary.js"]);
+      const original = await f.prepare(["src/live.js", "src/restored.js", "src/temporary.js"]);
       if (mutation === "restored source") f.git("checkout", "HEAD", "--", "src/restored.js");
       if (mutation === "temporary cleanup") await rm(join(f.cwd, "src/temporary.js"));
       if (mutation === "provider update") await writeFile(join(f.provider, "package.json"), JSON.stringify({ ...f.manifest, version: "2.0.0" }));
@@ -94,7 +94,7 @@ test("when completed automatic evidence changes, exact recovery cannot reuse its
   // Arrange
   const f = await fixture();
   try {
-    const original = await f.prepare();
+    const original = await f.prepare(["src/live.js"]);
     const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: original.reviewRequest.path, assessment: assessment(original.reviewRequest.requestId) });
     await writeFile(join(f.cwd, "src/live.js"), "export const live = -1;\n");
     // Act

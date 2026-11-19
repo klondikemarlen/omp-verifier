@@ -196,7 +196,7 @@ async function renamedProjectPaths(root, revision) {
   return renames;
 }
 
-async function historicalSiblingInventory(root, directory, changedPaths, deletedSources, maxSourceBytes, remainingEntries) {
+async function historicalSiblingInventory(root, directory, changedPaths, deletedSources, maxSourceBytes, remainingEntries, delivery) {
   // Only genuinely absent directories may use history, not links or inaccessible paths.
   let ancestor = resolve(root, directory);
   while (true) {
@@ -216,7 +216,9 @@ async function historicalSiblingInventory(root, directory, changedPaths, deleted
   const boundaryPaths = changedPaths.filter(path => dirname(path) === directory);
   if (boundaryPaths.length > remainingEntries) throw new Error("sibling directory entry limit reached");
   for (const path of boundaryPaths) {
-    const source = await deletedProjectSource(root, path, maxSourceBytes);
+    const source = await deletedProjectSource(root, path, maxSourceBytes, {
+      delivery,
+    });
     deletedSources.set(path, source);
     if (typeof source?.content !== "string") {
       throw new Error(`historical sibling inventory cannot authenticate deleted source: ${path}`);
@@ -255,7 +257,7 @@ async function historicalSiblingInventory(root, directory, changedPaths, deleted
   return { files: [...files], snapshots, renames, inspectedEntries };
 }
 
-async function siblingDirectoryInventory(root, changedPaths, deletedSources, maxSourceBytes) {
+async function siblingDirectoryInventory(root, changedPaths, deletedSources, maxSourceBytes, delivery) {
   const directories = [...new Set(changedPaths.map(path => dirname(path)))].sort();
   const inventories = [];
   let inspectedEntries = 0;
@@ -288,6 +290,7 @@ async function siblingDirectoryInventory(root, changedPaths, deletedSources, max
         try {
           const historical = await historicalSiblingInventory(
             root, path, changedPaths, deletedSources, maxSourceBytes, MAX_INVENTORY_FILES - inspectedEntries,
+            delivery,
           );
           inventory.files = historical.files;
           inventory.snapshots = historical.snapshots;
@@ -450,9 +453,10 @@ function lineCoverage(ranges, lineCount) {
   return { coveredRanges, omittedRanges, complete: omittedRanges.length === 0 };
 }
 
-async function gitSource(root, reference, maxSourceBytes) {
+async function gitSource(root, reference, maxSourceBytes, env) {
   try {
     const { stdout } = await execFileAsync("git", ["-C", root, "show", "--no-ext-diff", "--no-textconv", reference], {
+      env,
       encoding: "buffer",
       maxBuffer: maxSourceBytes,
       timeout: 5_000,
@@ -467,7 +471,16 @@ async function gitSource(root, reference, maxSourceBytes) {
   }
 }
 
-async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversized = true } = {}) {
+async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversized = true, delivery } = {}) {
+  if (delivery?.deletedPaths?.includes(path)) {
+    const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
+    const env = {
+      ...inherited,
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_NO_REPLACE_OBJECTS: "1",
+    };
+    return gitSource(root, `${delivery.mergeBaseCommit}:${path}`, maxSourceBytes, env);
+  }
   for (const reference of [`:${path}`, `HEAD:${path}`]) {
     const source = await gitSource(root, reference, maxSourceBytes);
     if (source === undefined) continue;
@@ -575,6 +588,7 @@ export async function captureSemanticContext({
   maxSourceBytes = DEFAULT_MAX_SOURCE_BYTES,
   maxContextPaths,
   sourceRecovery,
+  delivery,
   legacyRequest = false,
   boundedBatch = false,
   continuationBundle = false,
@@ -613,7 +627,7 @@ export async function captureSemanticContext({
   const normalizedContextPaths = [...new Set(requestedContext.map(context => context.path))].sort();
 
   const deletedSources = new Map();
-  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths, deletedSources, requiredSourceLimit);
+  const siblingInventory = await siblingDirectoryInventory(root, normalizedChangedPaths, deletedSources, requiredSourceLimit, delivery);
   const paths = [...new Set([
     ...await inventoryPaths(root, [...normalizedChangedPaths, ...normalizedContextPaths]),
     ...siblingInventory.flatMap(inventory => inventory.files),
@@ -683,10 +697,15 @@ export async function captureSemanticContext({
     const changedSourceLimit = recoverWholeSource ? requiredSourceLimit : sourceByteLimit;
     const result = await readProjectText(root, path, changedSourceLimit);
     if (result.missing) {
-      const cachedSource = previousSource(previousContext, path);
+      // Cite true delivery deletions from the merge base, not a transient earlier request.
+      let cachedSource;
+      if (!delivery?.deletedPaths?.includes(path)) {
+        cachedSource = previousSource(previousContext, path);
+      }
       const priorSource = cachedSource === undefined
         ? (deletedSources.has(path) ? deletedSources.get(path) : await deletedProjectSource(root, path, changedSourceLimit, {
           identifyOversized: !legacyRequest,
+          delivery,
         }))
         : { ...cachedSource, oversized: Buffer.byteLength(cachedSource.content) > changedSourceLimit };
       if (!priorSource) {

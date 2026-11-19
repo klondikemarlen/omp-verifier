@@ -127,12 +127,28 @@ for (const change of ["expanded", "narrowed", "automatic", "source limit", "reco
     const prepared = await prepareSemanticEvaluation(initialOptions);
     const accepted = await complete(options, prepared);
     let changedOptions = { ...options, reuseExisting: true };
-    if (change === "expanded") changedOptions.changedPaths = ["src/helper.js", "src/caller.js"];
-    else if (change === "automatic") changedOptions.automaticScope = { packageDirectory: join(root, "plugins"), delivery: { baseRef: "HEAD" } };
-    else if (change === "source limit") changedOptions.maxSourceBytes = 32_000;
-    else if (change === "recovery policy") changedOptions.sourceRecovery = RECOVERY;
-    else if (change === "context selectors") changedOptions.contextPaths = ["src/caller.js#L1-L1"];
-    else if (change === "provider path") {
+    if (change === "expanded") {
+      changedOptions.changedPaths = ["src/helper.js", "src/caller.js"];
+    } else if (change === "automatic") {
+      const git = (...args) => execFileSync("git", ["-C", root, ...args]);
+      git("init", "-q");
+      git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "--allow-empty", "-qm", "baseline");
+      const delivery = await captureDeliveryScope({
+        repositoryRoot: root,
+        baseRef: "HEAD",
+        candidatePaths: options.changedPaths,
+      });
+      changedOptions.automaticScope = {
+        packageDirectory: join(root, "plugins"),
+        delivery,
+      };
+    } else if (change === "source limit") {
+      changedOptions.maxSourceBytes = 32_000;
+    } else if (change === "recovery policy") {
+      changedOptions.sourceRecovery = RECOVERY;
+    } else if (change === "context selectors") {
+      changedOptions.contextPaths = ["src/caller.js#L1-L1"];
+    } else if (change === "provider path") {
       const manifestPath = join(packagePath, "alternate.json");
       await writeFile(manifestPath, await readFile(options.check.manifestPath));
       changedOptions.check = { ...options.check, manifestPath };
@@ -342,7 +358,18 @@ test("when one check needs fresh proof, unrelated check state remains intact", a
   assert.equal(await readFile(unrelatedPath, "utf8"), unrelatedState);
 });
 
-for (const difference of ["incidental metadata", "base", "merge base", "base reference", "selected paths", "provider directory", "work level", "manual scope"]) {
+for (const difference of [
+  "incidental metadata",
+  "base",
+  "merge base",
+  "base reference",
+  "selected paths",
+  "eligible lines",
+  "whole-file selection",
+  "provider directory",
+  "work level",
+  "manual scope",
+]) {
   test(`when automatic ${difference} changes, reuse depends on selected evidence and delivery base rather than incidental metadata`, async t => {
     // Arrange
     const { root, options } = await fixture(t);
@@ -365,13 +392,27 @@ for (const difference of ["incidental metadata", "base", "merge base", "base ref
     };
     const nextScope = { ...automaticScope, delivery: nextDelivery };
     const nextOptions = { ...options, reuseExisting: true, automaticScope: nextScope };
-    if (difference === "base") nextDelivery.baseCommit = git("rev-parse", "HEAD");
-    else if (difference === "merge base") nextDelivery.mergeBaseCommit = git("rev-parse", "HEAD");
-    else if (difference === "base reference") nextDelivery.baseRef = "HEAD~2";
-    else if (difference === "selected paths") nextOptions.changedPaths = ["src/helper.js", "src/caller.js"];
-    else if (difference === "provider directory") nextScope.packageDirectory = join(root, "other-plugins");
-    else if (difference === "work level") nextScope.workLevel = "quick-tweak";
-    else if (difference === "manual scope") delete nextOptions.automaticScope;
+    if (difference === "base") {
+      nextDelivery.baseCommit = git("rev-parse", "HEAD");
+    } else if (difference === "merge base") {
+      nextDelivery.mergeBaseCommit = git("rev-parse", "HEAD");
+    } else if (difference === "base reference") {
+      nextDelivery.baseRef = "HEAD~2";
+    } else if (difference === "selected paths") {
+      nextOptions.changedPaths = ["src/helper.js", "src/caller.js"];
+    } else if (difference === "eligible lines") {
+      nextDelivery.lineRanges = {
+        "src/helper.js": [[1, 2]],
+      };
+    } else if (difference === "whole-file selection") {
+      nextDelivery.wholeFilePaths = ["src/helper.js"];
+    } else if (difference === "provider directory") {
+      nextScope.packageDirectory = join(root, "other-plugins");
+    } else if (difference === "work level") {
+      nextScope.workLevel = "quick-tweak";
+    } else if (difference === "manual scope") {
+      delete nextOptions.automaticScope;
+    }
 
     // Act
     const result = await prepareSemanticEvaluation(nextOptions);
