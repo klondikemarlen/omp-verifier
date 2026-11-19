@@ -5,7 +5,50 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import verifierPlugin from "#root/omp-plugin/index.js";
 import { runVerificationCheck } from "#root/omp-plugin/verifications.js";
+
+test("when OMP is the host executable, closeout reports the coordinator's receipt finding", async context => {
+  // Arrange
+  const agentDir = await mkdtemp(join(tmpdir(), "verifier-closeout-host-"));
+  context.after(() => rm(agentDir, {
+    recursive: true,
+    force: true,
+  }));
+  let verifier;
+  await verifierPlugin({
+    pi: {
+      getAgentDir: () => agentDir,
+    },
+    registerCommand(_name, command) {
+      verifier = command;
+    },
+    on() {},
+    setLabel() {},
+    registerMessageRenderer() {},
+  });
+  const originalExecutable = process.execPath;
+  context.after(() => {
+    process.execPath = originalExecutable;
+  });
+  process.execPath = "not-a-node-interpreter";
+  let message;
+  const ctx = {
+    cwd: agentDir,
+    ui: {
+      notify(text) {
+        message = text;
+      },
+    },
+  };
+
+  // Act
+  await verifier.handler("closeout verify missing.json", ctx);
+
+  // Assert
+  assert.match(message, /BLOCKED verifier:resource-closeout/);
+  assert.match(message, /outside private closeout storage/);
+});
 
 test("when OMP has a non-Node executable, runs verification checks with Node", async () => {
   // Arrange

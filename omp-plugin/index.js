@@ -33,7 +33,7 @@ const execute = promisify(execFile);
 
 function executeRuntimeCommand(agentDir, cwd, args) {
   const paths = runtimePaths(agentDir);
-  return execute(process.execPath, [paths.launcher, ...args], {
+  return execute("node", [paths.launcher, ...args], {
     cwd,
     timeout: 600_000,
     maxBuffer: 1_000_000,
