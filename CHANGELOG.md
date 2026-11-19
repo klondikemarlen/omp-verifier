@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.2 - 2026-11-19
+
+- Expand runtime generation guards and control-flow blocks for readability without changing activation, locking, or request dispatch behavior.
+
 ## 1.14.1 - 2026-11-19
 
 - Route semantic command help through the stable launcher without requiring a review request.
