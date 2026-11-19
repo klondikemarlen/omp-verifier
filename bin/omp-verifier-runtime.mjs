@@ -106,6 +106,10 @@ export async function collectGenerations(root) {
 
 function requestedGeneration(root, args) {
   if (!["review", "evaluate", "diagnostics"].includes(args[0])) return undefined;
+  for (const argument of args) {
+    if (argument === "--") break;
+    if (argument === "--help" || argument === "-h") return undefined;
+  }
   if (!args[1]) throw new Error("A review operation requires its request path");
   const request = resolve(args[1]);
   const parts = relative(join(root, "reviews"), request).split("/");

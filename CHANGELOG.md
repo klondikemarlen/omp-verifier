@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.14.1 - 2026-11-19
+
+- Route semantic command help through the stable launcher without requiring a review request.
+- Refresh installed launcher code atomically while preserving the active verification generation.
+
 ## 1.14.0 - 2026-11-19
 
 - Provide generated command-local CLI help and reject irrelevant options before execution.
