@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+import { registerCloseoutTool } from "#root/omp-plugin/closeout-tool.js";
 import {
   buildGlobalVerifierStatus,
   installGlobalVerifier,
@@ -30,14 +31,18 @@ const SUBCOMMANDS = [
 ];
 const execute = promisify(execFile);
 
-async function runtimeCommand(agentDir, cwd, args) {
+function executeRuntimeCommand(agentDir, cwd, args) {
   const paths = runtimePaths(agentDir);
+  return execute(process.execPath, [paths.launcher, ...args], {
+    cwd,
+    timeout: 600_000,
+    maxBuffer: 1_000_000,
+  });
+}
+
+async function runtimeCommand(agentDir, cwd, args) {
   try {
-    const result = await execute(process.execPath, [paths.launcher, ...args], {
-      cwd,
-      timeout: 600_000,
-      maxBuffer: 1_000_000,
-    });
+    const result = await executeRuntimeCommand(agentDir, cwd, args);
     return result.stdout;
   } catch (error) {
     return error.stdout || `BLOCKED verifier:generation\n${error.stderr || error.message}`;
@@ -139,8 +144,43 @@ function completeSubcommands(argumentPrefix) {
     .map(command => ({ value: `${command.name} `, label: command.name, description: command.description }));
 }
 
+async function verifyCloseoutReceipt(agentDir, repositoryRoot, receiptPath) {
+  const args = [
+    "closeout",
+    "verify",
+    "--reporter",
+    "json",
+    "--",
+    receiptPath,
+  ];
+  let output;
+  let exitCode = 0;
+  try {
+    const result = await executeRuntimeCommand(agentDir, repositoryRoot, args);
+    output = result.stdout;
+  } catch (error) {
+    if (error.code !== 1 || !error.stdout || error.stderr) {
+      throw error;
+    }
+    exitCode = error.code;
+    output = error.stdout;
+  }
+  const results = JSON.parse(output);
+  if (results.length !== 1 || results[0]?.id !== "verifier:resource-closeout") {
+    throw new Error("Installed verifier did not return the requested resource check");
+  }
+  if ((results[0].status === "PASS") !== (exitCode === 0)) {
+    throw new Error("Closeout verdict disagrees with verifier exit status");
+  }
+  return results[0];
+}
+
 export default async function verifierPlugin(pi) {
   pi.setLabel("Verifier");
+  if (pi.registerTool) {
+    const agentDir = pi.pi.getAgentDir();
+    registerCloseoutTool(pi, (root, receipt) => verifyCloseoutReceipt(agentDir, root, receipt));
+  }
   // Hide only the UI card; display:false also removes this metadata from advisor history.
   pi.registerMessageRenderer("verifier-work-intent", () => ({
     render: () => [],
@@ -194,7 +234,7 @@ export default async function verifierPlugin(pi) {
       systemPrompt: [
         ...event.systemPrompt,
         `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. Leave the handoff for the verifier to recover, freshly check, and release; preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
-        `Verifier resource closeout: when this task creates or disposes temporary resources, declare the exact owned and protected inventory, authorization and intended dispositions before cleanup. Run node ${COORDINATOR} closeout prepare <declaration.json> in the surviving primary checkout; use version 1, taskId, repositoryRoot, authorization and resources as documented in the installed Verifier reference. Keep cleanup with the authorized project wrapper. At final closeout after cleanup or retention, emit a standalone line "Verifier closeout: <receiptPath>" using the returned receipt. This is a declared check trigger even for cleanup-only work; the named verifier independently checks fresh final state. Preparation, source PASS and successful cleanup commands are not disposition PASS. Do not alter receipts or delete protected/uncertain resources to clear a finding.`,
+        `Verifier resource closeout: before cleanup, declare exact owned and protected resources, authorization and intended dispositions; run node ${COORDINATOR} closeout prepare <declaration.json> in the surviving checkout. Use the installed Verifier reference for the version 1 declaration. Keep cleanup with the authorized project wrapper. After the final cleanup or retention decision, call verifier_closeout with that repositoryRoot and all exact receiptPaths returned by prepare for it. This tool call is the primary's final handoff to the named verifier, including for cleanup-only work. Report the primary result and any required action in plain language; do not repeat receipt paths. The tool does not establish an independent verdict. If the tool is unavailable, use closeout verify and emit a standalone "Verifier closeout: <receiptPath>" for each receipt. Preparation, source PASS, and successful cleanup commands are not disposition PASS. Do not alter receipts or delete protected or uncertain resources to clear a finding.`,
       ],
     };
   });
