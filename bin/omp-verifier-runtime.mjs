@@ -43,7 +43,9 @@ export async function withRuntimeLock(root, action) {
       lock.once("error", reject);
       lock.once("exit", accept);
     });
-    if (status !== 0) throw new Error("Generation lock unavailable; install flock or finish the owning operation");
+    if (status !== 0) {
+      throw new Error("Generation lock unavailable; install flock or finish the owning operation");
+    }
     return await action();
   } finally {
     await handle.close();
@@ -51,7 +53,9 @@ export async function withRuntimeLock(root, action) {
 }
 
 export function generationDirectory(root, id) {
-  if (typeof id !== "string" || !GENERATION_ID.test(id)) throw new Error("Invalid verifier generation identity");
+  if (typeof id !== "string" || !GENERATION_ID.test(id)) {
+    throw new Error("Invalid verifier generation identity");
+  }
   return join(root, "generations", id);
 }
 
@@ -59,7 +63,9 @@ export async function activeGeneration(root) {
   const pointer = await readJson(join(root, "active.json"));
   const directory = generationDirectory(root, pointer.id);
   const generation = await readJson(join(directory, "generation.json"));
-  if (generation.id !== pointer.id || generation.protocol !== 1) throw new Error("Incompatible verifier generation");
+  if (generation.id !== pointer.id || generation.protocol !== 1) {
+    throw new Error("Incompatible verifier generation");
+  }
   return generation;
 }
 
@@ -67,19 +73,27 @@ async function directories(path) {
   try {
     return await readdir(path, { withFileTypes: true });
   } catch (error) {
-    if (error.code === "ENOENT") return [];
+    if (error.code === "ENOENT") {
+      return [];
+    }
     throw error;
   }
 }
 
 async function pendingReviews(root, id) {
   for (const project of await directories(join(root, "reviews", id))) {
-    if (!project.isDirectory()) return true;
+    if (!project.isDirectory()) {
+      return true;
+    }
     const states = join(root, "reviews", id, project.name, "states");
     for (const entry of await directories(states)) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) return true;
+      if (!entry.isFile() || !entry.name.endsWith(".json")) {
+        return true;
+      }
       const state = await readJson(join(states, entry.name));
-      if (state.consumed !== true) return true;
+      if (state.consumed !== true) {
+        return true;
+      }
     }
   }
   return false;
@@ -90,14 +104,20 @@ export async function collectGenerations(root) {
   const active = await activeGeneration(root);
   const removed = [];
   for (const entry of await directories(join(root, "generations"))) {
-    if (!entry.isDirectory() || !GENERATION_ID.test(entry.name) || entry.name === active.id) continue;
+    if (!entry.isDirectory() || !GENERATION_ID.test(entry.name) || entry.name === active.id) {
+      continue;
+    }
     const directory = generationDirectory(root, entry.name);
     const generation = await readJson(join(directory, "generation.json"));
-    if (!generation.activated) continue;
+    if (!generation.activated) {
+      continue;
+    }
     // An abandoned lease can own surviving children. Retain it for explicit
     // operator recovery rather than guessing from a dead or reused PID.
     const leases = await directories(join(directory, "leases"));
-    if (leases.length || await pendingReviews(root, entry.name)) continue;
+    if (leases.length || await pendingReviews(root, entry.name)) {
+      continue;
+    }
     await rm(directory, { recursive: true });
     removed.push(entry.name);
   }
@@ -105,12 +125,20 @@ export async function collectGenerations(root) {
 }
 
 function requestedGeneration(root, args) {
-  if (!["review", "evaluate", "diagnostics"].includes(args[0])) return undefined;
-  for (const argument of args) {
-    if (argument === "--") break;
-    if (argument === "--help" || argument === "-h") return undefined;
+  if (!["review", "evaluate", "diagnostics"].includes(args[0])) {
+    return undefined;
   }
-  if (!args[1]) throw new Error("A review operation requires its request path");
+  for (const argument of args) {
+    if (argument === "--") {
+      break;
+    }
+    if (argument === "--help" || argument === "-h") {
+      return undefined;
+    }
+  }
+  if (!args[1]) {
+    throw new Error("A review operation requires its request path");
+  }
   const request = resolve(args[1]);
   const parts = relative(join(root, "reviews"), request).split("/");
   if (parts.length !== 4 || !GENERATION_ID.test(parts[0]) || !/^[a-f0-9]{64}$/.test(parts[1]) || parts[2] !== "requests") {
@@ -129,7 +157,9 @@ export async function dispatchGeneration(root, args) {
     const id = requested ?? active.id;
     const directory = generationDirectory(root, id);
     const generation = await readJson(join(directory, "generation.json"));
-    if (generation.id !== id || generation.protocol !== 1 || !generation.activated) throw new Error("Unavailable verifier generation");
+    if (generation.id !== id || generation.protocol !== 1 || !generation.activated) {
+      throw new Error("Unavailable verifier generation");
+    }
     const coordinator = join(directory, "node_modules", "omp-verifier", "bin", "omp-verifier.js");
     const cache = join(root, "reviews", id);
     const launcher = join(dirname(root), "omp-verifier.mjs");
