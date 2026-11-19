@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, link, lstat, mkdir, readFile, readdir, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, readFile, readdir, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -321,11 +321,6 @@ export async function activateGeneration(id, { agentDir, onlyIfAbsent = false } 
 
 export async function installRuntime(agentDir) {
   const paths = runtimePaths(agentDir);
-  try {
-    return await activeGeneration(paths.root);
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
   const parent = dirname(paths.root);
   await mkdir(parent, { recursive: true, mode: 0o700 });
   const parentInfo = await lstat(parent);
@@ -333,14 +328,30 @@ export async function installRuntime(agentDir) {
     throw new Error(`Runtime parent must be owned by the current user and not writable by others: ${parent}`);
   }
   const launcherSource = await readFile(new URL("../bin/omp-verifier-runtime.mjs", import.meta.url));
-  const temporary = `${paths.launcher}.${randomUUID()}.tmp`;
-  await writeFile(temporary, launcherSource, { flag: "wx", mode: 0o700 });
+  let installedSource;
   try {
-    await link(temporary, paths.launcher);
+    installedSource = await readFile(paths.launcher);
   } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  } finally {
-    await rm(temporary, { force: true });
+    if (error.code !== "ENOENT") throw error;
+  }
+  if (!installedSource?.equals(launcherSource)) {
+    const temporary = `${paths.launcher}.${randomUUID()}.tmp`;
+    await writeFile(temporary, launcherSource, {
+      flag: "wx",
+      mode: 0o700,
+    });
+    try {
+      await rename(temporary, paths.launcher);
+    } finally {
+      await rm(temporary, {
+        force: true,
+      });
+    }
+  }
+  try {
+    return await activeGeneration(paths.root);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
   }
   const prepared = await prepareGeneration({ agentDir });
   return activateGeneration(prepared.id, { agentDir, onlyIfAbsent: true });

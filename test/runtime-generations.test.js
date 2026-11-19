@@ -179,6 +179,33 @@ test("when a replacement activates, the same launcher adopts it for subsequent w
   assert.equal(results[0].generation.id, candidate.id);
 });
 
+test("when semantic command help is requested, the launcher does not require a review identity", async context => {
+  // Arrange
+  const current = await fixture(context);
+
+  // Act / Assert
+  for (const command of ["review", "evaluate", "diagnostics"]) {
+    for (const flag of ["--help", "-h"]) {
+      const output = await current.cli([command, flag]);
+      assert.match(output, new RegExp(`Usage: omp-verifier ${command}`));
+    }
+  }
+});
+
+test("when installation refreshes an obsolete launcher, command help works without replacing its active generation", async context => {
+  // Arrange
+  const current = await fixture(context);
+  await writeFile(current.paths.launcher, "process.exit(42);\n");
+
+  // Act
+  const installed = await installRuntime(current.agentDir);
+  const output = await current.cli(["review", "--help"]);
+
+  // Assert
+  assert.match(output, /Usage: omp-verifier review/);
+  assert.equal(installed.id, current.initial.id);
+});
+
 test("when a replacement activates during semantic review, evaluation and reporting retain the original standard", async context => {
   // Arrange
   const current = await fixture(context);
