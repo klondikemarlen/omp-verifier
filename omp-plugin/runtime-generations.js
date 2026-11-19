@@ -35,7 +35,9 @@ export function runtimePaths(agentDir = process.env.PI_CODING_AGENT_DIR || join(
 
 async function packageEntries(directory, coordinator) {
   const entries = await readdir(directory);
-  if (!coordinator) return entries.filter(name => name !== "node_modules" && name !== ".git").sort();
+  if (!coordinator) {
+    return entries.filter(name => name !== "node_modules" && name !== ".git").sort();
+  }
   const manifest = await readJson(join(directory, "package.json"));
   const names = ["package.json", ...manifest.files.map(name => name.replace(/\/$/, ""))];
   if (names.some(name => name.includes("*") || name.includes("..") || isAbsolute(name))) {
@@ -46,7 +48,9 @@ async function packageEntries(directory, coordinator) {
 
 async function fileDigest(path) {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk);
+  for await (const chunk of createReadStream(path)) {
+    hash.update(chunk);
+  }
   return hash.digest("hex");
 }
 
@@ -58,7 +62,9 @@ async function inventory(directory, names) {
     const info = await lstat(path);
     if (info.isDirectory()) {
       for (const child of (await readdir(path)).sort()) {
-        if (child !== "node_modules" && child !== ".git") await visit(join(name, child));
+        if (child !== "node_modules" && child !== ".git") {
+          await visit(join(name, child));
+        }
       }
     } else if (info.isSymbolicLink()) {
       const target = await readlink(path);
@@ -75,7 +81,9 @@ async function inventory(directory, names) {
       throw new Error(`Unsupported artifact file: ${path}`);
     }
   }
-  for (const name of names.sort()) await visit(name);
+  for (const name of names.sort()) {
+    await visit(name);
+  }
   return records;
 }
 
@@ -84,13 +92,18 @@ async function copyInventory(source, destination, records) {
   for (const [name, kind, target] of records) {
     const output = join(destination, name);
     await mkdir(dirname(output), { recursive: true, mode: 0o700 });
-    if (kind === "link") await symlink(target, output);
-    else await copyFile(join(source, name), output);
+    if (kind === "link") {
+      await symlink(target, output);
+    } else {
+      await copyFile(join(source, name), output);
+    }
   }
 }
 
 async function dependencyDirectory(source, name, optional) {
-  if (!validPackageName(name)) throw new Error(`Invalid dependency name: ${name}`);
+  if (!validPackageName(name)) {
+    throw new Error(`Invalid dependency name: ${name}`);
+  }
   let current = source;
   for (;;) {
     const candidate = join(current, "node_modules", name);
@@ -98,19 +111,27 @@ async function dependencyDirectory(source, name, optional) {
       await lstat(join(candidate, "package.json"));
       return await realpath(candidate);
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
     }
     const parent = dirname(current);
-    if (parent === current) break;
+    if (parent === current) {
+      break;
+    }
     current = parent;
   }
-  if (!optional) throw new Error(`Required artifact dependency ${name} is unavailable from ${source}`);
+  if (!optional) {
+    throw new Error(`Required artifact dependency ${name} is unavailable from ${source}`);
+  }
   return undefined;
 }
 
 async function copyPackage(source, directory, copied, coordinator = false) {
   source = await realpath(source);
-  if (copied.has(source)) return copied.get(source).destination;
+  if (copied.has(source)) {
+    return copied.get(source).destination;
+  }
   const key = createHash("sha256").update(source).digest("hex");
   const destination = join(directory, "packages", key);
   const names = await packageEntries(source, coordinator);
@@ -136,7 +157,9 @@ async function copyPackage(source, directory, copied, coordinator = false) {
   for (const name of Object.keys(dependencies).sort()) {
     const optional = Object.hasOwn(manifest.optionalDependencies ?? {}, name) || manifest.peerDependenciesMeta?.[name]?.optional === true;
     const dependency = await dependencyDirectory(source, name, optional);
-    if (!dependency) continue;
+    if (!dependency) {
+      continue;
+    }
     const target = await copyPackage(dependency, directory, copied);
     const link = join(destination, "node_modules", name);
     await mkdir(dirname(link), { recursive: true, mode: 0o700 });
@@ -151,20 +174,27 @@ async function generationInventory(directory) {
   const records = [];
   async function visit(path) {
     for (const name of (await readdir(path)).sort()) {
-      if (path === directory && ["generation.json", "leases"].includes(name)) continue;
+      if (path === directory && ["generation.json", "leases"].includes(name)) {
+        continue;
+      }
       const file = join(path, name);
       const info = await lstat(file);
       const key = relative(directory, file);
-      if (info.isDirectory()) await visit(file);
-      else if (info.isSymbolicLink()) {
+      if (info.isDirectory()) {
+        await visit(file);
+      } else if (info.isSymbolicLink()) {
         const target = await readlink(file);
         const resolved = relative(directory, resolve(dirname(file), target));
-        if (isAbsolute(target) || resolved.startsWith("..")) throw new Error("Generation contains an external symlink");
+        if (isAbsolute(target) || resolved.startsWith("..")) {
+          throw new Error("Generation contains an external symlink");
+        }
         records.push([key, "link", target]);
       } else if (info.isFile()) {
         const digest = await fileDigest(file);
         records.push([key, digest, info.mode & 0o111]);
-      } else throw new Error("Generation contains a non-artifact file");
+      } else {
+        throw new Error("Generation contains a non-artifact file");
+      }
     }
   }
   await visit(directory);
@@ -181,14 +211,22 @@ async function providerRegistry(packageDirectory) {
   try {
     contents = await readFile(path, "utf8");
   } catch (error) {
-    if (error.code === "ENOENT") return null;
+    if (error.code === "ENOENT") {
+      return null;
+    }
     throw error;
   }
   const registry = JSON.parse(contents);
-  if (registry.name !== "omp-plugins") return contents;
+  if (registry.name !== "omp-plugins") {
+    return contents;
+  }
   for (const name of Object.keys(registry.dependencies ?? {})) {
-    if (!validPackageName(name)) throw new Error(`Invalid registered package name: ${name}`);
-    if (name === "omp-verifier") continue;
+    if (!validPackageName(name)) {
+      throw new Error(`Invalid registered package name: ${name}`);
+    }
+    if (name === "omp-verifier") {
+      continue;
+    }
     await readJson(join(packageDirectory, name, "package.json"));
   }
   return contents;
@@ -206,10 +244,14 @@ export async function prepareGeneration({ agentDir, packageDirectory, coordinato
   try {
     const registryBefore = await providerRegistry(providersDirectory);
     const catalog = await discoverVerificationChecks({ packageDirectory: providersDirectory });
-    if (catalog.blockedResults.length) throw new Error(JSON.stringify(catalog.blockedResults));
+    if (catalog.blockedResults.length) {
+      throw new Error(JSON.stringify(catalog.blockedResults));
+    }
     const providers = new Map();
     for (const check of catalog.checks) {
-      if (!validPackageName(check.packageName)) throw new Error("Invalid verification provider package name");
+      if (!validPackageName(check.packageName)) {
+        throw new Error("Invalid verification provider package name");
+      }
       if (providers.has(check.packageName) && providers.get(check.packageName) !== check.packagePath) {
         throw new Error(`Multiple installations declare provider ${check.packageName}`);
       }
@@ -230,10 +272,14 @@ export async function prepareGeneration({ agentDir, packageDirectory, coordinato
     }
     for (const [source, captured] of copied) {
       const current = await inventory(source, captured.names);
-      if (JSON.stringify(current) !== captured.inventory) throw new Error(`Provider changed while staging: ${source}`);
+      if (JSON.stringify(current) !== captured.inventory) {
+        throw new Error(`Provider changed while staging: ${source}`);
+      }
     }
     const registryAfter = await providerRegistry(providersDirectory);
-    if (registryBefore !== registryAfter) throw new Error("Plugin registration changed while preparing the generation");
+    if (registryBefore !== registryAfter) {
+      throw new Error("Plugin registration changed while preparing the generation");
+    }
     const dependencies = Object.fromEntries([...providers.keys()].map(name => [name, "snapshot"]));
     const sourcePackagePath = resolve(coordinatorPackage);
     const providerPackageDirectory = resolve(providersDirectory);
@@ -269,7 +315,9 @@ export async function prepareGeneration({ agentDir, packageDirectory, coordinato
 async function validateGeneration(root, generation) {
   const directory = generationDirectory(root, generation.id);
   const digest = await generationInventory(directory);
-  if (digest !== generation.identity.digest) throw new Error("Generation artifacts changed after preparation");
+  if (digest !== generation.identity.digest) {
+    throw new Error("Generation artifacts changed after preparation");
+  }
   const coordinator = join(directory, "node_modules", "omp-verifier", "bin", "omp-verifier.js");
   const packageDirectory = join(directory, "node_modules");
   const environment = {
@@ -287,7 +335,9 @@ async function validateGeneration(root, generation) {
   }
   const captured = await discoverVerificationChecks({ packageDirectory });
   for (const check of captured.checks) {
-    if (check.mode === "agentic") continue;
+    if (check.mode === "agentic") {
+      continue;
+    }
     await execute(process.execPath, ["--check", check.entryPath], {
       timeout: 30_000,
     });
@@ -307,7 +357,9 @@ export async function activateGeneration(id, { agentDir, onlyIfAbsent = false } 
       try {
         return await activeGeneration(paths.root);
       } catch (error) {
-        if (error.code !== "ENOENT") throw error;
+        if (error.code !== "ENOENT") {
+          throw error;
+        }
       }
     }
     generation.activated = true;
@@ -332,7 +384,9 @@ export async function installRuntime(agentDir) {
   try {
     installedSource = await readFile(paths.launcher);
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
   }
   if (!installedSource?.equals(launcherSource)) {
     const temporary = `${paths.launcher}.${randomUUID()}.tmp`;
@@ -351,7 +405,9 @@ export async function installRuntime(agentDir) {
   try {
     return await activeGeneration(paths.root);
   } catch (error) {
-    if (error.code !== "ENOENT") throw error;
+    if (error.code !== "ENOENT") {
+      throw error;
+    }
   }
   const prepared = await prepareGeneration({ agentDir });
   return activateGeneration(prepared.id, { agentDir, onlyIfAbsent: true });
@@ -359,7 +415,9 @@ export async function installRuntime(agentDir) {
 
 export async function generationCommand(args, agentDir) {
   const [action = "status", id] = args;
-  if (args.length > 2) throw new Error("Too many generation arguments");
+  if (args.length > 2) {
+    throw new Error("Too many generation arguments");
+  }
   const paths = runtimePaths(agentDir);
   if (process.env.OMP_VERIFIER_RUNTIME_ROOT && action === "prepare" && !id) {
     const current = await activeGeneration(paths.root);
@@ -369,9 +427,21 @@ export async function generationCommand(args, agentDir) {
       packageDirectory: current.packageDirectory,
     });
   }
-  if (action === "prepare" && !id) return prepareGeneration({ agentDir });
-  if (action === "activate" && id) return activateGeneration(id, { agentDir });
-  if (action === "status" && !id) return activeGeneration(paths.root);
-  if (action === "collect" && !id) return withRuntimeLock(paths.root, () => collectGenerations(paths.root));
+  if (action === "prepare" && !id) {
+    return prepareGeneration({
+      agentDir,
+    });
+  }
+  if (action === "activate" && id) {
+    return activateGeneration(id, {
+      agentDir,
+    });
+  }
+  if (action === "status" && !id) {
+    return activeGeneration(paths.root);
+  }
+  if (action === "collect" && !id) {
+    return withRuntimeLock(paths.root, () => collectGenerations(paths.root));
+  }
   throw new Error("Use generation prepare | activate <id> | status | collect");
 }
