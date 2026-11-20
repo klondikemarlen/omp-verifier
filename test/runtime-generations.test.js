@@ -213,7 +213,7 @@ test("when a provider is reinstalled during two checks, both retain their origin
   assert.deepEqual(versions, ["1.0.0", "1.0.0"]);
 });
 
-test("after reinstall, an opted-in provider uses only its selected dependencies", async context => {
+test("when a provider is reinstalled, its checks use only the selected dependency graph", async context => {
   // Arrange
   const current = await fixture(context, {
     verificationDependencies: ["probe-dependency", "probe-optional"],
@@ -248,11 +248,16 @@ test("after reinstall, an opted-in provider uses only its selected dependencies"
 });
 
 test("when a provider omits dependency selection, its unused runtime dependency is still captured", async context => {
+  // Arrange
   const current = await fixture(context);
 
   const directory = generationDirectory(current.paths.root, current.initial.id);
   const unusedManifest = join(directory, "node_modules", "probe-provider", "node_modules", "probe-unused", "package.json");
-  assert.equal(JSON.parse(await readFile(unusedManifest, "utf8")).name, "probe-unused");
+  // Act
+  const manifest = JSON.parse(await readFile(unusedManifest, "utf8"));
+
+  // Assert
+  assert.equal(manifest.name, "probe-unused");
 });
 
 test("when an opted-in provider is also a dependency, its consumer can use the full dependency graph", async context => {
@@ -324,6 +329,7 @@ process.stdout.write(JSON.stringify({
 });
 
 test("when provider dependency selection is invalid, generation preparation rejects it", async context => {
+  // Arrange
   const current = await fixture(context);
   const manifestPath = join(current.providerPath, "package.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
@@ -336,9 +342,11 @@ test("when provider dependency selection is invalid, generation preparation reje
 
   for (const declaration of invalidDeclarations) {
     await context.test(JSON.stringify(declaration), async () => {
+      // Act
       manifest.omp.verificationDependencies = declaration;
       await writeJson(manifestPath, manifest);
 
+      // Assert
       await assert.rejects(prepareGeneration({
         agentDir: current.agentDir,
       }), /verificationDependencies/);
