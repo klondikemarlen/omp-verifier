@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, open, readFile, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,6 +9,7 @@ import test from "node:test";
 import { prepareResourceCloseout, verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
 
 const cli = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
+const defaultContentLimit = 64 * 1024 ** 2;
 
 async function fixture(context) {
   const root = await mkdtemp(join(tmpdir(), "verifier-closeout-"));
@@ -115,6 +116,145 @@ test("when a protected resource changes, retention fails instead of certifying i
   assert.equal(unchanged.status, "PASS");
   assert.equal(unchanged.dispositions[0].disposition, "intentionally retained");
   assert.equal(changed.status, "FAIL");
+});
+
+test("when a frozen runtime exceeds the default byte limit, explicit retention observes changed content at the same size", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const runtimePath = join(current.root, "frozen-runtime");
+  const libraryPath = join(runtimePath, "native.so");
+  const timestamp = new Date("2026-01-01T00:00:00Z");
+  await mkdir(runtimePath);
+  await writeFile(libraryPath, "");
+  await truncate(libraryPath, defaultContentLimit + 1);
+  await utimes(libraryPath, timestamp, timestamp);
+  const retainedRuntime = resource(runtimePath, {
+    id: "frozen-runtime",
+    ownership: "protected",
+    disposition: "retained",
+    reason: "Frozen runtime is still needed",
+  });
+  const optedInRuntime = {
+    ...retainedRuntime,
+    largeArtifact: true,
+  };
+
+  // Act
+  const ordinary = await current.prepare([retainedRuntime]);
+  const prepared = await current.prepare([optedInRuntime]);
+
+  assert.equal(prepared.status, "PREPARED", prepared.evidence);
+
+  const unchanged = await current.verify(prepared.receiptPath);
+  const library = await open(libraryPath, "r+");
+  try {
+    await library.write("!", defaultContentLimit, "utf8");
+  } finally {
+    await library.close();
+  }
+  await utimes(libraryPath, timestamp, timestamp);
+  const changed = await current.verify(prepared.receiptPath);
+
+  // Assert
+  assert.equal(ordinary.status, "BLOCKED");
+  assert.match(ordinary.evidence, /67108864 content bytes/);
+  assert.equal(unchanged.status, "PASS");
+  assert.equal(unchanged.dispositions[0].disposition, "intentionally retained");
+  assert.equal(changed.status, "FAIL");
+  assert.match(changed.evidence, /retained resource is missing or changed/);
+});
+
+test("when an authorized disposable large artifact is removed, fresh verification reports it removed", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const path = join(current.root, "disposable-runtime.so");
+  await writeFile(path, "");
+  await truncate(path, defaultContentLimit + 1);
+  const disposableArtifact = resource(path, {
+    id: "disposable-artifact",
+    largeArtifact: true,
+  });
+  const prepared = await current.prepare([disposableArtifact]);
+  assert.equal(prepared.status, "PREPARED", prepared.evidence);
+
+  // Act
+  await rm(path);
+  const removed = await current.verify(prepared.receiptPath);
+
+  // Assert
+  assert.equal(removed.status, "PASS");
+  assert.equal(removed.dispositions[0].disposition, "removed");
+});
+
+test("when largeArtifact is supplied with anything other than true, preparation refuses it", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const path = join(current.root, "artifact");
+
+  // Act / Assert
+  for (const setting of [false, null, "true", 1024 ** 3]) {
+    const invalid = resource(path, {
+      largeArtifact: setting,
+    });
+    const result = await current.prepare([invalid]);
+    assert.equal(result.status, "BLOCKED", `largeArtifact: ${JSON.stringify(setting)}`);
+    assert.match(result.evidence, /largeArtifact/);
+    assert.equal(result.receiptPath, undefined);
+  }
+});
+
+test("when a Git resource opts into largeArtifact, preparation refuses the path-only setting", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const gitRef = resource(undefined, {
+    id: "disposable-ref",
+    kind: "git-ref",
+    ref: "refs/heads/disposable",
+    largeArtifact: true,
+  });
+
+  // Act
+  const result = await current.prepare([gitRef]);
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /largeArtifact/);
+  assert.equal(result.receiptPath, undefined);
+});
+
+test("when marked paths together exceed 1 GiB, preparation and verification both block", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const manifestPath = join(current.root, "manifest");
+  const libraryPath = join(current.root, "large-runtime.so");
+  await writeFile(manifestPath, "v1");
+  await writeFile(libraryPath, "");
+  const manifest = resource(manifestPath, {
+    id: "manifest",
+    disposition: "retained",
+    largeArtifact: true,
+  });
+  const library = resource(libraryPath, {
+    id: "library",
+    disposition: "retained",
+    largeArtifact: true,
+  });
+  const artifacts = [manifest, library];
+  const prepared = await current.prepare(artifacts);
+  assert.equal(prepared.status, "PREPARED", prepared.evidence);
+
+  // Act
+  // Put the two-byte manifest first so the second file crosses the limit before hashing.
+  await truncate(libraryPath, 1024 ** 3 - 1);
+  const verified = await current.verify(prepared.receiptPath);
+  const refused = await current.prepare(artifacts);
+
+  // Assert
+  assert.equal(verified.status, "BLOCKED");
+  assert.match(verified.evidence, /1073741824|1 GiB/);
+  assert.equal(refused.status, "BLOCKED");
+  assert.match(refused.evidence, /1073741824|1 GiB/);
+  assert.equal(refused.receiptPath, undefined);
 });
 
 test("when an inventory includes an absent path, closeout distinguishes already absent from removed", async context => {

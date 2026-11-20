@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, readdir, readlink, realpath, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, readlink, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -15,6 +15,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 const MAX_BYTES = 256_000;
 const MAX_ENTRIES = 4_096;
 const MAX_CONTENT_BYTES = 64 * 1024 * 1024;
+const MAX_LARGE_ARTIFACT_BYTES = 1024 ** 3;
+const MAX_LARGE_ARTIFACT_MS = 60 * 1000;
+const DEFAULT_BYTE_LIMIT = `Filesystem inventory exceeds ${MAX_CONTENT_BYTES} content bytes`;
+const LARGE_ARTIFACT_BYTE_LIMIT = `Large artifact inventory exceeds ${MAX_LARGE_ARTIFACT_BYTES} content bytes across marked paths`;
+const LARGE_ARTIFACT_TIME_LIMIT = `Large artifact inventory exceeded the ${MAX_LARGE_ARTIFACT_MS / 1000}-second observation limit across marked paths`;
 const CHECK_ID = "verifier:resource-closeout";
 
 function digest(value) {
@@ -59,6 +64,9 @@ function validateDeclaration(declaration) {
     }
     if (resource.disposableContents !== undefined && resource.disposableContents !== true) {
       throw new Error(`${resource.id}: disposableContents must be true when explicitly authorized`);
+    }
+    if (Object.hasOwn(resource, "largeArtifact") && (resource.kind !== "path" || resource.largeArtifact !== true)) {
+      throw new Error(`${resource.id}: largeArtifact must be true when supplied, and is only supported on path resources`);
     }
     if (resource.kind === "path") {
       absolutePath(resource.path, `${resource.id} path`);
@@ -121,12 +129,70 @@ async function privateDirectory(path) {
   }
 }
 
-async function pathInventory(path) {
+function sameObservedEntry(before, after) {
+  return before.ino === after.ino && before.dev === after.dev && before.size === after.size &&
+    before.mtimeMs === after.mtimeMs && before.ctimeMs === after.ctimeMs;
+}
+
+async function fingerprintFile(path, name, info, budget, signal) {
+  if (info.size > budget.remainingBytes) {
+    throw new Error(budget.byteLimitMessage);
+  }
+
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    signal?.throwIfAborted();
+    const opened = await file.stat();
+    signal?.throwIfAborted();
+    if (!opened.isFile() || !sameObservedEntry(info, opened)) {
+      throw new Error(`Filesystem entry changed during observation: ${name}`);
+    }
+
+    const hash = createHash("sha256");
+    // Probe for unexpected trailing data when there is room, without exceeding the shared read limit.
+    const readLimit = Math.min(info.size + 1, budget.remainingBytes);
+    let bytesRead = 0;
+    if (readLimit > 0) {
+      // A failed stream can have buffered bytes it never yielded. Refund only after a complete read.
+      budget.remainingBytes -= readLimit;
+      const stream = file.createReadStream({
+        start: 0,
+        end: readLimit - 1,
+        signal,
+      });
+      for await (const chunk of stream) {
+        signal?.throwIfAborted();
+        bytesRead += chunk.length;
+        if (bytesRead > info.size) {
+          throw new Error(`Filesystem entry exceeded its observed size during the read: ${name}`);
+        }
+
+        hash.update(chunk);
+      }
+      budget.remainingBytes += readLimit - bytesRead;
+    }
+
+    if (bytesRead !== info.size) {
+      throw new Error(`Filesystem entry ended before its observed size: ${name}`);
+    }
+
+    return hash.digest("hex");
+  } finally {
+    await file.close();
+  }
+}
+
+async function pathInventory(path, budget, signal) {
   const entries = [];
   let contentBytes = 0;
   async function visit(current, name) {
-    if (entries.length >= MAX_ENTRIES) throw new Error(`Filesystem inventory exceeds ${MAX_ENTRIES} entries`);
+    signal?.throwIfAborted();
+    if (entries.length >= MAX_ENTRIES) {
+      throw new Error(`Filesystem inventory exceeds ${MAX_ENTRIES} entries`);
+    }
+
     const info = await lstat(current);
+    signal?.throwIfAborted();
     let kind;
     let content;
     if (info.isSymbolicLink()) {
@@ -136,22 +202,28 @@ async function pathInventory(path) {
       kind = "directory";
     } else if (info.isFile()) {
       kind = "file";
+      content = await fingerprintFile(current, name, info, budget, signal);
       contentBytes += info.size;
-      if (contentBytes > MAX_CONTENT_BYTES) throw new Error(`Filesystem inventory exceeds ${MAX_CONTENT_BYTES} content bytes`);
-      const hash = createHash("sha256");
-      for await (const chunk of createReadStream(current)) hash.update(chunk);
-      content = hash.digest("hex");
     } else {
       throw new Error(`Unsupported filesystem entry: ${name}`);
     }
-    const after = await lstat(current);
-    if (info.ino !== after.ino || info.dev !== after.dev || info.size !== after.size || info.mtimeMs !== after.mtimeMs) {
-      throw new Error(`Filesystem entry changed during observation: ${name}`);
-    }
     entries.push([name, kind, String(info.dev), String(info.ino), info.mode, info.uid, info.gid, content]);
     if (kind === "directory") {
-      const children = (await readdir(current)).sort();
-      for (const child of children) await visit(join(current, child), join(name, child));
+      signal?.throwIfAborted();
+      const children = await readdir(current);
+      if (entries.length + children.length > MAX_ENTRIES) {
+        throw new Error(`Filesystem inventory exceeds ${MAX_ENTRIES} entries`);
+      }
+
+      for (const child of children.sort()) {
+        await visit(join(current, child), join(name, child));
+      }
+    }
+    signal?.throwIfAborted();
+    const after = await lstat(current);
+    signal?.throwIfAborted();
+    if (!sameObservedEntry(info, after)) {
+      throw new Error(`Filesystem entry changed during observation: ${name}`);
     }
   }
   await visit(path, ".");
@@ -163,33 +235,61 @@ async function pathInventory(path) {
   };
 }
 
-async function observePath(resource) {
+async function observePath(resource, budget, signal) {
   try {
-    try {
-      await lstat(resource.path);
-    } catch (error) {
-      if (error.code === "ENOENT") return {
+    await lstat(resource.path);
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error.code === "ENOENT") {
+      return {
         id: resource.id,
         present: false,
         identity: null,
       };
-      throw error;
     }
-    const inventory = await pathInventory(resource.path);
-    return {
-      id: resource.id,
-      present: true,
-      identity: inventory.fingerprint,
-      details: {
-        entries: inventory.entries,
-        contentBytes: inventory.contentBytes,
-      },
-    };
-  } catch (error) {
-    return {
-      id: resource.id,
-      error: error.message,
-    };
+
+    throw error;
+  }
+
+  const inventory = await pathInventory(resource.path, budget, signal);
+  return {
+    id: resource.id,
+    present: true,
+    identity: inventory.fingerprint,
+    details: {
+      entries: inventory.entries,
+      contentBytes: inventory.contentBytes,
+    },
+  };
+}
+
+async function observeLargeArtifact(resource, budget) {
+  if (budget.remainingMs <= 0) {
+    throw new Error(LARGE_ARTIFACT_TIME_LIMIT);
+  }
+
+  const startedAt = performance.now();
+  const deadline = startedAt + budget.remainingMs;
+  const controller = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const error = new Error(LARGE_ARTIFACT_TIME_LIMIT);
+      reject(error);
+      controller.abort(error);
+    }, Math.ceil(budget.remainingMs));
+  });
+
+  try {
+    const observation = await Promise.race([observePath(resource, budget, controller.signal), timeout]);
+    if (performance.now() >= deadline) {
+      throw new Error(LARGE_ARTIFACT_TIME_LIMIT);
+    }
+
+    return observation;
+  } finally {
+    clearTimeout(timer);
+    budget.remainingMs -= performance.now() - startedAt;
   }
 }
 
@@ -198,7 +298,30 @@ async function observeResources(declaration) {
   const git = declaration.resources.filter(resource => resource.kind.startsWith("git-"));
   const docker = declaration.resources.filter(resource => resource.kind.startsWith("docker-"));
   const observations = [];
-  for (const resource of filesystem) observations.push(await observePath(resource));
+  const largeArtifactBudget = {
+    remainingBytes: MAX_LARGE_ARTIFACT_BYTES,
+    remainingMs: MAX_LARGE_ARTIFACT_MS,
+    byteLimitMessage: LARGE_ARTIFACT_BYTE_LIMIT,
+  };
+  for (const resource of filesystem) {
+    try {
+      let observation;
+      if (resource.largeArtifact) {
+        observation = await observeLargeArtifact(resource, largeArtifactBudget);
+      } else {
+        observation = await observePath(resource, {
+          remainingBytes: MAX_CONTENT_BYTES,
+          byteLimitMessage: DEFAULT_BYTE_LIMIT,
+        });
+      }
+      observations.push(observation);
+    } catch (error) {
+      observations.push({
+        id: resource.id,
+        error: error.message,
+      });
+    }
+  }
   if (git.length > 0) {
     const gitObservations = await observeGitResources({
       repositoryRoot: declaration.repositoryRoot,
