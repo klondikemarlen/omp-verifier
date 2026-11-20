@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { activateGeneration, installRuntime, prepareGeneration, runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 import { activeGeneration, generationDirectory, withRuntimeLock } from "#root/bin/omp-verifier-runtime.mjs";
+
+import { activateGeneration, installRuntime, prepareGeneration, runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
 const execute = promisify(execFile);
 
@@ -18,17 +19,24 @@ async function writeJson(path, value) {
   await writeFile(path, JSON.stringify(value));
 }
 
-async function provider(root, version) {
-  const directory = join(root, "plugins", "node_modules", "probe-provider");
+async function provider(root, version, verificationDependencies) {
+  const packages = join(root, "plugins", "node_modules");
+  const directory = join(packages, "probe-provider");
   await writeJson(join(directory, "package.json"), {
     name: "probe-provider",
     version,
     type: "module",
+    main: "./index.js",
     dependencies: {
       "probe-dependency": version,
+      "probe-unused": version,
+    },
+    optionalDependencies: {
+      "probe-optional": version,
     },
     omp: {
       extensions: ["./index.js"],
+      verificationDependencies,
       verifications: [
         {
           id: "probe:version",
@@ -46,8 +54,17 @@ async function provider(root, version) {
       ],
     },
   });
+  await writeFile(join(directory, "runtime-dependency.txt"), "probe-dependency\n");
+  await writeFile(join(directory, "index.js"), `import { readFile } from 'node:fs/promises';
+export async function capturedVersion() {
+  const dependencyName = (await readFile(new URL('./runtime-dependency.txt', import.meta.url), 'utf8')).trim();
+  const { version } = await import(dependencyName);
+  return version;
+}
+`);
   await writeFile(join(directory, "version.mjs"), `import { access, writeFile } from 'node:fs/promises';
 import { setTimeout } from 'node:timers/promises';
+import { capturedVersion } from './index.js';
 if (process.env.PROBE_GATE) {
   await writeFile(process.env.PROBE_READY, 'ready');
   for (;;) {
@@ -55,8 +72,11 @@ if (process.env.PROBE_GATE) {
     catch { await setTimeout(10); }
   }
 }
-const { version } = await import('probe-dependency');
-process.stdout.write(JSON.stringify({status: 'PASS', summary: version}));
+const version = await capturedVersion();
+process.stdout.write(JSON.stringify({
+  status: 'PASS',
+  summary: version,
+}));
 `);
   await writeFile(join(directory, "standard.md"), "# Value\nThe exported value must be positive.\n");
   await writeJson(join(directory, "contract.json"), {
@@ -72,18 +92,40 @@ process.stdout.write(JSON.stringify({status: 'PASS', summary: version}));
       },
     ],
   });
-  const dependency = join(root, "plugins", "node_modules", "probe-dependency");
+  const dependency = join(packages, "probe-dependency");
   await writeJson(join(dependency, "package.json"), {
     name: "probe-dependency",
     version,
     type: "module",
     main: "./index.js",
+    peerDependencies: {
+      "probe-transitive": version,
+    },
   });
-  await writeFile(join(dependency, "index.js"), `export const version = ${JSON.stringify(version)};\n`);
+  await writeFile(join(dependency, "index.js"), "export { version } from 'probe-transitive';\n");
+
+  const transitive = join(packages, "probe-transitive");
+  await writeJson(join(transitive, "package.json"), {
+    name: "probe-transitive",
+    version,
+    type: "module",
+    main: "./index.js",
+  });
+  await writeFile(join(transitive, "index.js"), `export const version = ${JSON.stringify(version)};\n`);
+
+  const unused = join(packages, "probe-unused");
+  await writeJson(join(unused, "package.json"), {
+    name: "probe-unused",
+    version,
+    peerDependencies: {
+      "probe-provider": version,
+    },
+  });
+
   return directory;
 }
 
-async function fixture(context) {
+async function fixture(context, { verificationDependencies } = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-generations-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const agentDir = join(root, "agent");
@@ -91,7 +133,7 @@ async function fixture(context) {
   await mkdir(join(project, "src"), { recursive: true });
   execFileSync("git", ["init", "-q", project]);
   await writeFile(join(project, "src", "value.js"), "export const value = 1;\n");
-  const providerPath = await provider(root, "1.0.0");
+  const providerPath = await provider(root, "1.0.0", verificationDependencies);
   const initial = await installRuntime(agentDir);
   const paths = runtimePaths(agentDir);
   async function cli(args, extraEnvironment = {}) {
@@ -108,8 +150,13 @@ async function fixture(context) {
     return result.stdout;
   }
   async function replacement() {
-    await provider(root, "2.0.0");
-    return prepareGeneration({ agentDir });
+    await rm(join(root, "plugins"), {
+      recursive: true,
+    });
+    await provider(root, "2.0.0", verificationDependencies);
+    return prepareGeneration({
+      agentDir,
+    });
   }
   return {
     root,
@@ -136,9 +183,11 @@ async function ready(path) {
   }
 }
 
-test("when a replacement activates during two checks, both retain their original provider dependencies", async context => {
+test("when a provider is reinstalled during two checks, both retain their original dynamic dependencies", async context => {
   // Arrange
-  const current = await fixture(context);
+  const current = await fixture(context, {
+    verificationDependencies: ["probe-dependency"],
+  });
   const gate = join(current.root, "continue");
   const firstReady = join(current.root, "first-ready");
   const secondReady = join(current.root, "second-ready");
@@ -164,19 +213,137 @@ test("when a replacement activates during two checks, both retain their original
   assert.deepEqual(versions, ["1.0.0", "1.0.0"]);
 });
 
-test("when a replacement activates, the same launcher adopts it for subsequent work", async context => {
+test("after reinstall, an opted-in provider uses only its selected dependencies", async context => {
   // Arrange
-  const current = await fixture(context);
+  const current = await fixture(context, {
+    verificationDependencies: ["probe-dependency", "probe-optional"],
+  });
   await current.cli(["verify", "probe:version"]);
   const candidate = await current.replacement();
 
   // Act
-  await activateGeneration(candidate.id, { agentDir: current.agentDir });
+  await activateGeneration(candidate.id, {
+    agentDir: current.agentDir,
+  });
+  await rm(join(current.root, "plugins"), {
+    recursive: true,
+  });
   const results = JSON.parse(await current.cli(["verify", "probe:version"]));
+  const directory = generationDirectory(current.paths.root, candidate.id);
+  const dependencies = join(directory, "node_modules", "probe-provider", "node_modules");
+  const snapshots = join(directory, "packages");
+  const packageIds = await readdir(snapshots);
+  const capturedPackages = await Promise.all(packageIds.map(async id => {
+    const contents = await readFile(join(snapshots, id, "package.json"), "utf8");
+    return JSON.parse(contents).name;
+  }));
 
   // Assert
   assert.equal(results[0].summary, "2.0.0");
   assert.equal(results[0].generation.id, candidate.id);
+  assert.equal(capturedPackages.includes("probe-unused"), false);
+  await assert.rejects(lstat(join(dependencies, "probe-optional")), {
+    code: "ENOENT",
+  });
+});
+
+test("when a provider omits dependency selection, its unused runtime dependency is still captured", async context => {
+  const current = await fixture(context);
+
+  const directory = generationDirectory(current.paths.root, current.initial.id);
+  const unusedManifest = join(directory, "node_modules", "probe-provider", "node_modules", "probe-unused", "package.json");
+  assert.equal(JSON.parse(await readFile(unusedManifest, "utf8")).name, "probe-unused");
+});
+
+test("when an opted-in provider is also a dependency, its consumer can use the full dependency graph", async context => {
+  // Arrange
+  const current = await fixture(context, {
+    verificationDependencies: [],
+  });
+  const plugins = join(current.root, "plugins");
+  const consumer = join(plugins, "node_modules", "probe-consumer");
+  await writeJson(join(consumer, "package.json"), {
+    name: "probe-consumer",
+    version: "1.0.0",
+    type: "module",
+    peerDependencies: {
+      "probe-provider": "1.0.0",
+    },
+    omp: {
+      extensions: ["./index.mjs"],
+      verificationDependencies: ["probe-provider"],
+      verifications: [
+        {
+          id: "probe:consumer",
+          label: "Consumer version",
+          description: "Read a version through another provider's runtime dependencies",
+          entry: "./index.mjs",
+        },
+      ],
+    },
+  });
+  await writeFile(join(consumer, "index.mjs"), `import { capturedVersion } from 'probe-provider';
+const version = await capturedVersion();
+process.stdout.write(JSON.stringify({
+  status: 'PASS',
+  summary: version,
+}));
+`);
+  await writeJson(join(plugins, "package.json"), {
+    name: "omp-plugins",
+    dependencies: {
+      "probe-provider": "1.0.0",
+      "probe-consumer": "1.0.0",
+    },
+  });
+
+  // Act
+  const candidate = await prepareGeneration({
+    agentDir: current.agentDir,
+  });
+  await activateGeneration(candidate.id, {
+    agentDir: current.agentDir,
+  });
+  await rm(plugins, {
+    recursive: true,
+  });
+  const results = JSON.parse(await current.cli(["verify", "probe:consumer"]));
+
+  // Assert
+  const initialDirectory = generationDirectory(current.paths.root, current.initial.id);
+  await assert.rejects(lstat(join(initialDirectory, "node_modules", "probe-provider", "node_modules", "probe-dependency")), {
+    code: "ENOENT",
+  });
+  assert.equal(results[0].summary, "1.0.0");
+
+  const candidateDirectory = generationDirectory(current.paths.root, candidate.id);
+  const consumerProvider = join(candidateDirectory, "node_modules", "probe-consumer", "node_modules", "probe-provider");
+  const cyclicProvider = join(consumerProvider, "node_modules", "probe-unused", "node_modules", "probe-provider");
+  const cyclicManifest = JSON.parse(await readFile(join(cyclicProvider, "package.json"), "utf8"));
+  assert.equal(cyclicManifest.name, "probe-provider");
+});
+
+test("when provider dependency selection is invalid, generation preparation rejects it", async context => {
+  const current = await fixture(context);
+  const manifestPath = join(current.providerPath, "package.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const invalidDeclarations = [
+    "probe-dependency",
+    [null],
+    ["probe-dependency", "probe-dependency"],
+    ["probe-transitive"],
+  ];
+
+  for (const declaration of invalidDeclarations) {
+    await context.test(JSON.stringify(declaration), async () => {
+      manifest.omp.verificationDependencies = declaration;
+      await writeJson(manifestPath, manifest);
+
+      await assert.rejects(prepareGeneration({
+        agentDir: current.agentDir,
+      }), /verificationDependencies/);
+    });
+  }
 });
 
 test("when semantic command help is requested, the launcher does not require a review identity", async context => {
@@ -206,9 +373,11 @@ test("when installation refreshes an obsolete launcher, command help works witho
   assert.equal(installed.id, current.initial.id);
 });
 
-test("when a replacement activates during semantic review, evaluation and reporting retain the original standard", async context => {
+test("when an opted-in provider is reinstalled during semantic review, evaluation and reporting retain the original standard", async context => {
   // Arrange
-  const current = await fixture(context);
+  const current = await fixture(context, {
+    verificationDependencies: ["probe-dependency"],
+  });
   const prepared = JSON.parse(await current.cli(["verify", "probe:semantic"]));
   const request = prepared[0].reviewRequest;
   const candidate = await current.replacement();

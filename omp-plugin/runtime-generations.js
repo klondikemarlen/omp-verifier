@@ -127,11 +127,7 @@ async function dependencyDirectory(source, name, optional) {
   return undefined;
 }
 
-async function copyPackage(source, directory, copied, coordinator = false) {
-  source = await realpath(source);
-  if (copied.has(source)) {
-    return copied.get(source).destination;
-  }
+async function copyPackageFiles(source, directory, coordinator) {
   const key = createHash("sha256").update(source).digest("hex");
   const destination = join(directory, "packages", key);
   const names = await packageEntries(source, coordinator);
@@ -143,18 +139,79 @@ async function copyPackage(source, directory, copied, coordinator = false) {
   if (serialized !== JSON.stringify(after) || serialized !== JSON.stringify(captured)) {
     throw new Error(`Package changed during capture: ${source}; finish installation before preparing a generation`);
   }
-  const manifest = await readJson(join(destination, "package.json"));
-  copied.set(source, {
+  return {
     destination,
     names,
     inventory: serialized,
-  });
+  };
+}
+
+function verificationDependencySelection(manifest, dependencies, source) {
+  const selection = manifest.omp?.verificationDependencies;
+  if (selection === undefined) {
+    return undefined;
+  }
+
+  const field = `${join(source, "package.json")}: omp.verificationDependencies`;
+  if (!Array.isArray(selection)) {
+    throw new Error(`${field} must be an array of dependency names`);
+  }
+
+  const names = new Set();
+  for (const name of selection) {
+    if (!validPackageName(name)) {
+      throw new Error(`${field} must contain valid package names`);
+    }
+    if (names.has(name)) {
+      throw new Error(`${field} contains duplicate dependency ${name}`);
+    }
+    if (!Object.hasOwn(dependencies, name)) {
+      throw new Error(`${field} names ${name}, which is not a declared runtime dependency`);
+    }
+
+    names.add(name);
+  }
+  return names;
+}
+
+async function copyPackage(source, directory, copied, role = "dependency") {
+  const existing = copied.get(source);
+  if (existing && role !== "provider" && !existing.selectedDependencies) {
+    return existing.destination;
+  }
+
+  let captured = existing;
+  if (!captured) {
+    captured = await copyPackageFiles(source, directory, role === "coordinator");
+    copied.set(source, captured);
+  }
+
+  const { destination } = captured;
+  const manifest = await readJson(join(destination, "package.json"));
   const dependencies = {
     ...manifest.dependencies,
     ...manifest.peerDependencies,
     ...manifest.optionalDependencies,
   };
-  for (const name of Object.keys(dependencies).sort()) {
+  let selection;
+  if (role === "provider") {
+    selection = verificationDependencySelection(manifest, dependencies, source);
+    if (existing) {
+      return destination;
+    }
+  }
+
+  // A cycle can promote a provider while its root traversal still owns the selected links.
+  // Publish full expansion before recursing and let the original traversal finish those links.
+  const previousSelection = captured.selectedDependencies;
+  captured.selectedDependencies = selection;
+
+  const names = selection ? [...selection] : Object.keys(dependencies);
+  for (const name of names.sort()) {
+    if (previousSelection?.has(name)) {
+      continue;
+    }
+
     const optional = Object.hasOwn(manifest.optionalDependencies ?? {}, name) || manifest.peerDependenciesMeta?.[name]?.optional === true;
     const dependency = await dependencyDirectory(source, name, optional);
     if (!dependency) {
@@ -259,8 +316,10 @@ export async function prepareGeneration({ agentDir, packageDirectory, coordinato
     }
     providers.set("omp-verifier", coordinatorPackage);
     const identities = [];
-    for (const [name, source] of providers) {
-      const target = await copyPackage(source, directory, copied, name === "omp-verifier");
+    for (const [name, packageSource] of providers) {
+      const source = await realpath(packageSource);
+      const role = name === "omp-verifier" ? "coordinator" : "provider";
+      const target = await copyPackage(source, directory, copied, role);
       const manifest = await readJson(join(target, "package.json"));
       const link = join(directory, "node_modules", name);
       await mkdir(dirname(link), { recursive: true, mode: 0o700 });

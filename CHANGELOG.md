@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.0 - 2026-11-20
+
+- Providers can declare which dependencies their checks use so frozen generations need not copy unrelated extension dependencies. Providers without a declaration keep their full dependency graph.
+
 ## 1.17.0 - 2026-11-19
 
 - Verify the retention or removal of an explicitly declared large artifact without raising the 64 MiB limit for ordinary cleanup checks.
