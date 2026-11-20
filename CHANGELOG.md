@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.0 - 2026-11-19
+
+- Verify the retention or removal of an explicitly declared large artifact without raising the 64 MiB limit for ordinary cleanup checks.
+
 ## 1.16.0 - 2026-11-19
 
 - Show task cleanup as a compact primary-check result with expandable receipts instead of ending the conversation with paths. Independent verification is reported separately from the primary result.
