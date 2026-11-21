@@ -110,6 +110,7 @@ test("when handoff inputs are invalid, delivery evidence remains untouched", asy
     ["handoff", "prepare", "--base", "main", "extra"],
     ["handoff", "prepare", "--base", "main", "--reason", "not cancellation"],
     ["handoff", "recover", handoffPath, "--base", "main"],
+    ["handoff", "check", handoffPath, "--base", "main"],
     ["handoff", "release", handoffPath, "--reason", "not cancellation"],
     ["handoff", "cancel", handoffPath],
     ["handoff", "cancel", handoffPath, "--reason", "   "],
@@ -134,6 +135,7 @@ test("when valid handoff invocations lack prerequisites, results remain BLOCKED"
   const actions = [
     ["prepare", "--base", "main"],
     ["recover", missingPath],
+    ["check", missingPath],
     ["release", missingPath],
     ["cancel", missingPath, "--reason", "explicit user cancellation"],
   ];

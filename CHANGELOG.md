@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.0 - 2026-11-20
+
+- `handoff check` binds verification to the pinned delivery. Release keeps the checkout and pin while the check is running or a semantic assessment remains pending; a terminal failure can be reported without treating disposal as a pass.
+
 ## 1.19.0 - 2026-11-20
 
 - Independent cleanup verification rechecks the exact receipt set supplied by the primary without retyping private paths. A wrong handoff ID is not a resource failure.
