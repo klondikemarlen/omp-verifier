@@ -12,16 +12,7 @@ const STATUS_PRIORITY = {
 };
 
 export async function checkCloseoutReceipts({ repositoryRoot, receiptPaths, verifyReceipt }) {
-  requireAbsolutePath(repositoryRoot, "repositoryRoot");
-  if (!Array.isArray(receiptPaths) || receiptPaths.length < 1 || receiptPaths.length > MAX_CLOSEOUT_RECEIPTS) {
-    throw new RangeError(`Provide between 1 and ${MAX_CLOSEOUT_RECEIPTS} exact closeout receipt paths`);
-  }
-
-  const exactReceiptPaths = new Set();
-  for (const receiptPath of receiptPaths) {
-    requireAbsolutePath(receiptPath, "receipt path");
-    exactReceiptPaths.add(receiptPath);
-  }
+  const exactReceiptPaths = validateCloseoutInputs(repositoryRoot, receiptPaths);
 
   let status = "PASS";
   let checkedResources = 0;
@@ -44,6 +35,20 @@ export async function checkCloseoutReceipts({ repositoryRoot, receiptPaths, veri
     checkedResources,
     receipts,
   };
+}
+
+export function validateCloseoutInputs(repositoryRoot, receiptPaths) {
+  requireAbsolutePath(repositoryRoot, "repositoryRoot");
+  if (!Array.isArray(receiptPaths) || receiptPaths.length < 1 || receiptPaths.length > MAX_CLOSEOUT_RECEIPTS) {
+    throw new RangeError(`Provide between 1 and ${MAX_CLOSEOUT_RECEIPTS} exact closeout receipt paths`);
+  }
+
+  const exactReceiptPaths = new Set();
+  for (const receiptPath of receiptPaths) {
+    requireAbsolutePath(receiptPath, "receipt path");
+    exactReceiptPaths.add(receiptPath);
+  }
+  return exactReceiptPaths;
 }
 
 function requireAbsolutePath(value, name) {

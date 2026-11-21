@@ -2,6 +2,7 @@ import { InvalidArgumentError } from "commander";
 
 import { addReportingOptions } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
+import { readCloseoutHandoff } from "#root/omp-plugin/closeout-handoff.js";
 import {
   prepareDeliveryHandoff,
   recoverDeliveryHandoff,
@@ -64,6 +65,12 @@ export function registerLifecycleCommands(program) {
   })
     .description("Check fresh resource observations against the prepared closeout receipt")
     .action(verifyCloseout);
+
+  addReportingOptions(closeout.command("review <handoff-id>"), {
+    failuresOnly: true,
+  })
+    .description("Independently recheck the exact receipt set declared by the primary tool")
+    .action(reviewCloseout);
 }
 
 async function prepareGeneration() {
@@ -169,4 +176,30 @@ async function verifyCloseout(receiptPath, options) {
     receiptPath,
   });
   await writeResults([result], options);
+}
+
+async function reviewCloseout(handoffId, options) {
+  let handoff;
+  try {
+    handoff = await readCloseoutHandoff(handoffId);
+  } catch (error) {
+    await writeResults([{
+      id: "verifier:closeout-handoff",
+      status: "BLOCKED",
+      summary: "Independent closeout handoff unavailable; no resources checked",
+      evidence: error.message,
+      nextCheck: "Use the handoff ID returned by the current verifier_closeout tool call.",
+    }], options);
+    return;
+  }
+
+  const results = [];
+  for (const receiptPath of handoff.receiptPaths) {
+    const result = await verifyResourceCloseout({
+      cwd: handoff.repositoryRoot,
+      receiptPath,
+    });
+    results.push(result);
+  }
+  await writeResults(results, options);
 }

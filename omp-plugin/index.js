@@ -13,7 +13,7 @@ import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalo
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|closeout prepare|verify <file>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },

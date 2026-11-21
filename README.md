@@ -93,6 +93,7 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier generation collect
 /verifier closeout prepare <declaration.json>
 /verifier closeout verify <receipt.json>
+/verifier closeout review <handoff-id>
 /verifier uninstall
 ```
 
@@ -108,7 +109,7 @@ Changed paths retain their edit-owned checkout: the advisor resolves transcript 
 
 Before removing a clean committed delivery worktree whose final review is still outstanding, prepare a [delivery handoff](docs/references/verifier-concepts-reference.md#delivery-handoff): `omp-verifier handoff prepare --base <actual-delivery-base>`. Preserve its returned path in the transcript. The verifier can recover that exact source into a private detached checkout and run fresh checks after normal cleanup. Recovery is not approval; missing execution prerequisites still produce BLOCKED. Uncommitted work must remain in its original checkout.
 
-Task cleanup has a separate [resource closeout check](docs/references/verifier-concepts-reference.md#resource-closeout). Before cleanup, the primary declares exact owned and protected resources and runs `closeout prepare <declaration.json>` in a surviving checkout. After authorized cleanup or retention, `closeout verify <receipt.json>` freshly observes their final state. Emit `Verifier closeout: <receiptPath>` for independent advisor verification, including cleanup-only tasks. Verifier never executes cleanup; source PASS, a merge, and successful cleanup commands do not prove resource disposition.
+Task cleanup has a separate [resource closeout check](docs/references/verifier-concepts-reference.md#resource-closeout). Before cleanup, the primary declares exact owned and protected resources and runs `closeout prepare <declaration.json>` in a surviving checkout. After authorized cleanup or retention, call `verifier_closeout` with the prepared receipts. The named verifier independently rechecks that same set, including for cleanup-only tasks. Verifier never executes cleanup; source PASS, merge, and cleanup commands do not prove resource disposition.
 
 The installed Verifier package supplies its own lint manifest; additional plugins may supply other checks. In an isolated package directory with no compatible manifests, `checks` reports `none installed` and `verify` reports `BLOCKED`. Installed but inapplicable checks return no selected results. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
 
@@ -124,6 +125,7 @@ omp-verifier evaluate <request-file> --assessment <JSON|->
 omp-verifier diagnostics <request-file> [--reporter json|text]
 omp-verifier closeout prepare <declaration.json>
 omp-verifier closeout verify <receipt.json> [--reporter json|text] [--failures-only]
+omp-verifier closeout review <handoff-id> [--reporter json|text] [--failures-only]
 omp-verifier automatic --closeout <receipt.json> [<changed-path>...]
 ```
 
