@@ -3,12 +3,28 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
+
+import { runAutomaticVerificationForPaths } from "#root/omp-plugin/verifications.js";
+import { defaultPackageDirectory } from "#root/omp-plugin/verification-catalog.js";
 
 const execFileAsync = promisify(execFile);
 const DELIVERY_DIRECTORY = resolve(tmpdir(), `omp-verifier-deliveries-${process.getuid?.() ?? "user"}`);
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const CHECK_STATUSES = new Set(["PASS", "FAIL", "BLOCKED", "SUPPRESSED", "PENDING"]);
+const GIT_SCOPE_ENVIRONMENT = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+  "GIT_SHALLOW_FILE",
+  "GIT_REPLACE_REF_BASE",
+];
+const FROZEN_GENERATION = process.env.OMP_VERIFIER_GENERATION;
 
 async function git(directory, args) {
   // Caller Git environment must not redirect operations into another repository.
@@ -102,14 +118,48 @@ async function requireClean(directory, { includeIgnored = false } = {}) {
   if (await git(directory, args)) throw new Error(`delivery handoff refuses dirty or untracked source: ${directory}`);
 }
 
+function validIdentityNumber(value) {
+  return typeof value === "string" && /^\d+$/.test(value);
+}
+
+function validCheckResult(result) {
+  return result && !Array.isArray(result) && CHECK_STATUSES.has(result.status) &&
+    typeof result.id === "string" && result.id.trim() &&
+    typeof result.summary === "string" && result.summary.trim() &&
+    (result.evidence === undefined || typeof result.evidence === "string") &&
+    (result.nextCheck === undefined || typeof result.nextCheck === "string");
+}
+
+function isDeterministicBlocker(result) {
+  return (result.status === "FAIL" || result.status === "BLOCKED") &&
+    !result.evaluation && result.scope?.attribution !== "semantic-findings";
+}
+
+function validateCheckRecord(verification, record) {
+  if (verification === undefined) return;
+
+  const checkout = verification?.checkout;
+  const recoveredPath = join(DELIVERY_DIRECTORY, record.id, "checkout");
+  if (!checkout || (checkout.path !== record.originalRoot && checkout.path !== recoveredPath) ||
+      !validIdentityNumber(checkout.device) || !validIdentityNumber(checkout.inode) ||
+      !validIdentityNumber(checkout.gitDevice) || !validIdentityNumber(checkout.gitInode) ||
+      typeof checkout.gitDirectory !== "string" || !isAbsolute(checkout.gitDirectory) ||
+      resolve(checkout.gitDirectory) !== checkout.gitDirectory ||
+      !["PENDING", "COMPLETE"].includes(verification.status) ||
+      typeof verification.generation !== "string" || !/^[a-f0-9]{64}$/.test(verification.generation) ||
+      !Array.isArray(verification.blockers) ||
+      !verification.blockers.every(result => validCheckResult(result) && isDeterministicBlocker(result))) {
+    throw new Error("delivery handoff check has an invalid shape or identity");
+  }
+}
+
 function validateRecord(record, id) {
   const validPath = value => typeof value === "string" && isAbsolute(value) && resolve(value) === value;
   const validChangedPath = value => typeof value === "string" && value.length > 0 && !value.includes("\0") &&
     !isAbsolute(value) && !value.split("/").some(part => part === ".." || part === "." || part === "");
   if (!record || record.version !== 1 || record.id !== id ||
       !validPath(record.originalRoot) || !validPath(record.commonDirectory) ||
-      typeof record.commonDevice !== "string" || !/^\d+$/.test(record.commonDevice) ||
-      typeof record.commonInode !== "string" || !/^\d+$/.test(record.commonInode) ||
+      !validIdentityNumber(record.commonDevice) || !validIdentityNumber(record.commonInode) ||
       typeof record.baseCommit !== "string" || !COMMIT_PATTERN.test(record.baseCommit) ||
       typeof record.tipCommit !== "string" || !COMMIT_PATTERN.test(record.tipCommit) ||
       !Array.isArray(record.changedPaths) || !record.changedPaths.every(validChangedPath) ||
@@ -120,6 +170,7 @@ function validateRecord(record, id) {
       (record.releaseStatus === "CANCELLED" && (typeof record.cancellationReason !== "string" || !record.cancellationReason.trim()))) {
     throw new Error("delivery handoff record has an invalid shape or identity");
   }
+  validateCheckRecord(record.verification, record);
 }
 
 async function withHandoff(handoffPath, operation) {
@@ -184,8 +235,24 @@ async function checkoutExists(checkoutPath) {
   }
 }
 
+async function checkoutIdentity(path, info, gitDirectory) {
+  const gitInfo = await stat(gitDirectory, {
+    bigint: true,
+  });
+  return {
+    path,
+    device: String(info.dev),
+    inode: String(info.ino),
+    gitDirectory,
+    gitDevice: String(gitInfo.dev),
+    gitInode: String(gitInfo.ino),
+  };
+}
+
 async function validateOriginalCheckout(record) {
-  const info = await lstat(record.originalRoot);
+  const info = await lstat(record.originalRoot, {
+    bigint: true,
+  });
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(record.originalRoot) !== record.originalRoot) {
     throw new Error("retained delivery checkout is not its original canonical directory");
   }
@@ -195,10 +262,14 @@ async function validateOriginalCheckout(record) {
     throw new Error("retained delivery checkout has a changed repository or tip identity; preserve it for reconciliation");
   }
   await requireClean(root);
+  const gitDirectory = await realpath((await git(root, ["rev-parse", "--absolute-git-dir"])).trim());
+  return checkoutIdentity(root, info, gitDirectory);
 }
 
 async function validateCheckout(record, checkoutPath, { includeIgnored = false } = {}) {
-  const info = await lstat(checkoutPath);
+  const info = await lstat(checkoutPath, {
+    bigint: true,
+  });
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(checkoutPath) !== checkoutPath) {
     throw new Error("delivery checkout is not its owned canonical directory");
   }
@@ -212,6 +283,7 @@ async function validateCheckout(record, checkoutPath, { includeIgnored = false }
     throw new Error("delivery checkout is foreign, attached, or has a changed source identity");
   }
   await requireClean(checkoutPath, { includeIgnored });
+  return checkoutIdentity(checkoutPath, info, gitDirectory);
 }
 
 export async function prepareDeliveryHandoff({ cwd, baseRef }) {
@@ -248,22 +320,179 @@ export async function prepareDeliveryHandoff({ cwd, baseRef }) {
   return result(record, handoffPath);
 }
 
+async function selectDeliveryCheckout(record, handoffPath) {
+  const recoveredPath = join(dirname(handoffPath), "checkout");
+  // Once recovered, do not replace that checkout with a reappearing original.
+  if (record.status === "RECOVERED" && await checkoutExists(recoveredPath)) {
+    return validateCheckout(record, recoveredPath);
+  }
+
+  if (await checkoutExists(record.originalRoot)) {
+    return validateOriginalCheckout(record);
+  }
+
+  if (!await checkoutExists(recoveredPath)) {
+    await git(record.commonDirectory, ["worktree", "add", "--detach", recoveredPath, record.tipCommit]);
+  }
+
+  const checkout = await validateCheckout(record, recoveredPath);
+  record.status = "RECOVERED";
+  await writeRecord(handoffPath, record);
+  return checkout;
+}
+
 export async function recoverDeliveryHandoff({ handoffPath }) {
   return withHandoff(handoffPath, async record => {
-    if (!["PREPARED", "RECOVERED"].includes(record.status)) throw new Error(`cannot recover a ${record.status.toLowerCase()} delivery handoff`);
+    if (!["PREPARED", "RECOVERED"].includes(record.status)) {
+      throw new Error(`cannot recover a ${record.status.toLowerCase()} delivery handoff`);
+    }
+
     await validateRepository(record);
-    if (await checkoutExists(record.originalRoot)) {
-      await validateOriginalCheckout(record);
-      return result(record, handoffPath, record.originalRoot);
+    const checkout = await selectDeliveryCheckout(record, handoffPath);
+    return result(record, handoffPath, checkout.path);
+  });
+}
+
+async function validateAutomaticGitEnvironment(checkout) {
+  const overridden = GIT_SCOPE_ENVIRONMENT.find(name => process.env[name] !== undefined);
+  if (overridden) {
+    throw new Error(`delivery handoff check refuses redirected Git scope; unset ${overridden}`);
+  }
+
+  // Automatic verification and providers inherit the Git environment.
+  const { stdout } = await execFileAsync("git", ["-C", checkout.path, "rev-parse", "--show-toplevel", "--absolute-git-dir"]);
+  if (stdout !== `${checkout.path}\n${checkout.gitDirectory}\n`) {
+    throw new Error("delivery handoff check Git environment does not select the validated checkout");
+  }
+}
+
+async function verificationGeneration(packageDirectory) {
+  const hash = createHash("sha256").update(packageDirectory);
+  if (FROZEN_GENERATION !== undefined) {
+    return hash.update(`\0${FROZEN_GENERATION}`).digest("hex");
+  }
+
+  try {
+    const info = await stat(packageDirectory, {
+      bigint: true,
+    });
+    hash.update(`\0${info.dev}:${info.ino}`);
+  } catch (error) {
+    // The normal selection reports unavailable provider directories.
+    hash.update(`\0unavailable:${error.code}`);
+  }
+  return hash.digest("hex");
+}
+
+async function validateCheckedCheckout(record, expected, options) {
+  let current;
+  if (expected.path === record.originalRoot) {
+    current = await validateOriginalCheckout(record);
+  } else {
+    current = await validateCheckout(record, expected.path, options);
+  }
+
+  if (!isDeepStrictEqual(current, expected)) {
+    throw new Error("delivery handoff checkout changed since verification; preserve it for reconciliation");
+  }
+}
+
+function validateCheckResults(results, record, checkout) {
+  if (!Array.isArray(results) || !results.every(validCheckResult)) {
+    throw new Error("delivery handoff check returned invalid verification results");
+  }
+
+  const changedPaths = new Set(record.changedPaths);
+  for (const result of results) {
+    const { reviewRequest, scope } = result;
+    if (scope && (scope.repositoryRoot !== checkout.path ||
+        scope.baseCommit !== record.baseCommit || scope.headCommit !== record.tipCommit ||
+        !Array.isArray(scope.changedPaths) || !scope.changedPaths.every(path => changedPaths.has(path)))) {
+      throw new Error("delivery handoff check returned results for a different delivery scope");
     }
-    const checkoutPath = join(dirname(handoffPath), "checkout");
-    if (!await checkoutExists(checkoutPath)) {
-      await git(record.commonDirectory, ["worktree", "add", "--detach", checkoutPath, record.tipCommit]);
+    if (result.status === "PENDING" && (!reviewRequest || !scope ||
+        reviewRequest.scope?.repositoryRoot !== checkout.path ||
+        typeof reviewRequest.requestId !== "string" || !ID_PATTERN.test(reviewRequest.requestId) ||
+        typeof reviewRequest.path !== "string" || !isAbsolute(reviewRequest.path))) {
+      throw new Error("delivery handoff check returned a pending result without an assessment request");
     }
-    await validateCheckout(record, checkoutPath);
-    record.status = "RECOVERED";
+  }
+}
+
+function mergeCheckResults(results, retainedBlockers) {
+  const missingBlockers = retainedBlockers.filter(retained => !results.some(result => isDeepStrictEqual(retained, result)));
+  return [...missingBlockers, ...results];
+}
+
+export async function checkDeliveryHandoff({ handoffPath }) {
+  return withHandoff(handoffPath, async record => {
+    if (!["PREPARED", "RECOVERED"].includes(record.status)) {
+      throw new Error(`cannot check a ${record.status.toLowerCase()} delivery handoff`);
+    }
+
+    const previous = record.verification;
+    if (previous?.status === "COMPLETE") {
+      delete record.verification;
+      await writeRecord(handoffPath, record);
+    }
+
+    await validateRepository(record);
+    const checkout = await selectDeliveryCheckout(record, handoffPath);
+    await validateAutomaticGitEnvironment(checkout);
+
+    const packageDirectory = resolve(defaultPackageDirectory());
+    const generation = await verificationGeneration(packageDirectory);
+    const continuesDelivery = previous?.status === "PENDING" && isDeepStrictEqual(previous.checkout, checkout);
+    const results = await runAutomaticVerificationForPaths({
+      cwd: checkout.path,
+      changedPaths: record.changedPaths,
+      baseRef: record.baseCommit,
+      packageDirectory,
+      workLevel: "normal",
+      reuseExisting: continuesDelivery && previous.generation === generation,
+      selectionReason: "full-delivery",
+    });
+    validateCheckResults(results, record, checkout);
+    await validateRepository(record);
+    await validateCheckedCheckout(record, checkout);
+    if (generation !== await verificationGeneration(packageDirectory)) {
+      throw new Error("delivery handoff verifier generation changed during the check");
+    }
+
+    const hasPendingAssessment = results.some(result => result.status === "PENDING");
+    const retainedBlockers = continuesDelivery ? previous.blockers : [];
+    const report = mergeCheckResults(results, retainedBlockers);
+    record.verification = {
+      status: hasPendingAssessment ? "PENDING" : "COMPLETE",
+      checkout,
+      generation,
+      blockers: report.filter(isDeterministicBlocker),
+    };
     await writeRecord(handoffPath, record);
-    return result(record, handoffPath);
+    return report;
+  });
+}
+
+async function requireReleaseCheck(record, recoveredPath, hasRecoveredCheckout) {
+  const verification = record.verification;
+  if (verification?.status === "PENDING") {
+    throw new Error("delivery handoff has pending assessments; finish them and run handoff check again before release");
+  }
+  if (verification?.status !== "COMPLETE") {
+    throw new Error("delivery handoff release requires a completed handoff check");
+  }
+
+  const { checkout } = verification;
+  if (checkout.path === recoveredPath && !hasRecoveredCheckout && record.status === "RELEASING") {
+    // A prior release removed the owned checkout but has not disposed of the pin.
+    return;
+  }
+  if (!await checkoutExists(checkout.path)) {
+    throw new Error("delivery handoff checked checkout is missing; preserve the pin and run handoff check again");
+  }
+
+  await validateCheckedCheckout(record, checkout, {
+    includeIgnored: true,
   });
 }
 
@@ -284,15 +513,25 @@ export async function releaseDeliveryHandoff({ handoffPath, cancellationReason }
     }
     await validateRepository(record);
     const checkoutPath = join(dirname(handoffPath), "checkout");
-    if (await checkoutExists(checkoutPath)) {
-      await validateCheckout(record, checkoutPath, { includeIgnored: true });
+    const hasRecoveredCheckout = await checkoutExists(checkoutPath);
+    if (status === "RELEASED") {
+      await requireReleaseCheck(record, checkoutPath, hasRecoveredCheckout);
+      if (hasRecoveredCheckout && record.verification.checkout.path !== checkoutPath) {
+        throw new Error("delivery handoff found an unchecked recovery checkout; preserve it for reconciliation");
+      }
+    } else if (hasRecoveredCheckout) {
+      await validateCheckout(record, checkoutPath, {
+        includeIgnored: true,
+      });
     }
     // An interrupted disposal stays nonrecoverable; retries still require its intact source pin.
     record.status = "RELEASING";
     record.releaseStatus = status;
     if (cancellationReason !== undefined) record.cancellationReason = cancellationReason;
     await writeRecord(handoffPath, record);
-    if (await checkoutExists(checkoutPath)) await git(record.commonDirectory, ["worktree", "remove", checkoutPath]);
+    if (hasRecoveredCheckout) {
+      await git(record.commonDirectory, ["worktree", "remove", checkoutPath]);
+    }
     await git(record.commonDirectory, ["update-ref", "-d", pinRef(record.id), record.tipCommit]);
     record.status = status;
     delete record.releaseStatus;

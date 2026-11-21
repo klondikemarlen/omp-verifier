@@ -12,7 +12,7 @@ const CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
 const packageRoot = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
 const SUPPRESSION_FILE = ".omp-verifier.json";
 
-function defaultPackageDirectory() {
+export function defaultPackageDirectory() {
   if (process.env.OMP_VERIFIER_PACKAGE_DIRECTORY) return process.env.OMP_VERIFIER_PACKAGE_DIRECTORY;
   const parent = dirname(packageRoot);
   if (basename(parent) === "node_modules") return parent;

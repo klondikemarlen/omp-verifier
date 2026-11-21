@@ -16,6 +16,7 @@ export async function writeResults(results, {
   failuresOnly = false,
   pageIndex = 0,
   review = false,
+  inlineReviewPage = true,
 } = {}) {
   if (process.env.OMP_VERIFIER_GENERATION) {
     const generation = JSON.parse(process.env.OMP_VERIFIER_GENERATION);
@@ -35,7 +36,7 @@ export async function writeResults(results, {
 
   let output;
   let reviewPage;
-  if (reporter === "text" && reported.length === 1 && reported[0]?.reviewRequest) {
+  if (inlineReviewPage && reporter === "text" && reported.length === 1 && reported[0]?.reviewRequest) {
     const result = reported[0];
     let currentPageIndex = pageIndex;
     if (result.evaluation?.supersededBy) currentPageIndex = 0;

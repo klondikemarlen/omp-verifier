@@ -4,6 +4,7 @@ import { addReportingOptions } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { readCloseoutHandoff } from "#root/omp-plugin/closeout-handoff.js";
 import {
+  checkDeliveryHandoff,
   prepareDeliveryHandoff,
   recoverDeliveryHandoff,
   releaseDeliveryHandoff,
@@ -43,6 +44,12 @@ export function registerLifecycleCommands(program) {
   addReportingOptions(handoff.command("recover <handoff-file>"))
     .description("Recover the exact pinned delivery source without substituting another checkout")
     .action(recoverHandoff);
+
+  addReportingOptions(handoff.command("check <handoff-file>"), {
+    failuresOnly: true,
+  })
+    .description("Check the pinned delivery and retain it while assessments are outstanding")
+    .action(checkHandoff);
 
   addReportingOptions(handoff.command("release <handoff-file>"))
     .description("Release a delivery handoff after final verification")
@@ -122,6 +129,23 @@ async function recoverHandoff(handoffPath, options) {
   await reportDeliveryHandoff(operation, options);
 }
 
+async function checkHandoff(handoffPath, options) {
+  let results;
+  try {
+    results = await checkDeliveryHandoff({
+      handoffPath,
+    });
+  } catch (error) {
+    results = [handoffBlocker(error)];
+  }
+  // The lifecycle command may run outside the selected checkout. The reviewer
+  // reads and acknowledges semantic pages from the request's actual root.
+  await writeResults(results, {
+    ...options,
+    inlineReviewPage: false,
+  });
+}
+
 async function releaseHandoff(handoffPath, options) {
   const operation = releaseDeliveryHandoff({
     handoffPath,
@@ -144,14 +168,18 @@ async function reportDeliveryHandoff(operation, options) {
       pretty: options.reporter === "text",
     });
   } catch (error) {
-    await writeResults([{
-      id: "verifier:delivery-handoff",
-      status: "BLOCKED",
-      summary: "Delivery source handoff could not complete",
-      evidence: error.message,
-      nextCheck: "Resolve the named source or handoff prerequisite; do not substitute another checkout or treat cleanup as verification.",
-    }], options);
+    await writeResults([handoffBlocker(error)], options);
   }
+}
+
+function handoffBlocker(error) {
+  return {
+    id: "verifier:delivery-handoff",
+    status: "BLOCKED",
+    summary: "Delivery source handoff could not complete",
+    evidence: error.message,
+    nextCheck: "Resolve the named source or handoff prerequisite; do not substitute another checkout or treat cleanup as verification.",
+  };
 }
 
 async function prepareCloseout(declarationPath, options) {
