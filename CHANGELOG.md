@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.19.0 - 2026-11-20
+
+- Independent cleanup verification rechecks the exact receipt set supplied by the primary without retyping private paths. A wrong handoff ID is not a resource failure.
+
 ## 1.18.0 - 2026-11-20
 
 - Providers can declare which dependencies their checks use so frozen generations need not copy unrelated extension dependencies. Providers without a declaration keep their full dependency graph.

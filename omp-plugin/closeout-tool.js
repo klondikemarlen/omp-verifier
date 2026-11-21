@@ -1,3 +1,4 @@
+import { prepareCloseoutHandoff } from "#root/omp-plugin/closeout-handoff.js";
 import {
   checkCloseoutReceipts,
   MAX_CLOSEOUT_PATH_LENGTH,
@@ -33,6 +34,10 @@ export function registerCloseoutTool(pi, verifyReceipt) {
         throw new Error("Only the primary agent may run verifier_closeout.");
       }
 
+      const handoffId = await prepareCloseoutHandoff({
+        repositoryRoot,
+        receiptPaths,
+      });
       const details = await checkCloseoutReceipts({
         repositoryRoot,
         receiptPaths,
@@ -43,10 +48,13 @@ export function registerCloseoutTool(pi, verifyReceipt) {
         content: [
           {
             type: "text",
-            text: reportLines(report).join("\n"),
+            text: [...reportLines(report), `Independent check: closeout review ${handoffId}`].join("\n"),
           },
         ],
-        details,
+        details: {
+          ...details,
+          handoffId,
+        },
         isError: details.status !== "PASS",
       };
     },
