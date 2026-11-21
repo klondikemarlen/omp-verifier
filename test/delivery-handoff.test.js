@@ -132,37 +132,6 @@ function assertCliReleaseBlocked(fixture, handoff) {
   return blocked.evidence;
 }
 
-function assessDeliveryAsFailure(fixture, checkoutPath, pending) {
-  const { path, requestId } = pending.reviewRequest;
-  const pageCount = buildSemanticReviewPage(pending).count;
-  for (let page = 0; page < pageCount; page += 1) {
-    runCli(fixture, checkoutPath, 0, "review", path, "--reporter", "text", "--page", String(page));
-  }
-  const assessment = JSON.stringify({
-    requestId,
-    status: "FAIL",
-    summary: "The helper changes its input.",
-    rationale: "The delivered helper adds one instead of returning the input unchanged.",
-    citations: [
-      {
-        path: "src/helper.js",
-        line: 1,
-        quote: TIP_SOURCE.trimEnd(),
-      },
-    ],
-    findings: [
-      {
-        path: "src/helper.js",
-        line: 1,
-        summary: "Remove the added one to preserve the input.",
-      },
-    ],
-  });
-  const [failed] = JSON.parse(runCli(fixture, checkoutPath, 1, "evaluate", path, "--assessment", assessment));
-  assert.equal(failed.status, "FAIL", failed.evidence);
-  return failed;
-}
-
 test("when the source worktree is removed and the primary is dirty, recovery restores the pinned source and complete deletion scope", async t => {
   // Arrange
   const fixture = await deliveryFixture(t);
@@ -373,6 +342,26 @@ test("when a semantic assessment is pending, the handoff stays available until a
   const { checkoutPath } = await recoverDeliveryHandoff({
     handoffPath: handoff.handoffPath,
   });
+  const failureAssessment = requestId => JSON.stringify({
+    requestId,
+    status: "FAIL",
+    summary: "The helper changes its input.",
+    rationale: "The delivered helper adds one instead of returning the input unchanged.",
+    citations: [
+      {
+        path: "src/helper.js",
+        line: 1,
+        quote: TIP_SOURCE.trimEnd(),
+      },
+    ],
+    findings: [
+      {
+        path: "src/helper.js",
+        line: 1,
+        summary: "Remove the added one to preserve the input.",
+      },
+    ],
+  });
   const [ordinaryReview] = JSON.parse(runCli(
     fixture,
     checkoutPath,
@@ -383,7 +372,14 @@ test("when a semantic assessment is pending, the handoff stays available until a
     ...CHANGED_PATHS,
   ));
   assert.equal(ordinaryReview.status, "PENDING");
-  assessDeliveryAsFailure(fixture, checkoutPath, ordinaryReview);
+  const ordinaryPath = ordinaryReview.reviewRequest.path;
+  const ordinaryPages = buildSemanticReviewPage(ordinaryReview).count;
+  for (let page = 0; page < ordinaryPages; page += 1) {
+    runCli(fixture, checkoutPath, 0, "review", ordinaryPath, "--reporter", "text", "--page", String(page));
+  }
+  const ordinaryAssessment = failureAssessment(ordinaryReview.reviewRequest.requestId);
+  const [ordinaryFailure] = JSON.parse(runCli(fixture, checkoutPath, 1, "evaluate", ordinaryPath, "--assessment", ordinaryAssessment));
+  assert.equal(ordinaryFailure.status, "FAIL", ordinaryFailure.evidence);
 
   // Act / Assert
   assert.match(assertCliReleaseBlocked(fixture, handoff), /completed handoff check/);
@@ -399,7 +395,14 @@ test("when a semantic assessment is pending, the handoff stays available until a
   assert.match(assertCliReleaseBlocked(fixture, handoff), /pending assessments/);
   assert.equal(git(checkoutPath, "rev-parse", "HEAD"), fixture.tipCommit);
 
-  const assessed = assessDeliveryAsFailure(fixture, checkoutPath, pending);
+  const boundPath = pending.reviewRequest.path;
+  const boundPages = buildSemanticReviewPage(pending).count;
+  for (let page = 0; page < boundPages; page += 1) {
+    runCli(fixture, checkoutPath, 0, "review", boundPath, "--reporter", "text", "--page", String(page));
+  }
+  const boundAssessment = failureAssessment(pending.reviewRequest.requestId);
+  const [assessed] = JSON.parse(runCli(fixture, checkoutPath, 1, "evaluate", boundPath, "--assessment", boundAssessment));
+  assert.equal(assessed.status, "FAIL", assessed.evidence);
   assert.match(assertCliReleaseBlocked(fixture, handoff), /pending assessments/);
   const [rechecked] = JSON.parse(runCli(fixture, fixture.root, 1, "handoff", "check", handoff.handoffPath));
   assert.equal(rechecked.id, "publisher:identity");
