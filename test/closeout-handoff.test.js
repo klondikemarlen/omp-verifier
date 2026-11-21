@@ -211,13 +211,16 @@ test("when a handoff ID is mistyped or replaced with a receipt path, review bloc
 });
 
 test("when a declared receipt is lost, review reports a resource blocker rather than a handoff error", async context => {
+  // Arrange
   const fixture = await closeoutFixture(context);
   const retained = await fixture.prepareRetainedPath("saved-config");
   const id = fixture.prepareHandoff(retained.receiptPath);
   await rm(retained.receiptPath);
 
+  // Act
   const review = fixture.review(id);
 
+  // Assert
   assert.equal(review.status, 1, review.stderr);
   const [result] = JSON.parse(review.stdout);
   assert.equal(result.id, "verifier:resource-closeout");
