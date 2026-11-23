@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.21.0 - 2026-11-23
+
+- `/verifier timings` shows recent runs, individual check durations and outcomes. It distinguishes coordinator runtime from elapsed time through an observed semantic verdict.
+
 ## 1.20.0 - 2026-11-20
 
 - `handoff check` binds verification to the pinned delivery. Release keeps the checkout and pin while the check is running or a semantic assessment remains pending; a terminal failure can be reported without treating disposal as a pass.

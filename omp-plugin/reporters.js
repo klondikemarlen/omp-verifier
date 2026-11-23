@@ -93,3 +93,35 @@ export function formatVerificationInventory({ checks, blockedResults }) {
 
   return lines.join("\n");
 }
+
+export function formatRunTimings(runs) {
+  if (!runs.length) {
+    return "No recorded verification runs in this working directory.";
+  }
+
+  return runs.map(run => {
+    const started = new Date(run.startedAt).toISOString();
+    const lines = [`${started}  ${run.command}`];
+    if (run.coordinatorMs === null) {
+      lines.push("  Coordinator finish not observed; full run unknown.");
+    } else {
+      const full = run.fullRunMs === null ? "completion not observed" : formatDuration(run.fullRunMs);
+      lines.push(`  Coordinator: ${formatDuration(run.coordinatorMs)}; full run: ${full}`);
+    }
+    for (const check of run.checks) {
+      const duration = check.durationMs === null ? "not timed" : formatDuration(check.durationMs);
+      const outcome = check.finalStatus ? `${check.status} → ${check.finalStatus} at +${formatDuration(check.elapsedMs)}` : check.status;
+      lines.push(`  ${check.id}: ${outcome} (${duration})`);
+    }
+    if (run.coordinatorMs !== null && !run.checks.length) {
+      lines.push("  No checks selected.");
+    }
+    return lines.join("\n");
+  }).join("\n\n");
+}
+
+function formatDuration(ms) {
+  if (ms < 1_000) return `${ms} ms`;
+  if (ms < 60_000) return `${(ms / 1_000).toFixed(2)} s`;
+  return `${Math.floor(ms / 60_000)} min ${Math.floor(ms % 60_000 / 1_000)} s`;
+}
