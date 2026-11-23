@@ -96,6 +96,8 @@ Kind-specific fields:
 
 A present Git resource declared absent also requires `delivery`: full `baseCommit`, `tipCommit`, `deliveredCommit`, configured `remote`, and exact remote `targetRef`. The declared tip must match the actual resource. Fresh remote evidence must contain the delivered commit. Ordinary merge ancestry proves delivery; rewritten delivery additionally needs `deliveredBaseCommit` and complete changed-path/tree equivalence. Required objects must already be available locally; Verifier never fetches or prunes. Uncommitted tracked work blocks preparation; untracked/ignored worktree contents require explicit `disposableContents: true`. This is evidence capture, not permission to delete the worktree.
 
+For a delivered dependency-heavy checkout, set `"largeWorktree": true` **on that exact `git-worktree` resource**, alongside `"disposition": "absent"`, `"ownership": "task"`, `"disposableContents": true` and the ordinary delivery proof. Verifier fingerprints all tracked, untracked and ignored files; the receipt records counts instead of enumerating thousands of names. The opt-in allows 16,384 distinct Git paths per checkout and 512 MiB per file. A separate completeness scan visits at most 16,384 subdirectories and rejects entries Git cannot inventory. All opted-in worktrees in one observation pass share 1 GiB of content and 120 seconds; use separate declarations for independently owned deliveries that exceed the combined budget. Incomplete observation still blocks cleanup. Leave the field out for ordinary resources.
+
 For example, a temporary ignored file outside the surviving checkout:
 
 ```json
