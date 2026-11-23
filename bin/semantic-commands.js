@@ -20,6 +20,7 @@ export function registerSemanticCommands(program) {
     .option("--remove-context <path>", "Remove a retained context selector", appendContext, [])
     .option("--max-context-paths <count>", "Context path limit from 30 to 256", parseWholeNumber)
     .option("--page <index>", "Zero-based text review page", parseWholeNumber)
+    .option("--resume", "Read the first undelivered text page of the current review")
     .addOption(new Option("--continue", "Restart the complete review as bounded batches").conflicts("batch"))
     .option("--batch <index>", "Zero-based semantic batch", parseWholeNumber);
   addReportingOptions(review);
@@ -53,6 +54,13 @@ async function reviewRequest(requestPath, options) {
   const hasContextOptions = options.context.length > 0 || options.callerContext.length > 0
     || options.externalContext.length > 0 || options.removeContext.length > 0
     || options.maxContextPaths !== undefined;
+  if (options.resume && options.reporter !== "text") {
+    throw new Error("--resume requires review --reporter text");
+  }
+  if (options.resume && (options.page !== undefined || options.batch !== undefined
+    || options.continue || hasContextOptions)) {
+    throw new Error("--resume cannot be combined with --page, --batch, --continue, or context options");
+  }
   if (pageIndex > 0 && hasContextOptions) {
     throw new Error("Context recovery must start at page 0; read later pages from the renewed request without context options");
   }
@@ -75,6 +83,7 @@ async function reviewRequest(requestPath, options) {
     maxContextPaths,
     continuation: options.continue,
     batchIndex: options.batch,
+    resume: options.resume,
   });
   await writeResults([result], {
     reporter: options.reporter,

@@ -102,6 +102,10 @@ function quoteShellArgument(value) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
+export function resumeReviewCommand(path) {
+  return `node ${quoteShellArgument(COORDINATOR_PATH)} review ${quoteShellArgument(path)} --resume --reporter text`;
+}
+
 function nextReviewCommand(path, nextPageIndex, batchIndex) {
   const coordinator = `node ${quoteShellArgument(COORDINATOR_PATH)}`;
   const request = quoteShellArgument(path);
@@ -139,7 +143,15 @@ function reviewContinuation(path, nextPageIndex, phase, batchIndex) {
   ].join("\n");
 }
 
-function reviewPageInstruction(phase) {
+function reviewPageInstruction(phase, resumed = false) {
+  // Resumed instructions must fit the existing page budget so old receipts still match.
+  if (resumed && phase === "batch") {
+    return "Delivery is not inspection. Reopen earlier pages with review --batch N --page I as needed. Inspect every page before each checkpoint and the final assessment. Never use standalone advise for PENDING progress.";
+  }
+  if (resumed) {
+    return "Delivery is not inspection. Reopen earlier pages with review --page I as needed. Inspect every page before assessment, observe the accepted result, and never use standalone advise for PENDING progress.";
+  }
+
   if (phase === "batch") {
     return "You are the verifier: execute the next command with bash yourself. Inspect every page of this batch before its checkpoint. A checkpoint is not a final verdict; continue through all batches and the final cross-batch assessment. Never use standalone advise for PENDING progress.";
   }
@@ -210,9 +222,10 @@ function pageOffsets(buffer, capacity) {
 }
 
 export function buildSemanticReviewPage(result, pageIndex = 0) {
-  if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) {
-    throw new RangeError("Semantic review page index must be a nonnegative integer.");
-  }
+  return paginateSemanticReview(result).page(pageIndex);
+}
+
+export function paginateSemanticReview(result) {
   if (!result || typeof result !== "object" || !result.reviewRequest) {
     throw new TypeError("Cannot build a semantic review page without a reviewRequest.");
   }
@@ -236,24 +249,42 @@ export function buildSemanticReviewPage(result, pageIndex = 0) {
   const buffer = Buffer.from(serialized, "utf8");
   const capacity = contentCapacity(path, requestId, phase, batchIndex);
   const offsets = pageOffsets(buffer, capacity);
-  if (pageIndex >= offsets.length) {
-    throw new RangeError(`Semantic review page index ${pageIndex} is out of range; page count is ${offsets.length}.`);
-  }
-
-  const { startByte, endByte } = offsets[pageIndex];
+  const count = offsets.length;
   const viewFingerprint = createHash("sha256").update(String(capacity)).update("\n").update(buffer).digest("hex");
+
   return {
-    requestId,
-    path,
+    batchIndex,
+    count,
     viewFingerprint,
-    ...(phase ? { continuationPhase: phase } : {}),
-    ...(batchIndex === undefined ? {} : { batchIndex }),
-    index: pageIndex,
-    count: offsets.length,
-    startByte,
-    endByte,
     totalBytes: buffer.length,
-    content: buffer.toString("utf8", startByte, endByte),
+    page(index) {
+      if (!Number.isSafeInteger(index) || index < 0) {
+        throw new RangeError("Semantic review page index must be a nonnegative integer.");
+      }
+
+      if (index >= count) {
+        throw new RangeError(`Semantic review page index ${index} is out of range; page count is ${count}.`);
+      }
+
+      const { startByte, endByte } = offsets[index];
+      return {
+        requestId,
+        path,
+        viewFingerprint,
+        ...(phase ? {
+          continuationPhase: phase,
+        } : {}),
+        ...(batchIndex === undefined ? {} : {
+          batchIndex,
+        }),
+        index,
+        count,
+        startByte,
+        endByte,
+        totalBytes: buffer.length,
+        content: buffer.toString("utf8", startByte, endByte),
+      };
+    },
   };
 }
 
@@ -274,7 +305,7 @@ function wrapDisplayLines(text) {
   }).join("\n");
 }
 
-export function formatSemanticReviewPage(page) {
+export function formatSemanticReviewPage(page, { resumed = false } = {}) {
   let nextPageIndex = null;
   let nextPage = "none (final page)";
   if (page.index + 1 < page.count) {
@@ -296,7 +327,7 @@ export function formatSemanticReviewPage(page) {
     page.content,
     `Next page index: ${nextPage}`,
     reviewContinuation(page.path, nextPageIndex, page.continuationPhase, page.batchIndex),
-    reviewPageInstruction(page.continuationPhase),
+    reviewPageInstruction(page.continuationPhase, resumed),
   ].join("\n"));
 
   if (Buffer.byteLength(output, "utf8") > MAX_FORMATTED_PAGE_BYTES) {

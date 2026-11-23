@@ -120,10 +120,26 @@ test("when review inputs conflict or flags are irrelevant, request state does no
     reviewArguments.push(["--page", "1", "--reporter", "text", flag, "src/first.js"]);
   }
   reviewArguments.push(["--page", "1", "--reporter", "text", "--max-context-paths", "30"]);
+  const resumeConflicts = [
+    ["--page", "0"],
+    ["--batch", "0"],
+    ["--continue"],
+    ["--context", "src/first.js"],
+    ["--caller-context", "src/first.js"],
+    ["--external-context", "src/first.js"],
+    ["--remove-context", "src/first.js"],
+    ["--max-context-paths", "31"],
+  ];
+  for (const args of resumeConflicts) {
+    reviewArguments.push(["--resume", "--reporter", "text", ...args]);
+  }
+  reviewArguments.push(["--resume"], ["--resume", "--reporter", "json"]);
   const rejectedCommands = reviewArguments.map(args => ["review", requestPath, ...args]);
   rejectedCommands.push(
     ["evaluate", requestPath, "--assessment", "-", "--context", "src/first.js"],
     ["evaluate", requestPath, "--assessment", "-", "--continue"],
+    ["evaluate", requestPath, "--assessment", "-", "--resume"],
+    ["diagnostics", requestPath, "--resume"],
     ["diagnostics", requestPath, "--batch", "0"],
   );
 

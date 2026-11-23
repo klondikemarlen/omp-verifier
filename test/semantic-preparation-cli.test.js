@@ -32,6 +32,10 @@ function reviewPageDetails(output) {
   };
 }
 
+function resumeReview(fixture, requestPath) {
+  return fixture.run(["review", requestPath, "--resume", "--reporter", "text"]);
+}
+
 function assessmentFor(requestId) {
   return {
     requestId,
@@ -375,11 +379,12 @@ test("when preparation returns multiple pending reviews, each handle remains sep
   // Arrange
   const fixture = await preparationFixture(t, {
     checkIds: ["publisher:first", "publisher:second"],
+    pagedReview: true,
   });
 
   // Act
   const prepared = fixture.run([
-    "automatic", "src/policy.js", "src/obsolete.js",
+    "automatic", "src/policy.js", "src/obsolete.js", ...fixture.pagedSourcePaths,
     "--reporter", "text", "--failures-only",
   ]);
 
@@ -389,12 +394,26 @@ test("when preparation returns multiple pending reviews, each handle remains sep
     "PENDING publisher:first",
     "PENDING publisher:second",
   ]);
+  assert.doesNotMatch(prepared.stdout, /^Page index:/m);
   const paths = [...prepared.stdout.matchAll(/^ {2}Review request: (.+)$/gm)].map(match => match[1]);
+  assert.equal(paths.length, 2);
   const inspected = paths.map(path => fixture.run(["review", path]));
-  assert.deepEqual(inspected.map(result => JSON.parse(result.stdout)[0].id), [
-    "publisher:first",
-    "publisher:second",
-  ]);
+  const results = inspected.map(result => {
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout)[0];
+  });
+  assert.deepEqual(results.map(result => result.id), ["publisher:first", "publisher:second"]);
+
+  for (const result of results) {
+    const { path, requestId } = result.reviewRequest;
+    const resumed = resumeReview(fixture, path);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(resumed.stdout.match(/^Page index:/gm)?.length, 1);
+    const page = reviewPageDetails(resumed.stdout);
+    assert.equal(page.requestId, requestId);
+    assert.equal(page.index, 0);
+    assert.ok(page.count > 1);
+  }
 });
 
 test("when a final review page supplies evaluation, acceptance and exact retry both complete silently", async t => {
@@ -562,6 +581,53 @@ test("when a text review skips pages, evaluation remains pending until every mis
   assert.equal(replay.stdout, completed.stdout);
 });
 
+test("when some pages were skipped, resume delivers each unread page before returning the assessment command", async t => {
+  // Arrange
+  const fixture = await preparationFixture(t, {
+    pagedReview: true,
+  });
+  const prepared = fixture.run([
+    "automatic", "src/policy.js", "src/obsolete.js", ...fixture.pagedSourcePaths,
+    "--reporter", "text", "--failures-only",
+  ]);
+  assert.equal(prepared.status, 0, prepared.stderr);
+  const firstPage = reviewPageDetails(prepared.stdout);
+  assert.equal(firstPage.index, 0);
+  assert.ok(firstPage.count >= 3);
+
+  const { requestPath, requestId, count } = firstPage;
+  const lastIndex = count - 1;
+  const lastPage = fixture.run([
+    "review", requestPath, "--reporter", "text", "--page", String(lastIndex),
+  ]);
+  assert.equal(lastPage.status, 0, lastPage.stderr);
+  assert.equal(reviewPageDetails(lastPage.stdout).index, lastIndex);
+
+  // Act / Assert
+  for (let expectedIndex = 1; expectedIndex < lastIndex; expectedIndex += 1) {
+    const resumed = resumeReview(fixture, requestPath);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    assert.equal(resumed.stdout.match(/^Page index:/gm)?.length, 1);
+    const page = reviewPageDetails(resumed.stdout);
+    assert.equal(page.requestId, requestId);
+    assert.equal(page.index, expectedIndex);
+  }
+
+  const ready = resumeReview(fixture, requestPath);
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.equal(ready.stdout.match(/^Page index:/gm)?.length, 1);
+  assert.equal(reviewPageDetails(ready.stdout).index, lastIndex);
+
+  const nextCommand = ready.stdout.match(/^Next command: (.+)$/m)?.[1];
+  assert.match(nextCommand, /\bevaluate\b/);
+  const assessment = assessmentFor(requestId);
+  const completed = fixture.runCommand(nextCommand, `${JSON.stringify(assessment)}\n`);
+  assert.equal(completed.status, 0, completed.stderr);
+  const replay = evaluateAssessment(fixture, requestPath, assessment, "json");
+  assert.equal(replay.status, 0, replay.stderr);
+  assert.equal(JSON.parse(replay.stdout)[0].status, "PASS");
+});
+
 test("when context renewal replaces a fully delivered review, the new request cannot reuse old page receipts", async t => {
   // Arrange
   const fixture = await preparationFixture(t, {
@@ -583,17 +649,25 @@ test("when context renewal replaces a fully delivered review, the new request ca
     "--reporter", "text",
   ]);
   const renewed = reviewPageDetails(contextRenewal.stdout);
+  const staleResume = resumeReview(fixture, original.requestPath);
+  const resumedReplacement = reviewPageDetails(staleResume.stdout);
   const lateRead = fixture.run([
     "review", original.requestPath, "--reporter", "text", "--page", String(original.count - 1),
   ]);
   const replacementPage = reviewPageDetails(lateRead.stdout);
   const assessment = evaluateAssessment(fixture, renewed.requestPath, assessmentFor(renewed.requestId), "json");
   const pending = JSON.parse(assessment.stdout)[0];
+  const currentResume = resumeReview(fixture, renewed.requestPath);
+  const resumedCurrent = reviewPageDetails(currentResume.stdout);
 
   // Assert
   assert.equal(contextRenewal.status, 0, contextRenewal.stderr);
   assert.notEqual(renewed.requestId, original.requestId);
   assert.equal(renewed.index, 0);
+  assert.equal(staleResume.status, 0, staleResume.stderr);
+  assert.equal(resumedReplacement.requestPath, renewed.requestPath);
+  assert.equal(resumedReplacement.requestId, renewed.requestId);
+  assert.equal(resumedReplacement.index, 0);
   assert.equal(lateRead.status, 0, lateRead.stderr);
   assert.equal(replacementPage.requestId, renewed.requestId);
   assert.equal(replacementPage.index, 0);
@@ -602,4 +676,7 @@ test("when context renewal replaces a fully delivered review, the new request ca
   assert.equal(pending.reviewRequest.requestId, renewed.requestId);
   assert.deepEqual(pending.reviewProgress.missingPages,
     Array.from({ length: renewed.count - 1 }, (_, index) => index + 1));
+  assert.equal(currentResume.status, 0, currentResume.stderr);
+  assert.equal(resumedCurrent.requestId, renewed.requestId);
+  assert.equal(resumedCurrent.index, 1);
 });
