@@ -5,7 +5,7 @@ import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
-import { timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { markVerificationTimeout, timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -76,35 +76,37 @@ function verificationEnvironment(changedPaths, delivery) {
   return environment;
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
-  if (check.mode === "agentic") {
-    let scopePaths = changedPaths;
-    let scopeRoot = repositoryRoot;
-    if (!scopePaths) {
-      const changeSet = await changedProjectPaths(cwd);
-      if (changeSet.error) return blocked(check.id, "Could not inspect changed paths", changeSet.error);
-      scopePaths = changeSet.paths;
-      scopeRoot = changeSet.repositoryRoot || repositoryRoot;
-    } else if (scopeRoot === cwd) {
-      const root = await projectRepositoryRoot(cwd);
-      if (!root.error) scopeRoot = root.repositoryRoot;
+async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason) {
+  let scopePaths = changedPaths;
+  let scopeRoot = repositoryRoot;
+  if (!scopePaths) {
+    const changeSet = await changedProjectPaths(cwd);
+    if (changeSet.error) {
+      return blocked(check.id, "Could not inspect changed paths", changeSet.error);
     }
-    return prepareSemanticEvaluation({
-      check,
-      cwd,
-      changedPaths: scopePaths,
-      repositoryRoot: scopeRoot,
-      maxSourceBytes,
-      sourceRecovery,
-      automaticScope,
-      reuseExisting,
-      selectionReason,
-    });
-  }
 
+    scopePaths = changeSet.paths;
+    scopeRoot = changeSet.repositoryRoot || repositoryRoot;
+  } else if (scopeRoot === cwd) {
+    const root = await projectRepositoryRoot(cwd);
+    if (!root.error) scopeRoot = root.repositoryRoot;
+  }
+  return prepareSemanticEvaluation({
+    check,
+    cwd,
+    changedPaths: scopePaths,
+    repositoryRoot: scopeRoot,
+    maxSourceBytes,
+    sourceRecovery,
+    automaticScope,
+    reuseExisting,
+    selectionReason,
+  });
+}
+
+async function executeVerificationCheck(check, cwd, changedPaths, automaticScope) {
   const signal = verificationCancellationSignal();
   try {
-    await access(check.entryPath);
     signal?.throwIfAborted();
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
@@ -118,19 +120,50 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
   } catch (error) {
     signal?.throwIfAborted();
 
+    if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
+      return blocked(check.id, "Verification output exceeded the limit");
+    }
+    // execFile kills for maxBuffer or timeout; cancellation was handled above.
+    if (error?.killed && check.timeoutMs > 0) {
+      return markVerificationTimeout(blocked(check.id, "Verification timed out"));
+    }
+
     if (typeof error?.code === "number" && !error.stderr) {
       const result = resultFromOutput(check, String(error.stdout || "").trim());
       if (result?.status === "FAIL" || result?.status === "BLOCKED") return result;
     }
-    if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return blocked(check.id, "Verification output exceeded the limit");
-    if (error?.killed) return blocked(check.id, "Verification timed out");
     if (typeof error?.code === "number") return blocked(check.id, `Verification exited with code ${error.code}`, String(error.stderr || error.stdout || "").slice(0, MAX_FIELD_LENGTH));
+    if (error?.signal) {
+      const evidence = [`Verification process terminated by ${error.signal}.`, error.stderr].filter(Boolean).join("\n");
+      return blocked(check.id, "Verification could not run", evidence.slice(0, MAX_FIELD_LENGTH));
+    }
+
     return blocked(check.id, "Verification could not run", error.message);
   }
 }
 
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
+  if (check.mode === "agentic") {
+    return timeVerificationCheck(check.id, () =>
+      prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason),
+    );
+  }
+
+  try {
+    await access(check.entryPath);
+  } catch (error) {
+    return blocked(check.id, "Verification could not run", error.message);
+  }
+
+  return timeVerificationCheck(
+    check.id,
+    () => executeVerificationCheck(check, cwd, changedPaths, automaticScope),
+    check.timeoutMs,
+  );
+}
+
 export async function runVerificationCheck(check, cwd, changedPaths, maxSourceBytes) {
-  return timeVerificationCheck(check.id, () => runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes));
+  return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes);
 }
 export async function runVerificationChecks(checks, cwd, ids = [], maxSourceBytes) {
   const byId = new Map(checks.map(check => [check.id, check]));
@@ -178,9 +211,7 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    const result = await timeVerificationCheck(check.id, () =>
-      runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason),
-    );
+    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason);
     if (!result) continue;
     const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({

@@ -138,7 +138,7 @@ Use `review <request-file> --reporter text` to inspect a semantic request. Follo
 
 To see why a semantic review is still pending, use `diagnostics <request-file>`. It reports source-free progress and measured coordinator time without reading pages on the reviewer's behalf or approving the source. The [diagnostics contract](docs/references/verifier-concepts-reference.md#review-diagnostics) explains timing limits and cached terminal status.
 
-For a slow or inconsistent run, use `/verifier timings` from the directory where you ran verification. Compare recent check durations and outcomes without rerunning anything. `omp-verifier timings` returns the same local history as JSON. See [run timings](docs/references/verifier-concepts-reference.md#run-timings) for the difference between coordinator time and full elapsed time.
+For a quiet check, use `/verifier timings` from the directory where verification started. Look for the run ID, the last observed check, and its execution budget. An observed start without a return does not tell you whether the check is still running. `omp-verifier timings` returns the same history as JSON without rerunning checks. See [run timings](docs/references/verifier-concepts-reference.md#run-timings) for timing and completion semantics.
 
 Private dependencies already available in a local Git checkout can use `--external-context 'git+file:///absolute/repository?revision=<full-commit>&path=<file>#Lstart-Lend'`. Select only material evidence within the task's existing permissions; no new approval prompt or grant file is required. The [external evidence contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) explains provenance, limits, recovery, and private-output handling.
 

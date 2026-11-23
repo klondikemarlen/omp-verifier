@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { once } from "node:events";
+import { on, once } from "node:events";
+import { watch } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -103,6 +105,44 @@ function killProcessGroup(pid) {
     if (error.code !== "ESRCH") {
       throw error;
     }
+  }
+}
+
+function assertStartedCheck(check, id, timeoutMs, runStartedAt) {
+  const { startedAt, ...observation } = check;
+  assert.ok(Number.isSafeInteger(startedAt));
+  assert.ok(startedAt >= runStartedAt);
+  assert.deepEqual(observation, {
+    id,
+    status: "STARTED",
+    durationMs: null,
+    timeoutMs,
+  });
+}
+
+async function readTimingsAfterFastCheck({ agentDirectory, run }, checkId, signal) {
+  // Filesystem notifications wake the CLI reader; only its output proves progress.
+  const watcher = watch(agentDirectory, {
+    recursive: true,
+  });
+  const changes = on(watcher, "change", {
+    signal,
+    close: ["close"],
+  });
+  try {
+    for (;;) {
+      const report = run("timings", "--reporter", "json");
+      assert.equal(report.status, 0, report.stderr);
+      const records = JSON.parse(report.stdout);
+      if (records[0]?.checks.some(check => check.id === checkId && check.status === "PASS")) {
+        return records;
+      }
+
+      const { done } = await changes.next();
+      assert.ok(!done, "Timing observation stopped before fast check completed");
+    }
+  } finally {
+    watcher.close();
   }
 }
 
@@ -298,6 +338,185 @@ process.stdout.write(JSON.stringify({
   assert.equal(record.fullRunMs, record.coordinatorMs);
 });
 
+test("when a fast verify check finishes while another is gated, a separate timings reader sees both states on the same run", async t => {
+  // Arrange
+  const fixture = await timingFixture(t);
+  const { cwd, env, provider, installChecks, run } = fixture;
+  const socketPath = join(cwd, "check.sock");
+  const server = createServer();
+  const listening = once(server, "listening");
+  server.listen(socketPath);
+  t.after(() => server.close());
+  await listening;
+
+  const fastId = "publisher:fast";
+  const slowId = "publisher:gated";
+  const fastTimeoutMs = 10_000;
+  const slowTimeoutMs = 40_000;
+  await installChecks([
+    {
+      id: fastId,
+      label: "Fast check",
+      description: "Passes without waiting for the gate.",
+      entry: "./fast.mjs",
+      timeoutMs: fastTimeoutMs,
+    },
+    {
+      id: slowId,
+      label: "Gated check",
+      description: "Waits for the observer to release the gate.",
+      entry: "./gated.mjs",
+      timeoutMs: slowTimeoutMs,
+    },
+  ]);
+  await writeFile(join(provider, "fast.mjs"), `
+process.stdout.write(JSON.stringify({
+  status: "PASS",
+  summary: "Fast check passed.",
+}));
+`);
+  await writeFile(join(provider, "gated.mjs"), `
+import { once } from "node:events";
+import { createConnection } from "node:net";
+
+const gate = createConnection(${JSON.stringify(socketPath)});
+await once(gate, "end");
+process.stdout.write(JSON.stringify({
+  status: "PASS",
+  summary: "Gated check passed.",
+}));
+`);
+
+  // Act
+  const timeout = AbortSignal.timeout(20_000);
+  const connected = once(server, "connection", {
+    signal: timeout,
+  });
+  const beforeRun = Date.now();
+  const child = spawn(process.execPath, [cliPath, "verify", fastId, slowId], {
+    cwd,
+    env,
+    detached: true,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let stdout = "";
+  child.stdout.setEncoding("utf8").on("data", chunk => {
+    stdout += chunk;
+  });
+  const completion = once(child, "close", {
+    signal: timeout,
+  });
+  const prematureExit = completion.then(([code, exitSignal]) => {
+    assert.fail(`Verification exited before the gate opened: ${code ?? exitSignal}`);
+  });
+  let gate;
+  try {
+    [gate] = await Promise.race([connected, prematureExit]);
+    const inProgress = await readTimingsAfterFastCheck(fixture, fastId, timeout);
+
+    // Assert
+    assert.equal(inProgress.length, 1);
+    const [activeRun] = inProgress;
+    assert.ok(activeRun.startedAt >= beforeRun);
+    assert.equal(activeRun.coordinatorMs, null);
+    assert.equal(activeRun.fullRunMs, null);
+    assert.equal(activeRun.checks.length, 2);
+    const fast = activeRun.checks.find(check => check.id === fastId);
+    const slow = activeRun.checks.find(check => check.id === slowId);
+    assert.equal(fast.status, "PASS");
+    assert.ok(Number.isSafeInteger(fast.startedAt));
+    assert.ok(fast.startedAt >= activeRun.startedAt);
+    assert.ok(fast.durationMs > 0);
+    assert.equal(fast.timeoutMs, fastTimeoutMs);
+    assert.ok(!Object.hasOwn(fast, "timedOut"));
+    assertStartedCheck(slow, slowId, slowTimeoutMs, activeRun.startedAt);
+    assert.equal(stdout, "");
+
+    // Release the check and read the same run again after the verdict.
+    gate.end();
+    const [code, exitSignal] = await completion;
+    assert.equal(code, 0, stdout);
+    assert.equal(exitSignal, null);
+    assert.deepEqual(JSON.parse(stdout), [
+      {
+        id: fastId,
+        status: "PASS",
+        summary: "Fast check passed.",
+      },
+      {
+        id: slowId,
+        status: "PASS",
+        summary: "Gated check passed.",
+      },
+    ]);
+    const report = run("timings", "--reporter", "json");
+    assert.equal(report.status, 0, report.stderr);
+    const finished = JSON.parse(report.stdout);
+    assert.equal(finished.length, 1);
+    const [finishedRun] = finished;
+    assert.equal(finishedRun.id, activeRun.id);
+    assert.equal(finishedRun.startedAt, activeRun.startedAt);
+    assert.equal(finishedRun.checks.length, 2);
+    assert.deepEqual(finishedRun.checks.find(check => check.id === fastId), fast);
+    const finishedSlow = finishedRun.checks.find(check => check.id === slowId);
+    assert.deepEqual(finishedSlow, {
+      ...slow,
+      status: "PASS",
+      durationMs: finishedSlow.durationMs,
+    });
+    assert.ok(finishedSlow.durationMs > 0);
+    assert.ok(finishedRun.coordinatorMs >= finishedSlow.durationMs);
+    assert.equal(finishedRun.fullRunMs, finishedRun.coordinatorMs);
+  } finally {
+    gate?.destroy();
+    killProcessGroup(child.pid);
+  }
+});
+
+test("when a check exhausts its execution budget, timings records an observed timeout without changing the verdict", async t => {
+  // Arrange
+  const { provider, installChecks, run } = await timingFixture(t);
+  const id = "publisher:timeout";
+  const timeoutMs = 500;
+  await installChecks([{
+    id,
+    label: "Timeout check",
+    description: "Cannot finish before the verifier's budget expires.",
+    entry: "./timeout.mjs",
+    timeoutMs,
+  }]);
+  await writeFile(join(provider, "timeout.mjs"), `
+import { setTimeout as delay } from "node:timers/promises";
+
+await delay(30_000);
+`);
+
+  // Act
+  const verified = run("verify", id);
+  const report = run("timings", "--reporter", "json");
+
+  // Assert
+  assert.equal(verified.status, 1, verified.stderr);
+  assert.deepEqual(JSON.parse(verified.stdout), [{
+    id,
+    status: "BLOCKED",
+    summary: "Verification timed out",
+  }]);
+  assert.equal(report.status, 0, report.stderr);
+  const [record] = JSON.parse(report.stdout);
+  assert.equal(record.checks.length, 1);
+  const [{ startedAt, durationMs, ...observation }] = record.checks;
+  assert.deepEqual(observation, {
+    id,
+    status: "BLOCKED",
+    timeoutMs,
+    timedOut: true,
+  });
+  assert.ok(Number.isSafeInteger(startedAt));
+  assert.ok(startedAt >= record.startedAt);
+  assert.ok(durationMs > 0);
+});
+
 test("when no automatic check is selected and a manual ID is unknown, history shows no invented check runtime", async t => {
   // Arrange
   const { run } = await timingFixture(t);
@@ -350,7 +569,8 @@ test("when the installed launcher receives SIGTERM, history reports observed can
   assert.ok(record.cancelledAfterMs >= 100);
   assert.equal(record.coordinatorMs, null);
   assert.equal(record.fullRunMs, null);
-  assert.deepEqual(record.checks, []);
+  assert.equal(record.checks.length, 1);
+  assertStartedCheck(record.checks[0], "publisher:slow", 40_000, record.startedAt);
   assert.match(text.stdout, /Cancelled after \d[^\n]* \(SIGTERM\); full run unknown\./);
   assert.doesNotMatch(text.stdout, /Coordinator finish not observed/);
 });
@@ -375,9 +595,18 @@ test("when SIGKILL leaves no cancellation witness, history keeps the finish unkn
   assert.ok(!Object.hasOwn(record, "cancelledAfterMs"));
   assert.equal(record.coordinatorMs, null);
   assert.equal(record.fullRunMs, null);
-  assert.deepEqual(record.checks, []);
+  assert.equal(record.checks.length, 1);
+  assertStartedCheck(record.checks[0], "publisher:slow", 40_000, record.startedAt);
   assert.match(text.stdout, /Coordinator finish not observed; full run unknown\./);
   assert.doesNotMatch(text.stdout, /Cancelled after/);
+
+  fixture.useTimingStore();
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: record.checks[0].startedAt + record.checks[0].timeoutMs + 1,
+  });
+  const [later] = await readTimingHistory(fixture.cwd);
+  assert.deepEqual(later, record);
 });
 
 test("when cancellation is immediate, history preserves zero elapsed milliseconds", async t => {
