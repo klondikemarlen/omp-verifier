@@ -5,6 +5,7 @@ import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
+import { timeVerificationCheck } from "#root/omp-plugin/run-timings.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -124,7 +125,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
 }
 
 export async function runVerificationCheck(check, cwd, changedPaths, maxSourceBytes) {
-  return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes);
+  return timeVerificationCheck(check.id, () => runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes));
 }
 export async function runVerificationChecks(checks, cwd, ids = [], maxSourceBytes) {
   const byId = new Map(checks.map(check => [check.id, check]));
@@ -172,7 +173,9 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason);
+    const result = await timeVerificationCheck(check.id, () =>
+      runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason),
+    );
     if (!result) continue;
     const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({

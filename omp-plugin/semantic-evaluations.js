@@ -29,6 +29,7 @@ import {
   validateContinuationAssessment,
 } from "#root/omp-plugin/semantic-continuation-review.js";
 import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
+import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
@@ -142,6 +143,7 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
     }
   }
 
+  let completedAssessment;
   try {
     const operationStartedAt = performance.now();
     const operationStartedWall = Date.now();
@@ -158,11 +160,24 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
       diagnostics.lastOperationAt = now;
       if (state.consumed) diagnostics.completedAt = now;
       await atomicWrite(statePath(cacheDirectory, checkId), JSON.stringify(state));
+      if (state.consumed) {
+        // Only accepted terminal results close a timing interval. Rejected
+        // assessments also return BLOCKED but do not consume the request.
+        completedAssessment = {
+          requestId: state.requestId,
+          status: state.finalResult.status,
+          completedAt: now,
+        };
+      }
     }
     return result;
   } finally {
     await lockHandle.close();
     await rm(filePath, { force: true });
+    if (completedAssessment) {
+      // History retention must not hold up another operation on the check lock.
+      await saveTimingAssessment(completedAssessment).catch(() => {});
+    }
   }
 }
 

@@ -1,12 +1,14 @@
 import { InvalidArgumentError, Option } from "commander";
 
 import { addReportingOptions, parseWholeNumber } from "#root/bin/cli-options.js";
-import { writeResults } from "#root/bin/cli-output.js";
-import { formatVerificationInventory } from "#root/omp-plugin/reporters.js";
+import { writeJson, writeResults } from "#root/bin/cli-output.js";
+import { formatRunTimings, formatVerificationInventory } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
+import { timeVerificationCheck, timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
+import { readTimingHistory } from "#root/omp-plugin/timing-history.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import {
   runAutomaticVerificationForPaths,
@@ -18,6 +20,11 @@ export function registerVerificationCommands(program) {
   const checks = program.command("checks")
     .description("List installed verification checks without executing them");
   addReportingOptions(checks).action(listChecks);
+
+  const timings = program.command("timings")
+    .description("Show recent run and check durations for this working directory");
+  timings.option("--limit <runs>", "number of recent runs to display (1–50)", parseWholeNumber, 10);
+  addReportingOptions(timings).action(showTimings);
 
   const verify = program.command("verify [check-id...]")
     .description("Run selected installed checks, or all checks when no IDs are supplied")
@@ -47,6 +54,18 @@ export function registerVerificationCommands(program) {
   addReportingOptions(automatic, {
     failuresOnly: true,
   }).action(verifyAutomatic);
+}
+
+async function showTimings(options) {
+  if (options.limit < 1 || options.limit > 50) {
+    throw new InvalidArgumentError("Timing history limit must be between 1 and 50 runs");
+  }
+  const runs = await readTimingHistory(process.cwd(), options.limit);
+  if (options.reporter === "text") {
+    process.stdout.write(`${formatRunTimings(runs)}\n`);
+  } else {
+    writeJson(runs);
+  }
 }
 
 function parseSourceByteLimit(value) {
@@ -83,21 +102,26 @@ async function listChecks(options) {
 
 async function verifyChecks(ids, options) {
   const cwd = process.cwd();
-  const results = await runInstalledVerificationChecks({
+  const results = await timeVerificationRun(cwd, "verify", () => runInstalledVerificationChecks({
     cwd,
     ids,
     maxSourceBytes: options.maxSourceBytes,
-  });
+  }));
   await writeResults(results, options);
 }
 
 async function lintPaths(paths, options) {
   const cwd = process.cwd();
-  const result = await verifyProjectLint({
+  const results = await timeVerificationRun(cwd, "lint", () => lintResults(cwd, paths, options.budgetMs));
+  await writeResults(results, options);
+}
+
+async function lintResults(cwd, paths, budgetMs) {
+  const result = await timeVerificationCheck("verifier:project-lint", () => verifyProjectLint({
     cwd,
     changedPaths: paths,
-    budgetMs: options.budgetMs,
-  });
+    budgetMs,
+  }));
   const results = [];
   if (result.status !== "N/A") {
     results.push({
@@ -105,7 +129,7 @@ async function lintPaths(paths, options) {
       ...result,
     });
   }
-  await writeResults(results, options);
+  return results;
 }
 
 async function verifyAutomatic(paths, options) {
@@ -114,20 +138,24 @@ async function verifyAutomatic(paths, options) {
   if (options.wholeFile && options.base === undefined) {
     throw new Error("--whole-file requires --base and exact paths in the PR");
   }
+  const cwd = process.cwd();
+  const results = await timeVerificationRun(cwd, "automatic", () => automaticResults(cwd, paths, options));
+  await writeResults(results, options);
+}
 
+async function automaticResults(cwd, paths, options) {
   let intent;
   if (options.request !== undefined) {
     try {
       intent = await readRequestIntent(options.request);
     } catch (error) {
-      await writeResults([{
+      return [{
         id: "verifier:request-intent",
         status: "BLOCKED",
         summary: "Current request intent is unavailable",
         evidence: error.message,
         nextCheck: "Use the active request handle, or run without --request to perform full automatic verification.",
-      }], options);
-      return;
+      }];
     }
   }
 
@@ -135,7 +163,6 @@ async function verifyAutomatic(paths, options) {
   if (options.full) selectionReason = "full-delivery";
   else if (intent?.selectionReason === "explicit-work-level") selectionReason = `explicit-${intent.level}`;
 
-  const cwd = process.cwd();
   const verification = {
     cwd,
     maxSourceBytes: options.maxSourceBytes,
@@ -155,11 +182,11 @@ async function verifyAutomatic(paths, options) {
     });
   }
   if (options.closeout !== undefined) {
-    const closeout = await verifyResourceCloseout({
+    const closeout = await timeVerificationCheck("verifier:resource-closeout", () => verifyResourceCloseout({
       cwd,
       receiptPath: options.closeout,
-    });
+    }));
     results.push(closeout);
   }
-  await writeResults(results, options);
+  return results;
 }

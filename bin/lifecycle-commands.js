@@ -10,6 +10,7 @@ import {
   releaseDeliveryHandoff,
 } from "#root/omp-plugin/delivery-handoff.js";
 import { prepareResourceCloseout, verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
+import { timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { generationCommand } from "#root/omp-plugin/runtime-generations.js";
 
 export function registerLifecycleCommands(program) {
@@ -130,14 +131,16 @@ async function recoverHandoff(handoffPath, options) {
 }
 
 async function checkHandoff(handoffPath, options) {
-  let results;
-  try {
-    results = await checkDeliveryHandoff({
-      handoffPath,
-    });
-  } catch (error) {
-    results = [handoffBlocker(error)];
-  }
+  const cwd = process.cwd();
+  const results = await timeVerificationRun(cwd, "handoff check", async () => {
+    try {
+      return await checkDeliveryHandoff({
+        handoffPath,
+      });
+    } catch (error) {
+      return [handoffBlocker(error)];
+    }
+  });
   // The lifecycle command may run outside the selected checkout. The reviewer
   // reads and acknowledges semantic pages from the request's actual root.
   await writeResults(results, {

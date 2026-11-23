@@ -10,14 +10,19 @@ import {
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|timings|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
+  {
+    name: "timings",
+    description: "Show recent run and check durations",
+  },
   { name: "demo", description: "Preview actual advisor cards without running checks" },
   { name: "uninstall", description: "Remove the verifier advisor" },
   {
@@ -54,7 +59,11 @@ async function buildChecks(packageDirectory) {
 }
 
 async function buildVerification(cwd, ids, packageDirectory) {
-  const results = await runInstalledVerificationChecks({ cwd, ids, packageDirectory });
+  const results = await timeVerificationRun(cwd, "verify", () => runInstalledVerificationChecks({
+    cwd,
+    ids,
+    packageDirectory,
+  }));
   return `Verifier verification:\n${formatVerificationResults(results)}`;
 }
 
@@ -261,6 +270,11 @@ export default async function verifierPlugin(pi) {
         const output = ctx.verificationPackageDirectory
           ? await buildChecks(ctx.verificationPackageDirectory)
           : await runtimeCommand(agentDir, cwd, ["checks", "--reporter", "text"]);
+        return ctx.ui.notify(output, "info");
+      }
+
+      if (action === "timings" && rest.length === 0) {
+        const output = await runtimeCommand(agentDir, cwd, ["timings", "--reporter", "text"]);
         return ctx.ui.notify(output, "info");
       }
 
