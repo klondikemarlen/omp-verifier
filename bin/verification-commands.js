@@ -14,6 +14,7 @@ import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
   runInstalledVerificationChecks,
+  validateProjectLintBudget,
 } from "#root/omp-plugin/verifications.js";
 
 export function registerVerificationCommands(program) {
@@ -49,6 +50,7 @@ export function registerVerificationCommands(program) {
     .option("--whole-file <path...>", "include unchanged lines in these selected PR files for cleanup; requires --base")
     .option("--request <intent-handle>", "current request intent for work-level selection")
     .option("--full", "perform full delivery verification; requires --request")
+    .option("--lint-budget-ms <milliseconds>", "shared project lint budget (1–600000); requires --full", parseLintBudget)
     .option("--closeout <receipt.json>", "also verify declared final resource dispositions")
     .option("--max-source-bytes <bytes>", "source capture budget (16000–256000)", parseSourceByteLimit);
   addReportingOptions(automatic, {
@@ -75,8 +77,10 @@ function parseSourceByteLimit(value) {
 
 function parseLintBudget(value) {
   const budget = parseWholeNumber(value);
-  if (budget < 1 || budget > 600_000) {
-    throw new InvalidArgumentError("Budget must be between 1 and 600000 milliseconds");
+  try {
+    validateProjectLintBudget(budget);
+  } catch (error) {
+    throw new InvalidArgumentError(error.message);
   }
   return budget;
 }
@@ -138,6 +142,10 @@ async function lintResults(cwd, paths, budgetMs) {
 
 async function verifyAutomatic(paths, options) {
   if (options.full && options.request === undefined) throw new Error("--full requires --request");
+  if (options.lintBudgetMs !== undefined && !options.full) {
+    throw new Error("--lint-budget-ms requires --full");
+  }
+
   if (options.worktree && paths.length > 0) throw new Error("--worktree cannot be combined with changed paths");
   if (options.wholeFile && options.base === undefined) {
     throw new Error("--whole-file requires --base and exact paths in the PR");
@@ -170,6 +178,7 @@ async function automaticResults(cwd, paths, options) {
   const verification = {
     cwd,
     maxSourceBytes: options.maxSourceBytes,
+    lintBudgetMs: options.lintBudgetMs,
     workLevel: options.full ? "normal" : intent?.level,
     reuseExisting: !options.full && intent?.level === "normal",
     selectionReason,

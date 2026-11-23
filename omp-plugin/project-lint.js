@@ -8,7 +8,7 @@ import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
-import { changedProjectPaths } from "#root/omp-plugin/verifications.js";
+import { changedProjectPaths, validateProjectLintBudget } from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
@@ -530,9 +530,8 @@ function hasLintDiagnostics(tool, output) {
 }
 
 export async function verifyProjectLint({ cwd, changedPaths, env = process.env, budgetMs = EXECUTION_BUDGET_MS }) {
-  if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > 600_000) {
-    throw new RangeError("Project lint budget must be a whole number between 1 and 600000 milliseconds");
-  }
+  validateProjectLintBudget(budgetMs);
+
   const cancellationSignal = verificationCancellationSignal();
   const deadline = Date.now() + budgetMs;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });

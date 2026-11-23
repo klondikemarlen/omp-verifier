@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.26.0 - 2026-11-23
+
+- `automatic --full` accepts `--lint-budget-ms` to give a slow project's lint wrappers more time without running lint separately or changing other checks' deadlines.
+
 ## 1.25.0 - 2026-11-23
 
 - `/verifier timings` shows which checks started and which returned for the same run, including each executable check's timeout budget. An unfinished check is not reported as a timeout.
