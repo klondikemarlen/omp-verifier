@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23.1 - 2026-11-23
+
+- `automatic --request <current-handle> --full` without a scope now explains on stderr how to verify a PR. JSON output remains `[]`, not a verdict.
+
 ## 1.23.0 - 2026-11-23
 
 - Timing history distinguishes observed cancellation from a completed run or an unexplained stop.
