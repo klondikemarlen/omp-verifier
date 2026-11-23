@@ -582,7 +582,7 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
     }
   }
   const result = combinedResult(outcomes, discovery.repositoryRoot);
-  if (timedOut && result.status === "BLOCKED") {
+  if (timedOut) {
     return markVerificationTimeout(result);
   }
   return result;

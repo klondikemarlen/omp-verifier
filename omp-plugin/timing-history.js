@@ -43,7 +43,8 @@ function projectCheck({ id, status, durationMs, requestId, startedAt, timeoutMs,
   if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || startedAt === undefined)) {
     throw new Error("Invalid verifier check timeout budget");
   }
-  if (timedOut !== undefined && (timedOut !== true || status !== "BLOCKED" || timeoutMs === undefined || durationMs === null)) {
+  const canReportTimeout = (status === "BLOCKED" || status === "FAIL") && timeoutMs !== undefined && durationMs !== null;
+  if (timedOut !== undefined && (timedOut !== true || !canReportTimeout)) {
     throw new Error("Invalid verifier check timeout observation");
   }
 

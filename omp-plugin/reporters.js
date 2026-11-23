@@ -157,8 +157,8 @@ function formatCheckTiming(check, now) {
     detail += `; saved review request ${check.requestId}`;
   }
 
-  if (check.status === "BLOCKED" && check.timedOut) {
-    detail += "; last known phase: check execution timed out";
+  if (check.timedOut) {
+    detail += "; execution budget exhausted";
   }
 
   if (check.timeoutMs !== undefined) {

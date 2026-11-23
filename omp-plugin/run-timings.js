@@ -98,18 +98,13 @@ export async function timeVerificationRun(cwd, command, execute) {
   }
 
   try {
-    // A process that disappears without an observable signal leaves only
-    // the timing observations already persisted.
-    await publish();
-    if (interruption) {
-      return interruption;
-    }
-
-    const results = await activeRun.run({
+    const execution = activeRun.run({
       run,
       publish,
       signal: cancellation?.signal,
     }, execute);
+    publish();
+    const results = await execution;
     if (interruption) {
       return interruption;
     }
