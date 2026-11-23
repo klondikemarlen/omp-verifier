@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.24.1 - 2026-11-23
+
+- The verifier advisor requests foreground execution for automatic checks and waits for the original job if Bash backgrounds it, rather than treating the handoff as a timeout.
+
 ## 1.24.0 - 2026-11-23
 
 - Pending review summaries now give the reviewer a command to resume the current page or batch. `review --resume --reporter text` preserves progress without treating page delivery as a verdict.
