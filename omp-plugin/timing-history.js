@@ -14,7 +14,7 @@ const RUN_NAME = new RegExp(`^\\d{${TIMESTAMP_WIDTH}}-${UUID}-([0-9a-f]{64})\\.j
 const ASSESSMENT_NAME = new RegExp(`^\\d{${TIMESTAMP_WIDTH}}-(${UUID})\\.json$`);
 const COMMANDS = new Set(["verify", "automatic", "handoff check", "lint"]);
 const TERMINAL_STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
-const CHECK_STATUSES = new Set([...TERMINAL_STATUSES, "PENDING", "SUPPRESSED", "N/A"]);
+const CHECK_STATUSES = new Set([...TERMINAL_STATUSES, "STARTED", "PENDING", "SUPPRESSED", "N/A"]);
 const CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
@@ -30,9 +30,21 @@ function isDuration(value) {
   return value === null || (Number.isFinite(value) && value >= 0);
 }
 
-function projectCheck({ id, status, durationMs, requestId }) {
+function projectCheck({ id, status, durationMs, requestId, startedAt, timeoutMs, timedOut }) {
   if (!CHECK_STATUSES.has(status) || !isDuration(durationMs)) {
     throw new Error("Invalid verifier timing check");
+  }
+  if (startedAt !== undefined && !isTimestamp(startedAt)) {
+    throw new Error("Invalid verifier check start");
+  }
+  if (status === "STARTED" && (startedAt === undefined || durationMs !== null)) {
+    throw new Error("A verifier check start cannot include a completed duration");
+  }
+  if (timeoutMs !== undefined && (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || startedAt === undefined)) {
+    throw new Error("Invalid verifier check timeout budget");
+  }
+  if (timedOut !== undefined && (timedOut !== true || status !== "BLOCKED" || timeoutMs === undefined || durationMs === null)) {
+    throw new Error("Invalid verifier check timeout observation");
   }
 
   let checkId = "unidentified";
@@ -45,6 +57,15 @@ function projectCheck({ id, status, durationMs, requestId }) {
     status,
     durationMs,
   };
+  if (startedAt !== undefined) {
+    check.startedAt = startedAt;
+  }
+  if (timeoutMs !== undefined) {
+    check.timeoutMs = timeoutMs;
+  }
+  if (timedOut === true) {
+    check.timedOut = true;
+  }
   if (status === "PENDING" && isUuid(requestId)) {
     check.requestId = requestId;
   }
@@ -74,6 +95,9 @@ function projectRun({
   }
 
   const projectedChecks = checks.map(projectCheck);
+  if (coordinatorMs !== null && projectedChecks.some(check => check.status === "STARTED")) {
+    throw new Error("A completed verification run cannot contain an unfinished check");
+  }
   const run = {
     id,
     command,

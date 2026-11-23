@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.25.0 - 2026-11-23
+
+- `/verifier timings` shows which checks started and which returned for the same run, including each executable check's timeout budget. An unfinished check is not reported as a timeout.
+
 ## 1.24.1 - 2026-11-23
 
 - The verifier advisor requests foreground execution for automatic checks and waits for the original job if Bash backgrounds it, rather than treating the handoff as a timeout.

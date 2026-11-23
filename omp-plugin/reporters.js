@@ -102,27 +102,70 @@ export function formatRunTimings(runs) {
     return "No recorded verification runs in this working directory.";
   }
 
-  return runs.map(run => {
+  const now = Date.now();
+  const report = [];
+  let hasPendingRequest = false;
+  for (const run of runs) {
     const started = new Date(run.startedAt).toISOString();
-    const lines = [`${started}  ${run.command}`];
+    const lines = [`${started}  ${run.command} (run ${run.id})`];
     if (run.cancellationSignal) {
       lines.push(`  Cancelled after ${formatDuration(run.cancelledAfterMs)} (${run.cancellationSignal}); full run unknown.`);
     } else if (run.coordinatorMs === null) {
-      lines.push("  Coordinator finish not observed; full run unknown.");
+      const elapsed = formatDuration(Math.max(0, now - run.startedAt));
+      lines.push(`  Coordinator finish not observed; full run unknown. Wall-clock since run start: ${elapsed}.`);
     } else {
       const full = run.fullRunMs === null ? "completion not observed" : formatDuration(run.fullRunMs);
       lines.push(`  Coordinator: ${formatDuration(run.coordinatorMs)}; full run: ${full}`);
     }
+
     for (const check of run.checks) {
-      const duration = check.durationMs === null ? "not timed" : formatDuration(check.durationMs);
-      const outcome = check.finalStatus ? `${check.status} → ${check.finalStatus} at +${formatDuration(check.elapsedMs)}` : check.status;
-      lines.push(`  ${check.id}: ${outcome} (${duration})`);
+      lines.push(formatCheckTiming(check, now));
+      if (check.status === "PENDING" && check.requestId && !check.finalStatus) {
+        hasPendingRequest = true;
+      }
     }
+
     if (run.coordinatorMs !== null && !run.checks.length) {
       lines.push("  No checks selected.");
     }
-    return lines.join("\n");
-  }).join("\n\n");
+
+    report.push(lines.join("\n"));
+  }
+
+  if (hasPendingRequest) {
+    report.push(
+      "Saved reviews: Use `diagnostics <request-file>` for the next action. Resume a current pending review with `review <request-file> --resume --reporter text`.",
+    );
+  }
+
+  return report.join("\n\n");
+}
+
+function formatCheckTiming(check, now) {
+  let outcome = check.status;
+  let detail = "not timed";
+  if (check.status === "STARTED") {
+    const elapsed = formatDuration(Math.max(0, now - check.startedAt));
+    detail = `${elapsed} wall-clock since observed start; outcome unknown`;
+  } else if (check.durationMs !== null) {
+    detail = formatDuration(check.durationMs);
+  }
+
+  if (check.finalStatus) {
+    outcome += ` → ${check.finalStatus} at +${formatDuration(check.elapsedMs)}`;
+  } else if (check.requestId) {
+    detail += `; saved review request ${check.requestId}`;
+  }
+
+  if (check.status === "BLOCKED" && check.timedOut) {
+    detail += "; last known phase: check execution timed out";
+  }
+
+  if (check.timeoutMs !== undefined) {
+    detail += `; execution budget: ${formatDuration(check.timeoutMs)}`;
+  }
+
+  return `  ${check.id}: ${outcome} (${detail})`;
 }
 
 function formatDuration(ms) {

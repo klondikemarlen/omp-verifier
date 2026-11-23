@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
-import { verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { changedProjectPaths } from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
@@ -408,6 +408,8 @@ function combinedResult(outcomes, repositoryRoot) {
   };
 }
 
+class LintBudgetExceeded extends Error {}
+
 function executeLint(plan, env, timeout, cancellationSignal) {
   cancellationSignal?.throwIfAborted();
 
@@ -472,7 +474,7 @@ function executeLint(plan, env, timeout, cancellationSignal) {
     child.stderr.setEncoding("utf8").on("data", chunk => capture(chunk, true));
     child.once("error", error => { failure ??= error; });
     const timer = setTimeout(() => {
-      failure ??= new Error("Project lint execution exceeded its overall time budget");
+      failure ??= new LintBudgetExceeded();
       stop();
     }, timeout);
     child.once("close", (code, signal) => {
@@ -535,6 +537,7 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
   const deadline = Date.now() + budgetMs;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
   const outcomes = [...discovery.results];
+  let timedOut = false;
   for (const plan of discovery.plans) {
     try {
       plan.repositoryRoot = discovery.repositoryRoot;
@@ -544,13 +547,28 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
         continue;
       }
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error("Project lint execution exceeded its overall time budget");
+      if (remaining <= 0) {
+        throw new LintBudgetExceeded();
+      }
+
       const { stdout, stderr } = await executeLint(plan, env, remaining, cancellationSignal);
       outcomes.push({ language: plan.language, root: plan.cwd, status: "PASS", summary: "The existing non-fixing lint command exited 0", evidence: [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ") });
     } catch (error) {
       cancellationSignal?.throwIfAborted();
 
       const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
+      if (error instanceof LintBudgetExceeded) {
+        timedOut = true;
+        outcomes.push({
+          language: plan.language,
+          root: plan.cwd,
+          status: "BLOCKED",
+          summary: `Project lint execution exceeded its overall time budget (${budgetMs} ms)`,
+          evidence: [plan.command.join(" "), output].filter(Boolean).join("\n"),
+        });
+        continue;
+      }
+
       const unprovenFailure = plan.requiresDiagnostics && !hasLintDiagnostics(plan.tool, output);
       const status = error.code === 1 && !unprovenFailure ? "FAIL" : "BLOCKED";
       const summary = status === "FAIL"
@@ -561,5 +579,9 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
       outcomes.push({ language: plan.language, root: plan.cwd, status, summary, evidence: [plan.command.join(" "), output, error.message].filter(Boolean).join("\n") });
     }
   }
-  return combinedResult(outcomes, discovery.repositoryRoot);
+  const result = combinedResult(outcomes, discovery.repositoryRoot);
+  if (timedOut && result.status === "BLOCKED") {
+    return markVerificationTimeout(result);
+  }
+  return result;
 }

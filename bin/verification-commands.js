@@ -117,11 +117,15 @@ async function lintPaths(paths, options) {
 }
 
 async function lintResults(cwd, paths, budgetMs) {
-  const result = await timeVerificationCheck("verifier:project-lint", () => verifyProjectLint({
-    cwd,
-    changedPaths: paths,
+  const result = await timeVerificationCheck(
+    "verifier:project-lint",
+    () => verifyProjectLint({
+      cwd,
+      changedPaths: paths,
+      budgetMs,
+    }),
     budgetMs,
-  }));
+  );
   const results = [];
   if (result.status !== "N/A") {
     results.push({

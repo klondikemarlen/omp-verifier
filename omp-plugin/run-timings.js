@@ -8,6 +8,7 @@ import { saveTimingRun } from "#root/omp-plugin/timing-history.js";
 // A manual run dispatches checks concurrently. Keep their clocks independent
 // and avoid threading analytics state through the verification/selection APIs.
 const activeRun = new AsyncLocalStorage();
+const timedOutResults = new WeakSet();
 const coordinatorPath = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 
 function isCoordinator() {
@@ -26,6 +27,38 @@ export function verificationCancellationSignal() {
   return activeRun.getStore()?.signal;
 }
 
+export function markVerificationTimeout(result) {
+  // Record the coordinator's observation without changing the verdict payload.
+  timedOutResults.add(result);
+  return result;
+}
+
+function createTimingPublisher(cwd, run) {
+  let writing;
+  let pending = false;
+
+  async function flush() {
+    while (pending) {
+      pending = false;
+      // There is only one write in flight. Changes that arrive during it
+      // share the next snapshot, with no queue of obsolete records.
+      const snapshot = {
+        ...run,
+        checks: [...run.checks],
+      };
+      await saveTimingRun(cwd, snapshot).catch(() => {});
+    }
+    writing = undefined;
+  }
+
+  return function publish() {
+    pending = true;
+    // Batch checks dispatched together before any of them execute.
+    writing ??= Promise.resolve().then(flush);
+    return writing;
+  };
+}
+
 export async function timeVerificationRun(cwd, command, execute) {
   const started = performance.now();
   const run = {
@@ -37,7 +70,7 @@ export async function timeVerificationRun(cwd, command, execute) {
     checks: [],
   };
   const cancellation = isCoordinator() ? new AbortController() : null;
-  let timingWrite;
+  const publish = createTimingPublisher(cwd, run);
   let interruption;
 
   function stopObserving() {
@@ -51,15 +84,11 @@ export async function timeVerificationRun(cwd, command, execute) {
     // Only the signal exit can finish this invocation. Provider settlement
     // while analytics is being saved must not resume the CLI reporter.
     interruption = new Promise(() => {});
-    const cancelledRun = {
-      ...run,
-      coordinatorMs: null,
-      cancelledAfterMs: Math.round(performance.now() - started),
-      cancellationSignal: signal,
-    };
+    run.coordinatorMs = null;
+    run.cancelledAfterMs = Math.round(performance.now() - started);
+    run.cancellationSignal = signal;
     cancellation.abort();
-    await timingWrite;
-    await saveTimingRun(cwd, cancelledRun).catch(() => {});
+    await publish();
     stopObserving();
     process.kill(process.pid, signal);
   }
@@ -70,16 +99,16 @@ export async function timeVerificationRun(cwd, command, execute) {
   }
 
   try {
-    // Analytics is best-effort. A process that disappears without an
-    // observable signal leaves only its start.
-    timingWrite = saveTimingRun(cwd, run).catch(() => {});
-    await timingWrite;
+    // A process that disappears without an observable signal leaves only
+    // the timing observations already persisted.
+    await publish();
     if (interruption) {
       return interruption;
     }
 
     const results = await activeRun.run({
       run,
+      publish,
       signal: cancellation?.signal,
     }, execute);
     if (interruption) {
@@ -88,8 +117,7 @@ export async function timeVerificationRun(cwd, command, execute) {
 
     run.coordinatorMs = Math.round(performance.now() - started);
     recordUnexecutedChecks(run, results);
-    timingWrite = saveTimingRun(cwd, run).catch(() => {});
-    await timingWrite;
+    await publish();
     return interruption ?? results;
   } catch (error) {
     if (interruption) {
@@ -114,19 +142,40 @@ function recordUnexecutedChecks(run, results) {
   }
 }
 
-export async function timeVerificationCheck(id, execute) {
+export async function timeVerificationCheck(id, execute, timeoutMs) {
   const context = activeRun.getStore();
   if (!context) {
     return execute();
   }
 
-  const { run, signal } = context;
+  const { run, signal, publish } = context;
   signal?.throwIfAborted();
   const started = performance.now();
+  const observation = {
+    id,
+    status: "STARTED",
+    startedAt: Date.now(),
+    durationMs: null,
+  };
+  if (Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
+    observation.timeoutMs = timeoutMs;
+  }
+  const index = run.checks.push(observation) - 1;
+  await publish();
+  signal?.throwIfAborted();
+
   const result = await execute();
   signal?.throwIfAborted();
   const durationMs = Math.round(performance.now() - started);
-  run.checks.push(checkObservation(id, result, durationMs));
+  const completed = {
+    ...observation,
+    ...checkObservation(id, result, durationMs),
+  };
+  if (observation.timeoutMs !== undefined && timedOutResults.has(result)) {
+    completed.timedOut = true;
+  }
+  run.checks[index] = completed;
+  await publish();
   return result;
 }
 
