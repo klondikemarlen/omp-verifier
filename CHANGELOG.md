@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.24.0 - 2026-11-23
+
+- Pending review summaries now give the reviewer a command to resume the current page or batch. `review --resume --reporter text` preserves progress without treating page delivery as a verdict.
+
 ## 1.23.1 - 2026-11-23
 
 - `automatic --request <current-handle> --full` without a scope now explains on stderr how to verify a PR. JSON output remains `[]`, not a verdict.
