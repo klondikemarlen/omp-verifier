@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { once } from "node:events";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+
+import { installRuntime, runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
 import { readTimingHistory, saveTimingAssessment, saveTimingRun } from "#root/omp-plugin/timing-history.js";
 
@@ -72,6 +76,95 @@ async function timingFixture(t) {
     run,
     useTimingStore,
   };
+}
+
+async function waitForCheckStart(path, signal) {
+  for (;;) {
+    try {
+      await access(path);
+      return;
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
+    }
+    await delay(10, undefined, {
+      signal,
+    });
+  }
+}
+
+function killProcessGroup(pid) {
+  if (!pid) return;
+
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if (error.code !== "ESRCH") {
+      throw error;
+    }
+  }
+}
+
+async function interruptInstalledRun(fixture, signal) {
+  const { cwd, agentDirectory, provider, env, installChecks } = fixture;
+  const checkId = "publisher:slow";
+  const readyFile = "slow-check-started";
+  await installChecks([{
+    id: checkId,
+    label: "Slow check",
+    description: "Waits for the test to interrupt verification.",
+    entry: "./slow.mjs",
+    timeoutMs: 40_000,
+  }]);
+  await writeFile(join(provider, "slow.mjs"), `
+import { writeFile } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
+
+await delay(150);
+await writeFile(${JSON.stringify(readyFile)}, "");
+await delay(30_000);
+`);
+  await installRuntime(agentDirectory);
+  const { launcher } = runtimePaths(agentDirectory);
+  const child = spawn(process.execPath, [launcher, "verify", checkId], {
+    cwd,
+    env,
+    detached: true,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let stdout = "";
+  child.stdout.setEncoding("utf8").on("data", chunk => {
+    stdout += chunk;
+  });
+  const timeout = AbortSignal.timeout(20_000);
+  const completion = once(child, "close", {
+    signal: timeout,
+  });
+  const readiness = new AbortController();
+  try {
+    await Promise.race([
+      waitForCheckStart(join(cwd, readyFile), readiness.signal),
+      completion.then(([code, exitSignal]) => {
+        assert.fail(`Launcher exited before the check started: ${code ?? exitSignal}`);
+      }),
+    ]);
+
+    // Killing only the launcher could leave the coordinator running without a signal.
+    if (signal === "SIGKILL") {
+      killProcessGroup(child.pid);
+    } else {
+      assert.ok(child.kill(signal));
+    }
+
+    const [code, exitSignal] = await completion;
+    assert.equal(code, null);
+    assert.equal(exitSignal, signal);
+    assert.equal(stdout, "");
+  } finally {
+    readiness.abort();
+    killProcessGroup(child.pid);
+  }
 }
 
 test("when source changes between verify and automatic, history retains both outcomes without storing private input or output", async t => {
@@ -153,6 +246,8 @@ process.exitCode = isCorrected ? 0 : 1;
     assert.ok(run.checks[0].durationMs > 0);
     assert.ok(run.coordinatorMs >= run.checks[0].durationMs);
     assert.equal(run.fullRunMs, run.coordinatorMs);
+    assert.ok(!Object.hasOwn(run, "cancelledAfterMs"));
+    assert.ok(!Object.hasOwn(run, "cancellationSignal"));
   }
 });
 
@@ -232,6 +327,132 @@ test("when no automatic check is selected and a manual ID is unknown, history sh
     durationMs: null,
   }]);
   assert.deepEqual(unselected.checks, []);
+});
+
+test("when the installed launcher receives SIGTERM, history reports observed cancellation without a verdict", async t => {
+  // Arrange
+  const fixture = await timingFixture(t);
+
+  // Act
+  await interruptInstalledRun(fixture, "SIGTERM");
+  const json = fixture.run("timings", "--reporter", "json");
+  const text = fixture.run("timings", "--reporter", "text");
+
+  // Assert
+  assert.equal(json.status, 0, json.stderr);
+  assert.equal(text.status, 0, text.stderr);
+  const runs = JSON.parse(json.stdout);
+  assert.equal(runs.length, 1);
+  const [record] = runs;
+  assert.equal(record.command, "verify");
+  assert.equal(record.cancellationSignal, "SIGTERM");
+  assert.ok(Number.isSafeInteger(record.cancelledAfterMs));
+  assert.ok(record.cancelledAfterMs >= 100);
+  assert.equal(record.coordinatorMs, null);
+  assert.equal(record.fullRunMs, null);
+  assert.deepEqual(record.checks, []);
+  assert.match(text.stdout, /Cancelled after \d[^\n]* \(SIGTERM\); full run unknown\./);
+  assert.doesNotMatch(text.stdout, /Coordinator finish not observed/);
+});
+
+test("when SIGKILL leaves no cancellation witness, history keeps the finish unknown", async t => {
+  // Arrange
+  const fixture = await timingFixture(t);
+
+  // Act
+  await interruptInstalledRun(fixture, "SIGKILL");
+  const json = fixture.run("timings", "--reporter", "json");
+  const text = fixture.run("timings", "--reporter", "text");
+
+  // Assert
+  assert.equal(json.status, 0, json.stderr);
+  assert.equal(text.status, 0, text.stderr);
+  const runs = JSON.parse(json.stdout);
+  assert.equal(runs.length, 1);
+  const [record] = runs;
+  assert.equal(record.command, "verify");
+  assert.ok(!Object.hasOwn(record, "cancellationSignal"));
+  assert.ok(!Object.hasOwn(record, "cancelledAfterMs"));
+  assert.equal(record.coordinatorMs, null);
+  assert.equal(record.fullRunMs, null);
+  assert.deepEqual(record.checks, []);
+  assert.match(text.stdout, /Coordinator finish not observed; full run unknown\./);
+  assert.doesNotMatch(text.stdout, /Cancelled after/);
+});
+
+test("when cancellation is immediate, history preserves zero elapsed milliseconds", async t => {
+  // Arrange
+  const { cwd, useTimingStore } = await timingFixture(t);
+  useTimingStore();
+
+  // Act
+  await saveTimingRun(cwd, {
+    id: randomUUID(),
+    command: "verify",
+    startedAt: 1,
+    coordinatorMs: null,
+    generation: null,
+    checks: [],
+    cancelledAfterMs: 0,
+    cancellationSignal: "SIGINT",
+  });
+
+  // Assert
+  const [record] = await readTimingHistory(cwd);
+  assert.equal(record.cancelledAfterMs, 0);
+  assert.equal(record.cancellationSignal, "SIGINT");
+  assert.equal(record.fullRunMs, null);
+});
+
+test("when cancellation metadata is incomplete or contradictory, history rejects the observation", async t => {
+  // Arrange
+  const { cwd, useTimingStore } = await timingFixture(t);
+  useTimingStore();
+  const startedRun = {
+    id: randomUUID(),
+    command: "verify",
+    startedAt: 1,
+    coordinatorMs: null,
+    generation: null,
+    checks: [],
+  };
+  const invalidObservations = [
+    {
+      cancelledAfterMs: 12,
+    },
+    {
+      cancellationSignal: "SIGTERM",
+    },
+    {
+      cancelledAfterMs: 12,
+      cancellationSignal: "SIGKILL",
+    },
+    {
+      cancelledAfterMs: -1,
+      cancellationSignal: "SIGTERM",
+    },
+    {
+      cancelledAfterMs: 1.5,
+      cancellationSignal: "SIGTERM",
+    },
+    {
+      cancelledAfterMs: null,
+      cancellationSignal: "SIGTERM",
+    },
+    {
+      cancelledAfterMs: 12,
+      cancellationSignal: "SIGTERM",
+      coordinatorMs: 15,
+    },
+  ];
+
+  // Act and Assert
+  for (const observation of invalidObservations) {
+    await assert.rejects(saveTimingRun(cwd, {
+      ...startedRun,
+      ...observation,
+    }), /Invalid verifier timing cancellation/, JSON.stringify(observation));
+  }
 });
 
 test("when more than ten runs exist, the CLI defaults to the ten newest in the current checkout", async t => {

@@ -151,7 +151,16 @@ export async function dispatchGeneration(root, args) {
   let leasePath;
   let child;
   let completion;
-  await withRuntimeLock(root, async () => {
+  let cancellationSignal;
+
+  function forwardCancellation(signal) {
+    if (cancellationSignal) return;
+
+    cancellationSignal = signal;
+    child.kill(signal);
+  }
+
+  async function startCoordinator() {
     const requested = requestedGeneration(root, args);
     const active = await activeGeneration(root);
     const id = requested ?? active.id;
@@ -183,20 +192,42 @@ export async function dispatchGeneration(root, args) {
       env: environment,
       stdio: "inherit",
     });
-    completion = new Promise((accept, reject) => {
-      child.once("error", reject);
-      child.once("exit", (code) => accept(code ?? 1));
+    completion = new Promise(accept => {
+      child.once("exit", (code, signal) => accept({
+        code,
+        signal,
+      }));
     });
+    process.on("SIGINT", forwardCancellation);
+    process.on("SIGTERM", forwardCancellation);
     await new Promise((accept, reject) => {
       child.once("spawn", accept);
       child.once("error", reject);
     });
-  });
-  const status = await completion;
-  await withRuntimeLock(root, async () => {
-    await rm(leasePath, { force: true });
-  });
-  return status;
+  }
+
+  try {
+    await withRuntimeLock(root, startCoordinator);
+    const { code, signal } = await completion;
+    if (signal === "SIGINT" || signal === "SIGTERM") {
+      cancellationSignal ??= signal;
+    }
+    return code ?? 1;
+  } finally {
+    try {
+      if (leasePath) {
+        await withRuntimeLock(root, async () => {
+          await rm(leasePath, {
+            force: true,
+          });
+        });
+      }
+    } finally {
+      process.off("SIGINT", forwardCancellation);
+      process.off("SIGTERM", forwardCancellation);
+      if (cancellationSignal) process.kill(process.pid, cancellationSignal);
+    }
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === ownPath) {

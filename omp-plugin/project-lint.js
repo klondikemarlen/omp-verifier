@@ -3,15 +3,17 @@ import { access, readFile, realpath, stat } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
+import { verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { changedProjectPaths } from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
 const EXECUTION_BUDGET_MS = 100_000;
+const lintProviderPath = fileURLToPath(new URL("./project-lint-check.mjs", import.meta.url));
 const PROJECT_MARKERS = {
   javascript: ["package.json"],
   ruby: ["Gemfile", "Rakefile"],
@@ -406,7 +408,9 @@ function combinedResult(outcomes, repositoryRoot) {
   };
 }
 
-function executeLint(plan, env, timeout) {
+function executeLint(plan, env, timeout, cancellationSignal) {
+  cancellationSignal?.throwIfAborted();
+
   return new Promise((resolve, reject) => {
     const grouped = process.platform !== "win32";
     const child = spawn(plan.command[0], plan.command.slice(1), {
@@ -428,6 +432,34 @@ function executeLint(plan, env, timeout) {
         if (error.code !== "ESRCH") failure ??= error;
       }
     };
+    const abort = () => {
+      failure ??= cancellationSignal.reason;
+      stop();
+    };
+    const isLintProvider = process.argv[1] === lintProviderPath;
+    const stopObserving = () => {
+      cancellationSignal?.removeEventListener("abort", abort);
+      if (isLintProvider) {
+        process.off("SIGINT", stopForSignal);
+        process.off("SIGTERM", stopForSignal);
+      }
+    };
+    const stopForSignal = signal => {
+      stop();
+      stopObserving();
+      process.kill(process.pid, signal);
+    };
+
+    cancellationSignal?.addEventListener("abort", abort, {
+      once: true,
+    });
+    if (isLintProvider) {
+      // The provider's lint process group is detached for timeout cleanup,
+      // so terminating the provider alone cannot stop its linter.
+      process.on("SIGINT", stopForSignal);
+      process.on("SIGTERM", stopForSignal);
+    }
+
     const capture = (chunk, errorStream) => {
       bytes += Buffer.byteLength(chunk);
       if (bytes > 64_000) {
@@ -444,6 +476,7 @@ function executeLint(plan, env, timeout) {
       stop();
     }, timeout);
     child.once("close", (code, signal) => {
+      stopObserving();
       clearTimeout(timer);
       if (failure || code !== 0 || signal) {
         stop();
@@ -498,6 +531,7 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
   if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > 600_000) {
     throw new RangeError("Project lint budget must be a whole number between 1 and 600000 milliseconds");
   }
+  const cancellationSignal = verificationCancellationSignal();
   const deadline = Date.now() + budgetMs;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
   const outcomes = [...discovery.results];
@@ -511,9 +545,11 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new Error("Project lint execution exceeded its overall time budget");
-      const { stdout, stderr } = await executeLint(plan, env, remaining);
+      const { stdout, stderr } = await executeLint(plan, env, remaining, cancellationSignal);
       outcomes.push({ language: plan.language, root: plan.cwd, status: "PASS", summary: "The existing non-fixing lint command exited 0", evidence: [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ") });
     } catch (error) {
+      cancellationSignal?.throwIfAborted();
+
       const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
       const unprovenFailure = plan.requiresDiagnostics && !hasLintDiagnostics(plan.tool, output);
       const status = error.code === 1 && !unprovenFailure ? "FAIL" : "BLOCKED";

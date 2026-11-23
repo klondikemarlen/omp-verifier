@@ -102,7 +102,9 @@ export function formatRunTimings(runs) {
   return runs.map(run => {
     const started = new Date(run.startedAt).toISOString();
     const lines = [`${started}  ${run.command}`];
-    if (run.coordinatorMs === null) {
+    if (run.cancellationSignal) {
+      lines.push(`  Cancelled after ${formatDuration(run.cancelledAfterMs)} (${run.cancellationSignal}); full run unknown.`);
+    } else if (run.coordinatorMs === null) {
       lines.push("  Coordinator finish not observed; full run unknown.");
     } else {
       const full = run.fullRunMs === null ? "completion not observed" : formatDuration(run.fullRunMs);
@@ -121,7 +123,11 @@ export function formatRunTimings(runs) {
 }
 
 function formatDuration(ms) {
-  if (ms < 1_000) return `${ms} ms`;
-  if (ms < 60_000) return `${(ms / 1_000).toFixed(2)} s`;
+  if (ms < 1_000) {
+    return `${ms} ms`;
+  }
+  if (ms < 60_000) {
+    return `${(ms / 1_000).toFixed(2)} s`;
+  }
   return `${Math.floor(ms / 60_000)} min ${Math.floor(ms % 60_000 / 1_000)} s`;
 }

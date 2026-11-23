@@ -5,7 +5,7 @@ import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
-import { timeVerificationCheck } from "#root/omp-plugin/run-timings.js";
+import { timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -102,23 +102,28 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
     });
   }
 
+  const signal = verificationCancellationSignal();
   try {
     await access(check.entryPath);
+    signal?.throwIfAborted();
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
       env: verificationEnvironment(changedPaths, automaticScope?.delivery),
       timeout: check.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
+      signal,
     });
     if (stderr) return blocked(check.id, "Verification wrote to stderr", stderr.slice(0, MAX_FIELD_LENGTH));
     return resultFromOutput(check, stdout.trim());
   } catch (error) {
+    signal?.throwIfAborted();
+
     if (typeof error?.code === "number" && !error.stderr) {
       const result = resultFromOutput(check, String(error.stdout || "").trim());
       if (result?.status === "FAIL" || result?.status === "BLOCKED") return result;
     }
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return blocked(check.id, "Verification output exceeded the limit");
-    if (error?.killed || error?.signal === "SIGTERM") return blocked(check.id, "Verification timed out");
+    if (error?.killed) return blocked(check.id, "Verification timed out");
     if (typeof error?.code === "number") return blocked(check.id, `Verification exited with code ${error.code}`, String(error.stderr || error.stdout || "").slice(0, MAX_FIELD_LENGTH));
     return blocked(check.id, "Verification could not run", error.message);
   }

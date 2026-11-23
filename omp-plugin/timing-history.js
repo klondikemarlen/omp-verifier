@@ -51,14 +51,30 @@ function projectCheck({ id, status, durationMs, requestId }) {
   return check;
 }
 
-function projectRun({ id, command, startedAt, coordinatorMs, checks, generation }) {
+function projectRun({
+  id,
+  command,
+  startedAt,
+  coordinatorMs,
+  checks,
+  generation,
+  cancelledAfterMs,
+  cancellationSignal,
+}) {
   if (!isUuid(id) || !COMMANDS.has(command) || !isTimestamp(startedAt) || !isDuration(coordinatorMs)
     || !Array.isArray(checks) || (generation !== null && !isUuid(generation))) {
     throw new Error("Invalid verifier timing run");
   }
 
+  const hasCancellation = cancelledAfterMs !== undefined || cancellationSignal !== undefined;
+  if (hasCancellation && (coordinatorMs !== null
+    || !Number.isSafeInteger(cancelledAfterMs) || cancelledAfterMs < 0
+    || (cancellationSignal !== "SIGINT" && cancellationSignal !== "SIGTERM"))) {
+    throw new Error("Invalid verifier timing cancellation");
+  }
+
   const projectedChecks = checks.map(projectCheck);
-  return {
+  const run = {
     id,
     command,
     startedAt,
@@ -66,6 +82,11 @@ function projectRun({ id, command, startedAt, coordinatorMs, checks, generation 
     checks: projectedChecks,
     generation,
   };
+  if (hasCancellation) {
+    run.cancelledAfterMs = cancelledAfterMs;
+    run.cancellationSignal = cancellationSignal;
+  }
+  return run;
 }
 
 function projectAssessment({ requestId, status, completedAt }) {
