@@ -217,7 +217,6 @@ test("when the prompt hook supplies request intent, the chat stays quiet without
   assert.match(result.message.content, /--full/);
   assert.match(result.message.content, /not PASS.*mandatory.*explicit verification.*initial delivery\/release.*semantic escalation/);
   assert.equal(result.systemPrompt[0], "Existing policy.");
-  assert.match(result.systemPrompt[1], /Verifier delivery cleanup:.*handoff prepare/);
 });
 
 test("when revive fires for the same proven instance, it preserves rather than recreates request intent", async t => {

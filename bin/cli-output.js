@@ -42,8 +42,10 @@ export async function writeResults(results, {
     if (result.evaluation?.supersededBy) currentPageIndex = 0;
     else if (result.reviewProgress?.nextPage !== undefined) currentPageIndex = result.reviewProgress.nextPage;
 
-    reviewPage = buildSemanticReviewPage(result, currentPageIndex);
-    output = formatSemanticReviewPage(reviewPage);
+    reviewPage = result.reviewPage ?? buildSemanticReviewPage(result, currentPageIndex);
+    output = formatSemanticReviewPage(reviewPage, {
+      resumed: result.reviewPage !== undefined,
+    });
   } else if (reporter === "text") {
     output = formatVerificationResults(reported);
   } else if (review) {

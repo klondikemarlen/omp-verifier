@@ -1,3 +1,5 @@
+import { resumeReviewCommand } from "#root/omp-plugin/semantic-review-pages.js";
+
 function indented(value) {
   const lines = [];
   for (let line of value.split("\n")) {
@@ -58,6 +60,7 @@ function formatVerificationResult(result) {
 
   if (result.reviewRequest) {
     lines.push(`  Review request: ${result.reviewRequest.path}`);
+    lines.push(`  Reviewer action: ${resumeReviewCommand(result.reviewRequest.path)}`);
   }
 
   if (result.evidence) {

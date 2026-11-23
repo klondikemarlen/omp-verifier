@@ -395,6 +395,16 @@ test("when another batch has all page receipts, it cannot authorize an unread ba
     assert.equal(result.status, "PENDING");
     assert.equal(result.reviewRequest.continuation.batchIndex, 0);
     assert.equal(result.reviewProgress.nextPage, 1);
+
+    const cliPath = join(process.cwd(), "bin", "omp-verifier.js");
+    const resumed = execFileSync(process.execPath, [
+      cliPath, "review", fixture.continued.reviewRequest.path, "--resume", "--reporter", "text",
+    ], {
+      cwd: fixture.root,
+      encoding: "utf8",
+    });
+    assert.match(resumed, /^Batch index: 0\b/m);
+    assert.match(resumed, /^Page index: 1\b/m);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

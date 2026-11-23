@@ -28,7 +28,7 @@ import {
   continuationReviewPayload,
   validateContinuationAssessment,
 } from "#root/omp-plugin/semantic-continuation-review.js";
-import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
+import { buildSemanticReviewPage, paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";
 import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
 
 const execFileAsync = promisify(execFile);
@@ -764,7 +764,7 @@ export async function prepareSemanticEvaluation({
 
 export async function readSemanticEvaluation({
   cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [],
-  removeContextPaths = [], continuation = false, batchIndex, maxContextPaths,
+  removeContextPaths = [], continuation = false, batchIndex, maxContextPaths, resume = false,
 }) {
   let target;
   try {
@@ -775,8 +775,36 @@ export async function readSemanticEvaluation({
 
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
+      if (typeof resume !== "boolean") {
+        throw new Error("resume must be a boolean");
+      }
+      if (resume && (continuation || batchIndex !== undefined || maxContextPaths !== undefined
+        || [contextPaths, callerContextPaths, externalContextPaths, removeContextPaths]
+          .some(paths => !Array.isArray(paths) || paths.length > 0))) {
+        throw new Error("resume cannot be combined with continuation renewal, batch selection, or context options");
+      }
+
       const { result: reconciled, stored, currentState } = await reconcileRequest(target);
-      if (reconciled) return reconciled;
+      if (reconciled) {
+        if (resume && reconciled.reviewRequest) {
+          return {
+            ...reconciled,
+            reviewPage: buildSemanticReviewPage(reconciled),
+          };
+        }
+
+        return reconciled;
+      }
+      if (resume) {
+        const result = requestEnvelope(stored.payload, target.absoluteRequestPath, currentState);
+        const view = paginateSemanticReview(result);
+        const { nextPage } = reviewPageProgress(view, currentState);
+        const pageIndex = nextPage ?? (view.count - 1);
+        return {
+          ...result,
+          reviewPage: view.page(pageIndex),
+        };
+      }
 
       if (!Array.isArray(contextPaths)) throw new Error("contextPaths must be an array of project-relative paths");
       if (!Array.isArray(callerContextPaths)) throw new Error("callerContextPaths must be an array of project-relative paths");
@@ -891,6 +919,40 @@ export async function recordSemanticReviewPage({ cwd, page }) {
   });
 }
 
+function reviewPageProgress(view, state) {
+  const presentation = view.batchIndex === undefined
+    ? state.pagePresentation
+    : state.batchPagePresentations?.[view.batchIndex];
+  const sameView = presentation?.viewFingerprint === view.viewFingerprint && presentation.count === view.count;
+  const delivered = new Set(sameView ? presentation.deliveredPages : []);
+  let firstUnreadPage = 0;
+  while (delivered.has(firstUnreadPage)) firstUnreadPage += 1;
+  let repeatedPages = 0;
+  if (sameView) {
+    repeatedPages = Math.max(0, (presentation.deliveries ?? delivered.size) - delivered.size);
+  }
+
+  return {
+    uniquePages: delivered.size,
+    repeatedPages,
+    nextPage: firstUnreadPage < view.count ? firstUnreadPage : null,
+  };
+}
+
+function diagnosticNextAction(superseded, phase) {
+  if (superseded || phase === "reading-pages") {
+    return "resume-review";
+  }
+  if (phase === "context-recovery") {
+    return "recover-context";
+  }
+  if (phase === "awaiting-assessment") {
+    return "evaluate";
+  }
+
+  return null;
+}
+
 // Observation only: never reconciles scope, records page delivery, or approves freshness.
 export async function readSemanticDiagnostics({ cwd, requestPath }) {
   const target = await loadRequestForOperation({
@@ -908,27 +970,30 @@ export async function readSemanticDiagnostics({ cwd, requestPath }) {
     },
   );
   const result = requestEnvelope(stored.payload, currentPath, currentState);
-  const page = buildSemanticReviewPage(result);
-  const presentation = page.batchIndex === undefined
-    ? currentState.pagePresentation
-    : currentState.batchPagePresentations?.[page.batchIndex];
-  const sameView = presentation?.viewFingerprint === page.viewFingerprint && presentation.count === page.count;
-  const delivered = new Set(sameView ? presentation.deliveredPages : []);
-  let nextPage = 0;
-  while (delivered.has(nextPage)) nextPage += 1;
+  const view = paginateSemanticReview(result);
+  const progress = reviewPageProgress(view, currentState);
+  const superseded = target.requestId !== currentState.requestId;
   const diagnostics = currentState.diagnostics;
   const wallAgeMs = diagnostics ? Math.max(0, (diagnostics.completedAt ?? Date.now()) - diagnostics.createdAt) : null;
   const status = currentState.consumed ? currentState.finalResult.status : "PENDING";
-  const phase = currentState.consumed ? "complete"
-    : result.reviewRequest.missingContext.length ? "context-recovery"
-      : nextPage < page.count ? "reading-pages" : "awaiting-assessment";
+  let phase = "awaiting-assessment";
+  if (currentState.consumed) {
+    phase = "complete";
+  } else if (result.reviewRequest.missingContext.length) {
+    phase = "context-recovery";
+  } else if (progress.nextPage !== null) {
+    phase = "reading-pages";
+  }
+
+  const nextAction = diagnosticNextAction(superseded, phase);
   return {
     checkId: target.checkId,
     requestedId: target.requestId,
     currentId: currentState.requestId,
-    superseded: target.requestId !== currentState.requestId,
+    superseded,
     status,
     phase,
+    nextAction,
     freshness: "not-checked",
     selection: {
       reason: diagnostics?.selectionReason ?? "unrecorded",
@@ -942,12 +1007,10 @@ export async function readSemanticDiagnostics({ cwd, requestPath }) {
       previousRequestId: diagnostics?.previousRequestId ?? null,
     },
     progress: {
-      payloadBytes: page.totalBytes,
-      pages: page.count,
-      uniquePages: delivered.size,
-      repeatedPages: sameView ? Math.max(0, (presentation.deliveries ?? delivered.size) - delivered.size) : 0,
-      nextPage: nextPage < page.count ? nextPage : null,
-      batchIndex: page.batchIndex ?? null,
+      payloadBytes: view.totalBytes,
+      pages: view.count,
+      ...progress,
+      batchIndex: view.batchIndex ?? null,
       batches: stored.payload.continuation?.batches.length ?? 0,
       completedBatches: Object.keys(currentState.batchAssessments ?? {}).length,
     },
