@@ -82,6 +82,28 @@ test("when a quick request selects changed source, optional checks do not run bu
   assert.equal(await readFile(join(f.project, "executed.txt"), "utf8"), "required\n");
 });
 
+test("when a full request omits its scope, only stderr explains how to verify the PR", async t => {
+  // Arrange
+  const { run, intent } = await fixture(t);
+  const request = await intent("Review the delivery.");
+
+  // Act
+  const full = run("automatic", "--request", request.handle, "--full");
+  const background = run("automatic", "--request", request.handle);
+  const unmatched = run("automatic", "notes.txt", "--request", request.handle, "--full");
+
+  // Assert
+  assert.equal(full.status, 0, full.stderr);
+  assert.deepEqual(JSON.parse(full.stdout), []);
+  assert.match(full.stderr, /no verdict/i);
+  assert.match(full.stderr, /--base <ref> <changed-path\.\.\.>/);
+  for (const quiet of [background, unmatched]) {
+    assert.equal(quiet.status, 0, quiet.stderr);
+    assert.deepEqual(JSON.parse(quiet.stdout), []);
+    assert.equal(quiet.stderr, "");
+  }
+});
+
 test("when a quick request has no requirements, skipping optional checks is an empty result rather than PASS", async t => {
   // Arrange
   const f = await fixture(t);

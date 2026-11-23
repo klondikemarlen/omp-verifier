@@ -180,6 +180,11 @@ async function automaticResults(cwd, paths, options) {
       baseRef: options.base,
       wholeFilePaths: options.wholeFile,
     });
+  } else if (options.full && options.closeout === undefined) {
+    process.stderr.write(
+      "No verification scope supplied; no checks ran and no verdict was produced.\n" +
+      "For a PR, use: automatic --request <current-handle> --full --base <ref> <changed-path...>\n",
+    );
   }
   if (options.closeout !== undefined) {
     const closeout = await timeVerificationCheck("verifier:resource-closeout", () => verifyResourceCloseout({
