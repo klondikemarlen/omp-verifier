@@ -11,7 +11,7 @@ import { createRequestIntent } from "#root/omp-plugin/request-intent.js";
 const REPOSITORY_ROOT = process.cwd();
 const CLI = join(REPOSITORY_ROOT, "bin/omp-verifier.js");
 
-async function fixture(t, { installProjectLint = false } = {}) {
+async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "verifier-request-selection-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = join(root, "project");
@@ -19,18 +19,6 @@ async function fixture(t, { installProjectLint = false } = {}) {
   const provider = join(plugins, "node_modules", "publisher");
   await mkdir(project);
   await mkdir(provider, { recursive: true });
-  const dependencies = {
-    publisher: "1.0.0",
-  };
-  if (installProjectLint) {
-    dependencies["omp-verifier"] = "*";
-    await symlink(REPOSITORY_ROOT, join(plugins, "node_modules", "omp-verifier"), "dir");
-  }
-
-  await writeFile(join(plugins, "package.json"), JSON.stringify({
-    name: "omp-plugins",
-    dependencies,
-  }));
   await writeFile(join(provider, "package.json"), JSON.stringify({
     name: "publisher",
     omp: { extensions: ["./index.js"], verifications: [
@@ -56,6 +44,7 @@ async function fixture(t, { installProjectLint = false } = {}) {
   };
   return {
     project,
+    plugins,
     provider,
     run,
     intent,
@@ -181,9 +170,15 @@ test("when a new request supersedes quick intent, its stale handle cannot exempt
 
 test("when full verification uses a larger lint budget, it reruns lint alongside other selected checks", async t => {
   // Arrange
-  const { project, provider, run, intent } = await fixture(t, {
-    installProjectLint: true,
-  });
+  const { project, plugins, provider, run, intent } = await fixture(t);
+  await symlink(REPOSITORY_ROOT, join(plugins, "node_modules", "omp-verifier"), "dir");
+  await writeFile(join(plugins, "package.json"), JSON.stringify({
+    name: "omp-plugins",
+    dependencies: {
+      publisher: "1.0.0",
+      "omp-verifier": "*",
+    },
+  }));
   const request = await intent("Verifier work level: quick tweak\nRename a local binding.");
   const eslint = join(REPOSITORY_ROOT, "node_modules", ".bin", "eslint");
   await writeFile(join(project, ".omp-verifier.json"), JSON.stringify({
