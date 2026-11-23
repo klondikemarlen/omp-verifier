@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.22.0 - 2026-11-23
+
+- Closeout can fully inventory a large disposable Git worktree before removal, including ignored dependency files. Use `largeWorktree: true` on the worktree resource; ordinary limits and delivery checks remain unchanged.
+
 ## 1.21.0 - 2026-11-23
 
 - `/verifier timings` shows recent runs, individual check durations and outcomes. It distinguishes coordinator runtime from elapsed time through an observed semantic verdict.

@@ -68,6 +68,11 @@ function validateDeclaration(declaration) {
     if (Object.hasOwn(resource, "largeArtifact") && (resource.kind !== "path" || resource.largeArtifact !== true)) {
       throw new Error(`${resource.id}: largeArtifact must be true when supplied, and is only supported on path resources`);
     }
+    if (Object.hasOwn(resource, "largeWorktree") && (resource.largeWorktree !== true ||
+        resource.kind !== "git-worktree" || resource.disposition !== "absent" ||
+        resource.ownership !== "task" || resource.disposableContents !== true)) {
+      throw new Error(`${resource.id}: largeWorktree requires true on a task-owned absent git-worktree with disposableContents: true`);
+    }
     if (resource.kind === "path") {
       absolutePath(resource.path, `${resource.id} path`);
     } else if (resource.kind?.startsWith("git-")) {
@@ -350,7 +355,9 @@ function prerequisites(declaration, observations) {
     }
     if (resource.disposition === "retained" && !observation.present) errors.push(`${resource.id}: required preserved resource is already absent`);
     if (resource.disposition !== "absent" || !observation.present) continue;
-    if (observation.details?.trackedChanges?.length) errors.push(`${resource.id}: preserve uncommitted tracked changes before cleanup`);
+    if (observation.details?.trackedChanges?.length || observation.details?.trackedChangeCount) {
+      errors.push(`${resource.id}: preserve uncommitted tracked changes before cleanup`);
+    }
     if ((observation.details?.untrackedPaths?.length || observation.details?.ignoredPaths?.length) && !resource.disposableContents) {
       errors.push(`${resource.id}: inventoried untracked/ignored contents need explicit disposableContents authorization`);
     }
