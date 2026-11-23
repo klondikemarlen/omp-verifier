@@ -53,7 +53,6 @@ function createTimingPublisher(cwd, run) {
 
   return function publish() {
     pending = true;
-    // Batch checks dispatched together before any of them execute.
     writing ??= Promise.resolve().then(flush);
     return writing;
   };
@@ -151,19 +150,21 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
   const { run, signal, publish } = context;
   signal?.throwIfAborted();
   const started = performance.now();
+  const startedAt = Date.now();
+  const execution = execute();
   const observation = {
     id,
     status: "STARTED",
-    startedAt: Date.now(),
+    startedAt,
     durationMs: null,
   };
   if (Number.isSafeInteger(timeoutMs) && timeoutMs > 0) {
     observation.timeoutMs = timeoutMs;
   }
   const index = run.checks.push(observation) - 1;
-  void publish();
+  publish();
 
-  const result = await execute();
+  const result = await execution;
   signal?.throwIfAborted();
   const durationMs = Math.round(performance.now() - started);
   const returnedCheck = checkObservation(id, result, durationMs);
@@ -175,7 +176,7 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
     completed.timedOut = true;
   }
   run.checks[index] = completed;
-  void publish();
+  publish();
   return result;
 }
 

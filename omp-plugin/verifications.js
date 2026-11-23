@@ -107,7 +107,6 @@ async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, ma
 async function executeVerificationCheck(check, cwd, changedPaths, automaticScope) {
   const signal = verificationCancellationSignal();
   try {
-    await access(check.entryPath);
     signal?.throwIfAborted();
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
@@ -143,11 +142,17 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
   }
 }
 
-function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
   if (check.mode === "agentic") {
     return timeVerificationCheck(check.id, () =>
       prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason),
     );
+  }
+
+  try {
+    await access(check.entryPath);
+  } catch (error) {
+    return blocked(check.id, "Verification could not run", error.message);
   }
 
   return timeVerificationCheck(
