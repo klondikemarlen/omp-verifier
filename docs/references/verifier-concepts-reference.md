@@ -334,9 +334,17 @@ Missing or unsupported tooling/configuration and invocation prerequisites are `B
 
 ### Recovering Slow Whole-Project Lint
 
-Automatic project lint shares a 100-second execution budget across discovery and sequential project commands; its manifest has a 120-second outer timeout. A later project's command receives only the remaining budget. Increasing the calling shell's timeout alone does not extend that internal budget.
+By default, automatic project lint shares 100 seconds across discovery and sequential project commands, with a 120-second outer timeout. Increasing the calling shell's timeout alone does not extend that internal budget.
 
-For an explicitly requested longer run, use the packaged CLI directly from the same owning checkout with the complete original lint-selected path list:
+For a known slow project, supply the budget on the full verification itself:
+
+```sh
+omp-verifier automatic --request "$current_handle" --full --base "$pr_base" --lint-budget-ms 600000
+```
+
+The budget is a whole number from 1 through 600000 milliseconds. It applies once, across all selected lint groups, with another 20 seconds for the lint subprocess to start and return its result. Allow enough time for the other selected checks too. This neither forces lint to run nor skips any checks: selection, suppression, project wrappers, other check deadlines, and combined reporting are unchanged. The run executes applicable lint on the current source rather than reusing an earlier result.
+
+To retry lint alone, run the packaged CLI in the same owning checkout with the complete original lint-selected path list:
 
 ```sh
 omp-verifier lint --budget-ms 300000 api/src/changed.ts web/src/changed.vue --reporter text

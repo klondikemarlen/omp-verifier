@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,16 +8,29 @@ import test from "node:test";
 
 import { createRequestIntent } from "#root/omp-plugin/request-intent.js";
 
-const CLI = join(process.cwd(), "bin/omp-verifier.js");
+const REPOSITORY_ROOT = process.cwd();
+const CLI = join(REPOSITORY_ROOT, "bin/omp-verifier.js");
 
-async function fixture(t) {
+async function fixture(t, { installProjectLint = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "verifier-request-selection-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = join(root, "project");
-  const provider = join(root, "plugins/node_modules/publisher");
+  const plugins = join(root, "plugins");
+  const provider = join(plugins, "node_modules", "publisher");
   await mkdir(project);
   await mkdir(provider, { recursive: true });
-  await writeFile(join(root, "plugins/package.json"), JSON.stringify({ dependencies: { publisher: "1.0.0" } }));
+  const dependencies = {
+    publisher: "1.0.0",
+  };
+  if (installProjectLint) {
+    dependencies["omp-verifier"] = "*";
+    await symlink(REPOSITORY_ROOT, join(plugins, "node_modules", "omp-verifier"), "dir");
+  }
+
+  await writeFile(join(plugins, "package.json"), JSON.stringify({
+    name: "omp-plugins",
+    dependencies,
+  }));
   await writeFile(join(provider, "package.json"), JSON.stringify({
     name: "publisher",
     omp: { extensions: ["./index.js"], verifications: [
@@ -41,7 +54,12 @@ async function fixture(t) {
     t.after(() => rm(dirname(result.path), { recursive: true, force: true }));
     return result;
   };
-  return { project, run, intent };
+  return {
+    project,
+    provider,
+    run,
+    intent,
+  };
 }
 
 test("when a quick request selects changed source, optional checks do not run but project requirements do", async t => {
@@ -159,4 +177,103 @@ test("when a new request supersedes quick intent, its stale handle cannot exempt
   assert.equal(normal.status, 1, normal.stderr);
   assert.equal(JSON.parse(normal.stdout)[0].id, "publisher:optional");
   assert.equal(await readFile(join(f.project, "executed.txt"), "utf8"), "optional\n");
+});
+
+test("when full verification uses a larger lint budget, it reruns lint alongside other selected checks", async t => {
+  // Arrange
+  const { project, provider, run, intent } = await fixture(t, {
+    installProjectLint: true,
+  });
+  const request = await intent("Verifier work level: quick tweak\nRename a local binding.");
+  const eslint = join(REPOSITORY_ROOT, "node_modules", ".bin", "eslint");
+  await writeFile(join(project, ".omp-verifier.json"), JSON.stringify({
+    lint: {
+      commands: {
+        javascript: {
+          tool: "eslint",
+          command: [process.execPath, "lint-wrapper.mjs", eslint, "--no-fix", "--"],
+          appendPaths: true,
+        },
+      },
+    },
+  }));
+  await writeFile(join(project, "eslint.config.mjs"), `
+export default [{
+  rules: {
+    "no-unused-vars": "error",
+  },
+}];
+`);
+  await writeFile(join(project, "unselected.js"), "const unused = true;\n");
+  await writeFile(join(project, "lint-wrapper.mjs"), `
+import { spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+import { setTimeout } from "node:timers/promises";
+
+const [command, ...args] = process.argv.slice(2);
+await setTimeout(250);
+const result = spawnSync(command, args, {
+  stdio: "inherit",
+});
+if (result.status === 0) {
+  appendFileSync("lint-completed.txt", args.at(-1) + "\\n");
+}
+process.exitCode = result.status ?? 2;
+`);
+  await writeFile(join(provider, "optional.mjs"), `
+import { appendFileSync } from "node:fs";
+
+appendFileSync("executed.txt", "optional\\n");
+console.log(JSON.stringify({
+  status: "PASS",
+  summary: "Independent source check completed",
+}));
+`);
+  const args = ["automatic", "source.js", "--request", request.handle, "--full"];
+
+  // Act
+  const constrained = run(...args, "--lint-budget-ms", "1");
+  const recovered = run(...args, "--lint-budget-ms", "10000");
+  const defaultBudget = run(...args);
+
+  // Assert
+  assert.equal(constrained.status, 1, constrained.stderr);
+  const constrainedChecks = JSON.parse(constrained.stdout);
+  assert.equal(constrainedChecks.length, 2);
+  assert.equal(constrainedChecks.find(check => check.id === "publisher:optional")?.status, "PASS");
+  const blockedLint = constrainedChecks.find(check => check.id === "verifier:project-lint");
+  assert.equal(blockedLint?.status, "BLOCKED");
+  assert.match(blockedLint.evidence, /\b1\s*ms\b/i);
+
+  for (const result of [recovered, defaultBudget]) {
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const checks = JSON.parse(result.stdout);
+    assert.equal(checks.length, 2);
+    assert.equal(checks.find(check => check.id === "publisher:optional")?.status, "PASS");
+    assert.equal(checks.find(check => check.id === "verifier:project-lint")?.status, "PASS");
+  }
+  assert.equal(await readFile(join(project, "lint-completed.txt"), "utf8"), "source.js\nsource.js\n");
+  assert.equal(await readFile(join(project, "executed.txt"), "utf8"), "optional\noptional\noptional\n");
+});
+
+test("when the automatic lint budget is out of range or lacks --full, no checks run", async t => {
+  // Arrange
+  const { project, run, intent } = await fixture(t);
+  const request = await intent("Review the delivery.");
+  const args = ["automatic", "source.js", "--request", request.handle];
+
+  // Act
+  const missingFull = run(...args, "--lint-budget-ms", "10000");
+  const belowRange = run(...args, "--full", "--lint-budget-ms", "0");
+  const aboveRange = run(...args, "--full", "--lint-budget-ms", "600001");
+
+  // Assert
+  for (const result of [missingFull, belowRange, aboveRange]) {
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /--lint-budget-ms/);
+  }
+  await assert.rejects(readFile(join(project, "executed.txt")), {
+    code: "ENOENT",
+  });
 });

@@ -120,6 +120,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
 omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
+omp-verifier automatic --request <current-handle> --full --base <actual-PR-base> [--lint-budget-ms <milliseconds>]
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
@@ -146,7 +147,7 @@ When required evidence exhausts the aggregate capture budget, explicitly opt in 
 
 For an explicitly authorized one-off larger changed-source capture, start `automatic` or `verify` with `--max-source-bytes`; see the [capture-limit contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for supported bounds and request-local behavior.
 
-For slow whole-project lint, use the standalone `lint` command with an explicit bounded budget and the complete original lint-selected path list. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint). Automatic budgets and existing project wrappers remain unchanged.
+If a project's lint wrapper needs more time, pass `--lint-budget-ms` on the full verification run to get lint and the other selected checks together. To retry just lint, use `lint --budget-ms` with the original lint-selected paths. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint).
 
 The advisor runs, for example:
 

@@ -1,5 +1,6 @@
 import { access } from "node:fs/promises";
 import { execFile } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
@@ -12,6 +13,9 @@ const MAX_OUTPUT_BYTES = 64_000;
 const MAX_FIELD_LENGTH = 4_000;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const NODE_RUNTIME = "node";
+const MAX_PROJECT_LINT_BUDGET_MS = 600_000;
+const PROJECT_LINT_PROVIDER_ALLOWANCE_MS = 20_000;
+const PROJECT_LINT_ENTRY = "omp-plugin/project-lint-check.mjs";
 const AUTOMATIC_SOURCE_RECOVERY = Object.freeze({
   chunkBytes: 16_000,
   maxSourceBytes: 256_000,
@@ -76,6 +80,19 @@ function verificationEnvironment(changedPaths, delivery) {
   return environment;
 }
 
+export function validateProjectLintBudget(budgetMs) {
+  if (!Number.isSafeInteger(budgetMs) || budgetMs < 1 || budgetMs > MAX_PROJECT_LINT_BUDGET_MS) {
+    throw new RangeError(`Project lint budget must be a whole number between 1 and ${MAX_PROJECT_LINT_BUDGET_MS} milliseconds`);
+  }
+}
+
+function isInstalledProjectLint(check, packageDirectory) {
+  return check.id === "verifier:project-lint" &&
+    check.packageName === "omp-verifier" &&
+    check.manifestPath === join(packageDirectory, "omp-verifier", "package.json") &&
+    check.entryPath === join(check.packagePath, PROJECT_LINT_ENTRY);
+}
+
 async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason) {
   let scopePaths = changedPaths;
   let scopeRoot = repositoryRoot;
@@ -104,14 +121,19 @@ async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, ma
   });
 }
 
-async function executeVerificationCheck(check, cwd, changedPaths, automaticScope) {
+async function executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs) {
+  const args = [check.entryPath];
+  if (lintBudgetMs !== undefined) {
+    args.push(String(lintBudgetMs));
+  }
+
   const signal = verificationCancellationSignal();
   try {
     signal?.throwIfAborted();
-    const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
+    const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, args, {
       cwd,
       env: verificationEnvironment(changedPaths, automaticScope?.delivery),
-      timeout: check.timeoutMs,
+      timeout: timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
       signal,
     });
@@ -124,7 +146,7 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
       return blocked(check.id, "Verification output exceeded the limit");
     }
     // execFile kills for maxBuffer or timeout; cancellation was handled above.
-    if (error?.killed && check.timeoutMs > 0) {
+    if (error?.killed && timeoutMs > 0) {
       return markVerificationTimeout(blocked(check.id, "Verification timed out"));
     }
 
@@ -142,7 +164,8 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
   }
 }
 
-async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting = false, selectionReason) {
+async function runVerificationCheckWithRoot(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, options = {}) {
+  const { automaticScope, sourceRecovery, reuseExisting, selectionReason, lintBudgetMs } = options;
   if (check.mode === "agentic") {
     return timeVerificationCheck(check.id, () =>
       prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason),
@@ -155,10 +178,15 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
     return blocked(check.id, "Verification could not run", error.message);
   }
 
+  let timeoutMs = check.timeoutMs;
+  if (lintBudgetMs !== undefined) {
+    timeoutMs = lintBudgetMs + PROJECT_LINT_PROVIDER_ALLOWANCE_MS;
+  }
+
   return timeVerificationCheck(
     check.id,
-    () => executeVerificationCheck(check, cwd, changedPaths, automaticScope),
-    check.timeoutMs,
+    () => executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs),
+    timeoutMs,
   );
 }
 
@@ -192,11 +220,16 @@ export async function runAutomaticVerification({
   packageDirectory,
   repositoryRoot = cwd,
   maxSourceBytes,
+  lintBudgetMs,
   delivery,
   workLevel = "normal",
   reuseExisting = false,
   selectionReason = "automatic-normal",
 }) {
+  if (lintBudgetMs !== undefined) {
+    validateProjectLintBudget(lintBudgetMs);
+  }
+
   const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({
     repositoryRoot, changedPaths, packageDirectory, workLevel,
   });
@@ -211,7 +244,24 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    const result = await runVerificationCheckWithRoot(check, cwd, selectedPaths, repositoryRoot, maxSourceBytes, automaticScope, sourceRecovery, reuseExisting, selectionReason);
+    const selectedLintBudgetMs = lintBudgetMs !== undefined && isInstalledProjectLint(check, selectedDirectory)
+      ? lintBudgetMs
+      : undefined;
+
+    const result = await runVerificationCheckWithRoot(
+      check,
+      cwd,
+      selectedPaths,
+      repositoryRoot,
+      maxSourceBytes,
+      {
+        automaticScope,
+        sourceRecovery,
+        reuseExisting,
+        selectionReason,
+        lintBudgetMs: selectedLintBudgetMs,
+      },
+    );
     if (!result) continue;
     const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({
@@ -230,6 +280,7 @@ export async function runAutomaticVerificationForPaths({
   wholeFilePaths = [],
   packageDirectory,
   maxSourceBytes,
+  lintBudgetMs,
   workLevel,
   reuseExisting,
   selectionReason,
@@ -261,6 +312,7 @@ export async function runAutomaticVerificationForPaths({
     packageDirectory,
     repositoryRoot: root.repositoryRoot,
     maxSourceBytes,
+    lintBudgetMs,
     delivery,
     workLevel,
     reuseExisting,
@@ -268,7 +320,15 @@ export async function runAutomaticVerificationForPaths({
   });
 }
 
-export async function runCurrentAutomaticVerification({ cwd, packageDirectory, maxSourceBytes, workLevel, reuseExisting, selectionReason }) {
+export async function runCurrentAutomaticVerification({
+  cwd,
+  packageDirectory,
+  maxSourceBytes,
+  lintBudgetMs,
+  workLevel,
+  reuseExisting,
+  selectionReason,
+}) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
@@ -283,6 +343,7 @@ export async function runCurrentAutomaticVerification({ cwd, packageDirectory, m
     packageDirectory,
     repositoryRoot: changeSet.repositoryRoot,
     maxSourceBytes,
+    lintBudgetMs,
     workLevel,
     reuseExisting,
     selectionReason,

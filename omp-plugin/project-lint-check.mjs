@@ -1,10 +1,24 @@
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 
 try {
+  const budgetArgument = process.argv[2];
+  if (process.argv.length > 3 || (budgetArgument !== undefined && !/^\d+$/.test(budgetArgument))) {
+    throw new Error("Expected at most one argument: the project lint budget in milliseconds");
+  }
+
+  let budgetMs;
+  if (budgetArgument !== undefined) {
+    budgetMs = Number(budgetArgument);
+  }
+
   const changedPaths = process.env.OMP_VERIFIER_CHANGED_PATHS === undefined
     ? undefined
     : JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
-  const result = await verifyProjectLint({ cwd: process.cwd(), changedPaths });
+  const result = await verifyProjectLint({
+    cwd: process.cwd(),
+    changedPaths,
+    budgetMs,
+  });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = result.status === "FAIL" || result.status === "BLOCKED" ? 1 : 0;
 } catch (error) {
