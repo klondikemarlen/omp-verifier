@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.23.0 - 2026-11-23
+
+- Timing history distinguishes observed cancellation from a completed run or an unexplained stop.
+
 ## 1.22.0 - 2026-11-23
 
 - Closeout can fully inventory a large disposable Git worktree before removal, including ignored dependency files. Use `largeWorktree: true` on the worktree resource; ordinary limits and delivery checks remain unchanged.
