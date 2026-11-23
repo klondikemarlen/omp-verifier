@@ -14,8 +14,9 @@ try {
   const changedPaths = process.env.OMP_VERIFIER_CHANGED_PATHS === undefined
     ? undefined
     : JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
+  const cwd = process.cwd();
   const result = await verifyProjectLint({
-    cwd: process.cwd(),
+    cwd,
     changedPaths,
     budgetMs,
   });

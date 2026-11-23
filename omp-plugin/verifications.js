@@ -244,9 +244,10 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    const selectedLintBudgetMs = lintBudgetMs !== undefined && isInstalledProjectLint(check, selectedDirectory)
-      ? lintBudgetMs
-      : undefined;
+    let selectedLintBudgetMs;
+    if (lintBudgetMs !== undefined && isInstalledProjectLint(check, selectedDirectory)) {
+      selectedLintBudgetMs = lintBudgetMs;
+    }
 
     const result = await runVerificationCheckWithRoot(
       check,
