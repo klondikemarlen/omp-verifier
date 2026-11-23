@@ -87,6 +87,7 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier checks
 /verifier verify
 /verifier verify <check-id...>
+/verifier timings
 /verifier generation prepare
 /verifier generation activate <generation-id>
 /verifier generation status
@@ -136,6 +137,8 @@ JSON remains the default reporter; `--reporter json` selects it explicitly. `che
 Use `review <request-file> --reporter text` to inspect a semantic request. Follow its page-footer commands until the complete scope has been reviewed and assessed; retrieval success alone is not PASS. The [semantic protocol reference](docs/references/verifier-concepts-reference.md#agentic-standards-contract) owns page delivery, request identity, recovery, and citation details.
 
 To see why a semantic review is still pending, use `diagnostics <request-file>`. It reports source-free progress and measured coordinator time without reading pages on the reviewer's behalf or approving the source. The [diagnostics contract](docs/references/verifier-concepts-reference.md#review-diagnostics) explains timing limits and cached terminal status.
+
+For a slow or inconsistent run, use `/verifier timings` from the directory where you ran verification. Compare recent check durations and outcomes without rerunning anything. `omp-verifier timings` returns the same local history as JSON. See [run timings](docs/references/verifier-concepts-reference.md#run-timings) for the difference between coordinator time and full elapsed time.
 
 Private dependencies already available in a local Git checkout can use `--external-context 'git+file:///absolute/repository?revision=<full-commit>&path=<file>#Lstart-Lend'`. Select only material evidence within the task's existing permissions; no new approval prompt or grant file is required. The [external evidence contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) explains provenance, limits, recovery, and private-output handling.
 
