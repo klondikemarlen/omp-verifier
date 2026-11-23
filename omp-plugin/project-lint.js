@@ -559,12 +559,14 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
       const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
       if (error instanceof LintBudgetExceeded) {
         timedOut = true;
+        const command = plan.command.join(" ");
+        const evidence = [command, output].filter(Boolean).join("\n");
         outcomes.push({
           language: plan.language,
           root: plan.cwd,
           status: "BLOCKED",
           summary: `Project lint execution exceeded its overall time budget (${budgetMs} ms)`,
-          evidence: [plan.command.join(" "), output].filter(Boolean).join("\n"),
+          evidence,
         });
         continue;
       }

@@ -161,21 +161,21 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
     observation.timeoutMs = timeoutMs;
   }
   const index = run.checks.push(observation) - 1;
-  await publish();
-  signal?.throwIfAborted();
+  void publish();
 
   const result = await execute();
   signal?.throwIfAborted();
   const durationMs = Math.round(performance.now() - started);
+  const returnedCheck = checkObservation(id, result, durationMs);
   const completed = {
     ...observation,
-    ...checkObservation(id, result, durationMs),
+    ...returnedCheck,
   };
   if (observation.timeoutMs !== undefined && timedOutResults.has(result)) {
     completed.timedOut = true;
   }
   run.checks[index] = completed;
-  await publish();
+  void publish();
   return result;
 }
 

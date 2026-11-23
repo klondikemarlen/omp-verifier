@@ -104,40 +104,18 @@ async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, ma
   });
 }
 
-function executableTimeout(check) {
-  return markVerificationTimeout(blocked(check.id, "Verification timed out"));
-}
-
 async function executeVerificationCheck(check, cwd, changedPaths, automaticScope) {
   const signal = verificationCancellationSignal();
-  let timer;
-  let timedOut = false;
   try {
     await access(check.entryPath);
     signal?.throwIfAborted();
-    const execution = execFileAsync(NODE_RUNTIME, [check.entryPath], {
+    const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, [check.entryPath], {
       cwd,
       env: verificationEnvironment(changedPaths, automaticScope?.delivery),
+      timeout: check.timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
       signal,
     });
-    if (check.timeoutMs > 0) {
-      const { child } = execution;
-      timer = setTimeout(() => {
-        // Observe the deadline here, not from a kill flag shared by other
-        // failures. Close capture pipes as execFile's built-in timeout does.
-        timedOut = true;
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        child.kill("SIGTERM");
-      }, check.timeoutMs);
-    }
-
-    const { stdout, stderr } = await execution;
-    if (timedOut) {
-      return executableTimeout(check);
-    }
-
     if (stderr) return blocked(check.id, "Verification wrote to stderr", stderr.slice(0, MAX_FIELD_LENGTH));
     return resultFromOutput(check, stdout.trim());
   } catch (error) {
@@ -146,8 +124,9 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
     if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") {
       return blocked(check.id, "Verification output exceeded the limit");
     }
-    if (timedOut) {
-      return executableTimeout(check);
+    // execFile kills for maxBuffer or timeout; cancellation was handled above.
+    if (error?.killed && check.timeoutMs > 0) {
+      return markVerificationTimeout(blocked(check.id, "Verification timed out"));
     }
 
     if (typeof error?.code === "number" && !error.stderr) {
@@ -161,8 +140,6 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
     }
 
     return blocked(check.id, "Verification could not run", error.message);
-  } finally {
-    clearTimeout(timer);
   }
 }
 
