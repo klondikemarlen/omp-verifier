@@ -93,7 +93,7 @@ function requestFileName(checkId, requestId) {
 
 export class InvalidSemanticRequestFilename extends Error {
   constructor() {
-    super("Invalid review request filename. Retry the last page footer's exact Next command, or copy the complete request path from the coordinator's response.");
+    super("Invalid review request filename.");
   }
 }
 
