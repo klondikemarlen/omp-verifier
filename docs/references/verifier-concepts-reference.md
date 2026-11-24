@@ -398,6 +398,8 @@ The protocol uses the same coordinator and named verifier advisor:
 
 Invalid assessment input, including a mismatched citation, returns `BLOCKED` with summary `Semantic assessment is invalid` without consuming the request. Read its current evidence, correct the request ID or original-line citation, and resubmit with `evaluate`. This is distinct from `Semantic request is unavailable`, which reports an unavailable or invalid request prerequisite and calls for fresh preparation with the complete original scope and actual delivery base.
 
+The installed launcher rejects a truncated request path as an invocation error (exit `2`), before opening a generation or recording a page. Retry the literal `Next command` from the last successful page, in the same checkout. A complete handle owned by another runtime still needs its original coordinator; a missing pinned generation remains `BLOCKED`. The launcher does not search other requests or fall back to the active generation.
+
 ### Finding Eligibility
 
 PR-backed semantic requests default to `scope.findingMode: "changed-lines"`. To include unchanged lines of specific PR files in a cleanup review, pass `--whole-file <path...>` with `automatic --base <actual-PR-base>` (`changed-lines-and-files`). A path not in the PR cannot be made eligible by naming it for cleanup. Non-PR requests retain `changed-files` scope. Callers, siblings, guidance, and recovered source can supply evidence without becoming cleanup targets.

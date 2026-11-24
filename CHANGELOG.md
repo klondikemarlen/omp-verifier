@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.27.1 - 2026-11-23
+
+- A shortened review request path now prompts a retry of the exact page command instead of reporting a generation blocker.
+
 ## 1.27.0 - 2026-11-23
 
 - The running OMP Console shows which automatic check started or returned and its execution budget when known. It explains how to return to the conversation without cancelling verification.

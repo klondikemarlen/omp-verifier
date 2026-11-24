@@ -6,6 +6,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GENERATION_ID = /^[a-f0-9-]{36}$/;
+const SCOPE_DIGEST = /^[a-f0-9]{64}$/;
+const REQUEST_FILENAME = /^[A-Za-z0-9_-]+\.[a-f0-9-]{36}\.json$/;
 const ownPath = fileURLToPath(import.meta.url);
 
 export async function privateDirectory(path) {
@@ -124,6 +126,12 @@ export async function collectGenerations(root) {
   return removed;
 }
 
+class InvalidReviewRequestPath extends Error {
+  constructor() {
+    super("Invalid review request path. Retry the last page footer's exact Next command, or copy the complete request path from the coordinator's response. Do not prepare a new review for this argument error.");
+  }
+}
+
 function requestedGeneration(root, args) {
   if (!["review", "evaluate", "diagnostics"].includes(args[0])) {
     return undefined;
@@ -137,17 +145,26 @@ function requestedGeneration(root, args) {
     }
   }
   if (!args[1]) {
-    throw new Error("A review operation requires its request path");
+    throw new InvalidReviewRequestPath();
   }
   const request = resolve(args[1]);
   const parts = relative(join(root, "reviews"), request).split("/");
-  if (parts.length !== 4 || !GENERATION_ID.test(parts[0]) || !/^[a-f0-9]{64}$/.test(parts[1]) || parts[2] !== "requests") {
+  // Both legacy and generation-pinned handles have this request-file suffix.
+  const [scope, requestsDirectory, filename] = parts.slice(-3);
+  if (!SCOPE_DIGEST.test(scope) || requestsDirectory !== "requests" || !REQUEST_FILENAME.test(filename)) {
+    throw new InvalidReviewRequestPath();
+  }
+  if (parts[0] === "..") {
     throw new Error("Request predates generation isolation or belongs to another runtime; use its original coordinator or prepare a fresh complete review");
+  }
+  if (parts.length !== 4 || !GENERATION_ID.test(parts[0])) {
+    throw new InvalidReviewRequestPath();
   }
   return parts[0];
 }
 
 export async function dispatchGeneration(root, args) {
+  const requested = requestedGeneration(root, args);
   let leasePath;
   let child;
   let completion;
@@ -161,7 +178,6 @@ export async function dispatchGeneration(root, args) {
   }
 
   async function startCoordinator() {
-    const requested = requestedGeneration(root, args);
     const active = await activeGeneration(root);
     const id = requested ?? active.id;
     const directory = generationDirectory(root, id);
@@ -235,7 +251,12 @@ if (process.argv[1] && resolve(process.argv[1]) === ownPath) {
   try {
     process.exitCode = await dispatchGeneration(root, process.argv.slice(2));
   } catch (error) {
-    process.stderr.write(`BLOCKED verifier:generation\n${error.message}\n`);
-    process.exitCode = 1;
+    if (error instanceof InvalidReviewRequestPath) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = 2;
+    } else {
+      process.stderr.write(`BLOCKED verifier:generation\n${error.message}\n`);
+      process.exitCode = 1;
+    }
   }
 }
