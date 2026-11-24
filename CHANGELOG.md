@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.27.0 - 2026-11-23
+
+- The running OMP Console shows which automatic check started or returned and its execution budget when known. It explains how to return to the conversation without cancelling verification.
+
 ## 1.26.0 - 2026-11-23
 
 - `automatic --full` accepts `--lint-budget-ms` to give a slow project's lint wrappers more time without running lint separately or changing other checks' deadlines.
