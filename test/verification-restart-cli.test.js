@@ -63,17 +63,17 @@ async function restartProject(t) {
       publisher: "1.0.0",
     },
   }));
-  await writeFile(join(cwd, "source.js"), "export const limit = 1;\n");
   const gitOptions = {
     cwd,
     env,
     timeout: COMMAND_TIMEOUT_MS,
   };
   execFileSync("git", ["init", "--quiet"], gitOptions);
-  execFileSync("git", ["add", "source.js"], gitOptions);
-  execFileSync("git", ["-c", "user.name=Verifier Test", "-c", "user.email=verifier@example.com", "commit", "--quiet", "-m", "Initial source"], gitOptions);
-  await writeFile(join(cwd, "source.js"), SOURCE);
-  await writeFile(join(cwd, "notes.js"), "export const note = 'before';\n");
+
+  function commitBaseline() {
+    execFileSync("git", ["add", "."], gitOptions);
+    execFileSync("git", ["-c", "user.name=Verifier Test", "-c", "user.email=verifier@example.com", "commit", "--allow-empty", "--quiet", "-m", "Initial source"], gitOptions);
+  }
 
   // Only the execution controls change between identical invocations, not their environment or project inputs.
   const recordInvocation = `
@@ -187,8 +187,13 @@ console.log(JSON.stringify({
         }),
       ]);
       assert.ok(child.kill("SIGTERM"));
-      assert.deepEqual(await completion, [null, "SIGTERM"], stderr);
-      assert.equal(stdout, "", "Cancellation must not print a verdict");
+      const [code, signal] = await completion;
+      return {
+        code,
+        signal,
+        stdout,
+        stderr,
+      };
     } finally {
       readiness.abort();
       killProcessGroup(child.pid);
@@ -199,6 +204,7 @@ console.log(JSON.stringify({
     root,
     cwd,
     provider,
+    commitBaseline,
     recordInvocation,
     installChecks,
     invocations,
@@ -245,12 +251,16 @@ async function semanticCheck(provider) {
 test("when automatic verification is cancelled, the same command resumes completed checks and preserves semantic review", async t => {
   // Arrange
   const project = await restartProject(t);
+  await writeFile(join(project.cwd, "source.js"), "export const limit = 1;\n");
+  project.commitBaseline();
+  await writeFile(join(project.cwd, "source.js"), SOURCE);
+  await writeFile(join(project.cwd, "notes.js"), "export const note = 'before';\n");
   const review = await semanticCheck(project.provider);
   await project.installChecks([executableCheck("completed"), review, executableCheck("interrupted")]);
   const args = ["automatic", "source.js"];
 
   // Act
-  await project.cancelAt(args, "interrupted");
+  const interruption = await project.cancelAt(args, "interrupted");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted"]);
   const [cancelled] = project.runJson(["timings"]);
   const prepared = cancelled.checks.find(check => check.id === review.id);
@@ -259,6 +269,9 @@ test("when automatic verification is cancelled, the same command resumes complet
   const resumed = project.runJson(args);
 
   // Assert
+  assert.equal(interruption.code, null, interruption.stderr);
+  assert.equal(interruption.signal, "SIGTERM");
+  assert.equal(interruption.stdout, "", "Cancellation must not print a verdict");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted", "interrupted"]);
   assert.deepEqual(resumed.map(({ id, status }) => [id, status]), [
     ["publisher:completed", "PASS"],
@@ -285,16 +298,21 @@ test("when automatic verification is cancelled, the same command resumes complet
 test("when a manual verification is cancelled, an explicit rerun reports both the completed and interrupted checks", async t => {
   // Arrange
   const project = await restartProject(t);
+  await writeFile(join(project.cwd, "notes.js"), "export const note = 'before';\n");
+  project.commitBaseline();
   await project.installChecks([executableCheck("completed"), executableCheck("interrupted")]);
   const args = ["verify", "publisher:completed", "publisher:interrupted"];
 
   // Act
-  await project.cancelAt(args, "interrupted", "publisher:completed");
+  const interruption = await project.cancelAt(args, "interrupted", "publisher:completed");
   assert.deepEqual((await project.invocations()).sort(), ["completed", "interrupted"]);
   await project.release();
   const resumed = project.runJson(args);
 
   // Assert
+  assert.equal(interruption.code, null, interruption.stderr);
+  assert.equal(interruption.signal, "SIGTERM");
+  assert.equal(interruption.stdout, "", "Cancellation must not print a verdict");
   assert.deepEqual((await project.invocations()).sort(), ["completed", "interrupted", "interrupted"]);
   assert.deepEqual(resumed, [
     {
@@ -315,17 +333,22 @@ test("when a manual verification is cancelled, an explicit rerun reports both th
 test("when untracked source bytes change before a restart, automatic verification discards the interrupted run's evidence", async t => {
   // Arrange
   const project = await restartProject(t);
+  project.commitBaseline();
+  await writeFile(join(project.cwd, "notes.js"), "export const note = 'before';\n");
   await project.installChecks([executableCheck("completed"), executableCheck("interrupted")]);
   const args = ["automatic", "--worktree"];
 
   // Act
-  await project.cancelAt(args, "interrupted");
+  const interruption = await project.cancelAt(args, "interrupted");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted"]);
   await writeFile(join(project.cwd, "notes.js"), "export const note = 'second';\n");
   await project.release();
   const restarted = project.runJson(args);
 
   // Assert
+  assert.equal(interruption.code, null, interruption.stderr);
+  assert.equal(interruption.signal, "SIGTERM");
+  assert.equal(interruption.stdout, "", "Cancellation must not print a verdict");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted", "completed", "interrupted"]);
   assert.deepEqual(restarted.map(({ id, status }) => [id, status]), [
     ["publisher:completed", "PASS"],
@@ -374,15 +397,19 @@ process.exitCode = result.status ?? 2;
       },
     }));
   }
+  project.commitBaseline();
   const args = ["lint", "first/source.js", "second/source.js", "--budget-ms", "30000"];
 
   // Act
-  await project.cancelAt(args, "second");
+  const interruption = await project.cancelAt(args, "second");
   assert.deepEqual(await project.invocations(), ["first", "second"]);
   await project.release();
   const [resumed] = project.runJson(args);
 
   // Assert
+  assert.equal(interruption.code, null, interruption.stderr);
+  assert.equal(interruption.signal, "SIGTERM");
+  assert.equal(interruption.stdout, "", "Cancellation must not print a verdict");
   assert.deepEqual(await project.invocations(), ["first", "second", "second"]);
   assert.equal(resumed.id, "verifier:project-lint");
   assert.equal(resumed.status, "PASS");
