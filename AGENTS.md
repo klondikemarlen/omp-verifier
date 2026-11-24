@@ -40,7 +40,7 @@ Current scope:
 - `/verifier uninstall` removes only the marked verifier advisor block.
 - Plugin load preserves or restores OMP's stock `default` advisor, then inserts `verifier` second with `bash`.
 - Plugin load refreshes `<agent-dir>/verifier/WATCHDOG.md` with the coordinator path derived from the installed package.
-- The verifier advisor runs automatic checks after changed turns; `PASS`, `SUPPRESSED`, and no results stay silent, while `FAIL` and `BLOCKED` use standard blocker advice.
+- Automatic source checks apply to current PR/MR changes, not routine housekeeping. Resource verification is opt-in. `PASS`, `SUPPRESSED`, and no results stay silent; `FAIL` and `BLOCKED` use standard blocker advice.
 - Independent advisors remain untouched.
 - Plugin uninstall cleanup removes only the marked verifier advisor block and unchanged guidance file.
 - `WATCHDOG.md` is the generated-guidance template, not a user customization surface.

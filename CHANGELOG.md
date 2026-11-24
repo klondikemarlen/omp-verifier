@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.0 - 2026-11-24
+
+- Limit automatic source review to current PR and MR changes. Routine wrap-up no longer requests a Verifier inventory; explicit source and resource checks remain available.
+
 ## 1.29.0 - 2026-11-24
 
 - Keep typing during automatic verification. Primary Bash shows ordinary inline output; a native editor widget shows the current check when the verifier advisor runs it privately. Use `automatic --progress` to include check transitions on piped stderr.
