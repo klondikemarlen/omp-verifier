@@ -119,7 +119,7 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 ```text
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
-omp-verifier automatic [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
+omp-verifier automatic [--progress] [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
 omp-verifier automatic --request <current-handle> --full --base <actual-PR-base> [--lint-budget-ms <milliseconds>]
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
@@ -139,7 +139,7 @@ Use `review <request-file> --reporter text` to inspect a semantic request. Follo
 
 To see why a semantic review is still pending, use `diagnostics <request-file>`. It reports source-free progress and measured coordinator time without reading pages on the reviewer's behalf or approving the source. The [diagnostics contract](docs/references/verifier-concepts-reference.md#review-diagnostics) explains timing limits and cached terminal status.
 
-While `automatic` is open in the OMP Console, look for the last check that started or returned and its execution budget, if known. Wait to return to the conversation without stopping verification. Keys go to the command; Esc force-kills it rather than hiding the panel. A quiet interval does not establish a hang. Afterward, use `/verifier timings` in the same directory for the [run history](docs/references/verifier-concepts-reference.md#run-timings).
+You can type and queue a follow-up while automatic verification runs. Use `automatic --progress` to see check transitions on the ordinary Bash card without a PTY. In the interactive TUI, the verifier advisor’s Bash card is private; an editor widget shows its current check and budget when known. A quiet interval does not establish a hang. Afterward, use `/verifier timings` in the same directory for the [run history](docs/references/verifier-concepts-reference.md#run-timings).
 
 After a cancellation, rerun the same `automatic`, `verify`, `lint`, or `handoff check` command in the same checkout. Verifier restores completed work; the check or lint group that was still running starts again. Use `--fresh` if an external input changed. See [interrupted verification](docs/references/verifier-concepts-reference.md#interrupted-verification) for the reuse boundaries.
 

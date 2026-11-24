@@ -7,6 +7,7 @@ import {
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
+import { registerAdvisorCheckWidget } from "#root/omp-plugin/register-advisor-check-widget.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
@@ -190,6 +191,7 @@ async function verifyCloseoutReceipt(agentDir, repositoryRoot, receiptPath) {
 
 export default async function verifierPlugin(pi) {
   pi.setLabel("Verifier");
+  registerAdvisorCheckWidget(pi);
   if (pi.registerTool) {
     const agentDir = pi.pi.getAgentDir();
     registerCloseoutTool(pi, (root, receipt) => verifyCloseoutReceipt(agentDir, root, receipt));
@@ -237,7 +239,7 @@ export default async function verifierPlugin(pi) {
     const content = [
       intent.handle ? `${intent.level} --request ${intent.handle}` : "Verifier current request work level: normal; no request handle.",
       intent.handle
-        ? `Request instance: ${intent.requestId}\nAutomatic verification: node ${COORDINATOR} automatic --request '${intent.handle}'. Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
+        ? `Request instance: ${intent.requestId}\nAutomatic verification: node ${COORDINATOR} automatic --request '${intent.handle}' --progress. Use ordinary Bash output (pty: false). Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
         : "No request handle: retain normal full verification selection without reuse.",
       intent.diagnostic,
       "Work intent is not PASS and never overrides mandatory requirements, explicit verification, initial delivery/release checks, or semantic escalation. Earlier request handles are not authority for this request.",

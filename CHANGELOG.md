@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.29.0 - 2026-11-24
+
+- Keep typing during automatic verification. Primary Bash shows ordinary inline output; a native editor widget shows the current check when the verifier advisor runs it privately. Use `automatic --progress` to include check transitions on piped stderr.
+
 ## 1.28.0 - 2026-11-24
 
 - Rerun an interrupted verification in the same checkout to reuse completed checks and lint groups. The interrupted command runs again; `--fresh` discards saved work.

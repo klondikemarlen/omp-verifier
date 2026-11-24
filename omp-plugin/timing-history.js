@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, watch } from "node:fs";
 import { lstat, mkdir, open, readdir, realpath, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -16,6 +16,7 @@ const COMMANDS = new Set(["verify", "automatic", "handoff check", "lint"]);
 const TERMINAL_STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const CHECK_STATUSES = new Set([...TERMINAL_STATUSES, "STARTED", "PENDING", "SUPPRESSED", "N/A"]);
 const CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 
 function isUuid(value) {
@@ -169,8 +170,10 @@ async function requireExternalStorage(directory) {
   }
 }
 
-async function historyDirectory(section, { create = false } = {}) {
-  const agentDirectory = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent");
+async function historyDirectory(section, {
+  create = false,
+  agentDirectory = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".omp", "agent"),
+} = {}) {
   const verifierDirectory = resolve(agentDirectory, "verifier");
   const timingDirectory = join(verifierDirectory, "timings");
   const directory = join(timingDirectory, section);
@@ -355,8 +358,21 @@ function addCompletion(run, assessments) {
   return run;
 }
 
+export function hashTimingToolCallId(toolCallId) {
+  if (typeof toolCallId !== "string" || toolCallId.length === 0) {
+    return undefined;
+  }
+
+  return createHash("sha256").update(toolCallId).digest("hex");
+}
+
 export async function saveTimingRun(cwd, record) {
   const run = projectRun(record);
+  const { toolCallIdHash } = record;
+  if (run.command === "automatic" && typeof toolCallIdHash === "string" && SHA256_PATTERN.test(toolCallIdHash)) {
+    run.toolCallIdHash = toolCallIdHash;
+  }
+
   const key = await workspaceKey(cwd);
   const directory = await historyDirectory("runs", {
     create: true,
@@ -379,6 +395,77 @@ export async function saveTimingAssessment(assessment) {
   for (const obsolete of names.slice(MAX_ASSESSMENTS)) {
     await unlinkIfPresent(join(directory, obsolete));
   }
+}
+
+export async function watchAutomaticTiming(agentDir, toolCallId, onRun) {
+  const toolCallIdHash = hashTimingToolCallId(toolCallId);
+  if (!agentDir || !toolCallIdHash) {
+    return () => {};
+  }
+
+  const watchingSince = Date.now();
+  const directory = await historyDirectory("runs", {
+    create: true,
+    agentDirectory: agentDir,
+  });
+  const pendingReads = new Map();
+  let latestName = "";
+  let isDisposed = false;
+
+  function projectMatchingRun(record) {
+    if (record?.command !== "automatic" || record.toolCallIdHash !== toolCallIdHash) {
+      return null;
+    }
+
+    return projectRun(record);
+  }
+
+  async function observeRun(name, key) {
+    const read = Symbol();
+    pendingReads.set(name, read);
+    try {
+      const run = await readRecord(directory, name, projectMatchingRun);
+      if (isDisposed || pendingReads.get(name) !== read || !run || name < latestName) {
+        return;
+      }
+
+      if (name !== recordName(run.startedAt, run.id, key)) return;
+
+      latestName = name;
+      onRun(run);
+    } finally {
+      if (pendingReads.get(name) === read) {
+        pendingReads.delete(name);
+      }
+    }
+  }
+
+  const watcher = watch(directory, {
+    persistent: false,
+  }, (event, name) => {
+    // Writers atomically rename a complete snapshot into place. Observe only
+    // published run names, never temporary writes or the rest of the history.
+    if (isDisposed || event !== "rename" || !name || name < latestName) {
+      return;
+    }
+
+    const match = RUN_NAME.exec(name);
+    if (!match || Number(name.slice(0, TIMESTAMP_WIDTH)) < watchingSince) return;
+
+    const [, key] = match;
+    observeRun(name, key).catch(() => {});
+  });
+
+  function dispose() {
+    if (isDisposed) return;
+
+    isDisposed = true;
+    pendingReads.clear();
+    watcher.close();
+  }
+
+  watcher.on("error", dispose);
+  return dispose;
 }
 
 export async function readTimingHistory(cwd, limit = 10) {

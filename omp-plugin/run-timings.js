@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { saveTimingRun } from "#root/omp-plugin/timing-history.js";
+import { hashTimingToolCallId, saveTimingRun } from "#root/omp-plugin/timing-history.js";
 
 // A manual run dispatches checks concurrently. Keep their clocks independent
 // and avoid threading analytics state through the verification/selection APIs.
@@ -68,6 +68,10 @@ export async function timeVerificationRun(cwd, command, execute, progress) {
     generation: process.env.OMP_VERIFIER_GENERATION ? JSON.parse(process.env.OMP_VERIFIER_GENERATION).id : null,
     checks: [],
   };
+  if (command === "automatic") {
+    run.toolCallIdHash = hashTimingToolCallId(process.env.PI_TOOL_CALL_ID);
+  }
+
   const cancellation = isCoordinator() ? new AbortController() : null;
   const publish = createTimingPublisher(cwd, run);
   let interruption;

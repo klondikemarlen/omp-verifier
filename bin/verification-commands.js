@@ -51,6 +51,7 @@ export function registerVerificationCommands(program) {
   const automatic = program.command("automatic [changed-path...]")
     .description("Select checks for changed paths, the current worktree, or declared closeout")
     .option("--fresh", freshDescription)
+    .option("--progress", "report coordinator and check progress to stderr even when piped")
     .option("--worktree", "inspect current worktree changes instead of supplied paths")
     .addOption(base)
     .option("--whole-file <path...>", "include unchanged lines in these selected PR files for cleanup; requires --base")
@@ -178,8 +179,8 @@ async function verifyAutomatic(paths, options) {
 
   const cwd = process.cwd();
   let progress;
-  if (process.stdout.isTTY && process.stderr.isTTY) {
-    progress = automaticConsole;
+  if (options.progress || (process.stdout.isTTY && process.stderr.isTTY)) {
+    progress = automaticProgress;
   }
 
   const scope = {
@@ -207,9 +208,9 @@ function writeAutomaticProgress(message) {
   process.stderr.write(`[verifier progress] ${message}\n`);
 }
 
-const automaticConsole = {
+const automaticProgress = {
   started() {
-    writeAutomaticProgress("Automatic verification started. In the OMP Console, wait to return to the editor. Keys go to the command; Esc force-kills it. There is no detach.");
+    writeAutomaticProgress("Automatic verification started.");
   },
   checkStarted(check, elapsedMs) {
     let details = `${elapsedMs} ms run elapsed`;
