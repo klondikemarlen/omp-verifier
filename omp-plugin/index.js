@@ -7,6 +7,7 @@ import {
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
+import { registerAdvisorCheckWidget } from "#root/omp-plugin/register-advisor-check-widget.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
@@ -190,6 +191,7 @@ async function verifyCloseoutReceipt(agentDir, repositoryRoot, receiptPath) {
 
 export default async function verifierPlugin(pi) {
   pi.setLabel("Verifier");
+  registerAdvisorCheckWidget(pi);
   if (pi.registerTool) {
     const agentDir = pi.pi.getAgentDir();
     registerCloseoutTool(pi, (root, receipt) => verifyCloseoutReceipt(agentDir, root, receipt));

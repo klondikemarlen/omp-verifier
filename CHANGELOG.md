@@ -2,7 +2,7 @@
 
 ## 1.29.0 - 2026-11-24
 
-- Automatic checks use inline Bash output instead of taking over the prompt editor. Use `automatic --progress` to include check transitions on stderr when output is piped.
+- Keep typing during automatic verification. Primary Bash shows ordinary inline output; a native editor widget shows the current check when the verifier advisor runs it privately. Use `automatic --progress` to include check transitions on piped stderr.
 
 ## 1.28.0 - 2026-11-24
 

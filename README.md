@@ -139,7 +139,7 @@ Use `review <request-file> --reporter text` to inspect a semantic request. Follo
 
 To see why a semantic review is still pending, use `diagnostics <request-file>`. It reports source-free progress and measured coordinator time without reading pages on the reviewer's behalf or approving the source. The [diagnostics contract](docs/references/verifier-concepts-reference.md#review-diagnostics) explains timing limits and cached terminal status.
 
-Automatic verification uses OMP's ordinary Bash output so you can keep typing and queue a follow-up. Look for the last check that started or returned and its execution budget, if known. A quiet interval does not establish a hang. To include those transitions on stderr outside a terminal, use `automatic --progress`. For completed runs, use `/verifier timings` in the same directory for the [run history](docs/references/verifier-concepts-reference.md#run-timings).
+You can type and queue a follow-up while automatic verification runs. Primary Bash displays progress on its ordinary tool card. The verifier advisor’s Bash card is private, so the editor shows the current check and its budget, when known, in a non-interactive widget. A quiet interval does not establish a hang. Afterward, use `/verifier timings` in the same directory for the [run history](docs/references/verifier-concepts-reference.md#run-timings).
 
 After a cancellation, rerun the same `automatic`, `verify`, `lint`, or `handoff check` command in the same checkout. Verifier restores completed work; the check or lint group that was still running starts again. Use `--fresh` if an external input changed. See [interrupted verification](docs/references/verifier-concepts-reference.md#interrupted-verification) for the reuse boundaries.
 

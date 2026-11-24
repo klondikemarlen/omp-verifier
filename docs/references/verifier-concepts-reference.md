@@ -233,6 +233,8 @@ Changed Git-visible source, delivery base, selected scope, runtime or options in
 
 `automatic --progress` writes observed check transitions to stderr, including when Bash captures output without a PTY. Without the flag, progress is enabled only if stdout and stderr are both terminals. Elapsed times are measured at transitions, not updated by a heartbeat. Progress never changes reporter stdout or exit status.
 
+During an interactive advisor Bash call, the editor widget reads the existing timing snapshots for that automatic invocation. An opaque correlation key distinguishes overlapping calls; the widget does not display the command, transcript, diagnostics, or source. It reports observations, not verdicts. A missing display does not stop verification, and a returned check does not establish completion of a pending semantic review.
+
 Use the run ID to distinguish overlapping invocations in the same checkout. Each executed check records `startedAt` and, where enforced, `timeoutMs`. `STARTED` means its start was observed but its return was not. Time since that observation is not proof that the child is alive, stalled, or past an enforced deadline. Wait for the original invocation if you have its live job handle; without terminal output or a confirmed job, the outcome is unknown. An observed executable timeout is `BLOCKED` with `timedOut: true`. Semantic `PENDING` means preparation returned: use the review request and its diagnostics to resume, not a process timeout.
 
 For standalone `lint`, `timedOut: true` means at least one lint group exhausted the shared budget. Another group's observed violation still makes the aggregate verdict `FAIL`. A lint group reaching its internal deadline does not mean its enclosing executable timed out.

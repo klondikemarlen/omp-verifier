@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { on, once } from "node:events";
+import { EventEmitter, on, once } from "node:events";
 import { watch } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 
 import { installRuntime, runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-import { readTimingHistory, saveTimingAssessment, saveTimingRun } from "#root/omp-plugin/timing-history.js";
+import { readTimingHistory, saveTimingAssessment, saveTimingRun, watchAutomaticTiming } from "#root/omp-plugin/timing-history.js";
 
 const cliPath = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 
@@ -210,6 +210,9 @@ await delay(30_000);
 test("when source changes between verify and automatic, history retains both outcomes without storing private input or output", async t => {
   // Arrange
   const { cwd, agentDirectory, provider, env, installChecks, run } = await timingFixture(t);
+  const toolCallId = "private-native-tool-call-id";
+  env.PI_TOOL_CALL_ID = toolCallId;
+  const updates = new EventEmitter();
   const checkId = "publisher:source";
   const sourcePath = "private-source.fixture";
   await installChecks([{
@@ -240,6 +243,16 @@ process.exitCode = isCorrected ? 0 : 1;
   });
   await writeFile(join(cwd, sourcePath), "private-source-before");
 
+  const dispose = await watchAutomaticTiming(agentDirectory, toolCallId, run => {
+    if (run.coordinatorMs !== null) {
+      updates.emit("finished", run);
+    }
+  });
+  t.after(dispose);
+  const observedFinish = once(updates, "finished", {
+    signal: AbortSignal.timeout(5_000),
+  });
+
   // Act
   const failed = run("verify", checkId);
   await writeFile(join(cwd, sourcePath), "private-source-after");
@@ -253,6 +266,7 @@ process.exitCode = isCorrected ? 0 : 1;
   const storedContent = await Promise.all(storedEntries.filter(entry => entry.isFile()).map(entry =>
     readFile(join(entry.parentPath, entry.name), "utf8"),
   ));
+  const [observedRun] = await observedFinish;
 
   // Assert
   assert.equal(failed.status, 1, failed.stderr);
@@ -268,15 +282,19 @@ process.exitCode = isCorrected ? 0 : 1;
   assert.equal(report.status, 0, report.stderr);
   assert.equal(invocations, "..");
   assert.ok(storedContent.length > 0);
-  const privateData = /private-source|private-summary|private-next-check|private-command/;
+  const privateData = /private-source|private-summary|private-next-check|private-command|private-native-tool-call-id/;
   assert.doesNotMatch(report.stdout, privateData);
   assert.doesNotMatch(storedContent.join("\n"), privateData);
   assert.ok(!storedContent.join("\n").includes(cwd));
 
+  assert.doesNotMatch(report.stdout, /toolCallIdHash/);
   const runs = JSON.parse(report.stdout);
   assert.deepEqual(runs.map(run => run.command), ["automatic", "verify"]);
   const [newer, older] = runs;
   assert.notEqual(newer.id, older.id);
+  assert.equal(observedRun.id, newer.id);
+  assert.deepEqual(observedRun.checks, newer.checks);
+  assert.ok(!Object.hasOwn(observedRun, "toolCallIdHash"));
   assert.ok(Number.isSafeInteger(newer.startedAt));
   assert.ok(Number.isSafeInteger(older.startedAt));
   assert.ok(newer.startedAt >= older.startedAt);
