@@ -381,6 +381,110 @@ test("when installation refreshes an obsolete launcher, command help works witho
   assert.equal(installed.id, current.initial.id);
 });
 
+test("when a review handle is shortened between pages, retrying the exact footer advances the original request", async context => {
+  // Arrange
+  const current = await fixture(context);
+  for (const name of ["first", "second", "third"]) {
+    const source = `${"// Additional review evidence.\n".repeat(450)}export const ${name} = 1;\n`;
+    await writeFile(join(current.project, "src", `${name}.js`), source);
+  }
+  const prepared = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { path, requestId } = prepared[0].reviewRequest;
+  const firstPage = await current.cli(["review", path, "--reporter", "text"]);
+  const nextCommand = firstPage.match(/^Next command: (.+)$/m)[1];
+  const before = JSON.parse(await current.cli(["diagnostics", path]));
+  const shortenedPath = join(current.paths.root, "reviews", requestId.slice(0, 12));
+  const shortenedFilename = path.slice(0, -10);
+  const replacement = await current.replacement();
+  await activateGeneration(replacement.id, {
+    agentDir: current.agentDir,
+  });
+
+  // Act
+  const invalidCommands = [
+    ["review", shortenedPath, "--reporter", "text", "--page", "1"],
+    ["evaluate", shortenedPath, "--assessment", "{}"],
+    ["diagnostics", shortenedPath],
+    ["review", shortenedFilename, "--reporter", "text", "--page", "1"],
+    ["evaluate", shortenedFilename, "--assessment", "{}"],
+    ["diagnostics", shortenedFilename],
+  ];
+  const failures = await Promise.allSettled(invalidCommands.map(args => current.cli(args)));
+
+  const afterInvalidCommands = JSON.parse(await current.cli(["diagnostics", path]));
+
+  const retried = await execute("/bin/sh", ["-c", nextCommand], {
+    cwd: current.project,
+    timeout: 30_000,
+  });
+  const afterRetry = JSON.parse(await current.cli(["diagnostics", path]));
+
+  // Assert
+  assert.equal(before.status, "PENDING");
+  assert.equal(before.currentId, requestId);
+  assert.equal(before.progress.nextPage, 1);
+  for (const failure of failures) {
+    assert.equal(failure.status, "rejected");
+    assert.equal(failure.reason.code, 2);
+    assert.equal(failure.reason.stdout, "");
+    assert.doesNotMatch(failure.reason.stderr, /BLOCKED verifier:generation/);
+    assert.match(failure.reason.stderr, /retry\b.*\bexact\b.*\bcommand\b/i);
+  }
+  assert.equal(afterInvalidCommands.currentId, requestId);
+  assert.equal(afterInvalidCommands.status, before.status);
+  assert.deepEqual(afterInvalidCommands.progress, before.progress);
+  assert.match(retried.stdout, /^Page index: 1 of /m);
+  assert.ok(retried.stdout.includes(`Request ID: ${requestId}\n`));
+  assert.equal(afterRetry.currentId, requestId);
+  assert.equal(afterRetry.progress.uniquePages, 2);
+});
+
+test("when a complete request belongs to another runtime, its own launcher can still read it", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const prepared = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { path, requestId } = prepared[0].reviewRequest;
+  const otherAgentDir = join(current.root, "other-agent");
+  await installRuntime(otherAgentDir);
+  const otherPaths = runtimePaths(otherAgentDir);
+
+  // Act
+  const foreignFailure = await execute(process.execPath, [otherPaths.launcher, "review", path], {
+    cwd: current.project,
+    timeout: 30_000,
+  }).catch(error => error);
+  const reported = JSON.parse(await current.cli(["review", path]))[0];
+
+  // Assert
+  assert.equal(foreignFailure.code, 1);
+  assert.match(foreignFailure.stderr, /^BLOCKED verifier:generation$/m);
+  assert.match(foreignFailure.stderr, /original (?:coordinator|runtime)/i);
+  assert.equal(reported.status, "PENDING");
+  assert.equal(reported.reviewRequest.requestId, requestId);
+});
+
+test("when the generation for a complete request is missing, the launcher reports a generation blocker", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const prepared = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { path } = prepared[0].reviewRequest;
+  const candidate = await current.replacement();
+  await activateGeneration(candidate.id, {
+    agentDir: current.agentDir,
+  });
+  await rm(generationDirectory(current.paths.root, current.initial.id), {
+    recursive: true,
+  });
+
+  // Act
+  const failure = await current.cli(["review", path]).catch(error => error);
+
+  // Assert
+  assert.equal(failure.code, 1);
+  assert.equal(failure.stdout, "");
+  assert.match(failure.stderr, /^BLOCKED verifier:generation$/m);
+});
+
 test("when an opted-in provider is reinstalled during semantic review, evaluation and reporting retain the original standard", async context => {
   // Arrange
   const current = await fixture(context, {
