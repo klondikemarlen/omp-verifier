@@ -237,7 +237,7 @@ export default async function verifierPlugin(pi) {
     const content = [
       intent.handle ? `${intent.level} --request ${intent.handle}` : "Verifier current request work level: normal; no request handle.",
       intent.handle
-        ? `Request instance: ${intent.requestId}\nAutomatic verification: node ${COORDINATOR} automatic --request '${intent.handle}'. Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
+        ? `Request instance: ${intent.requestId}\nAutomatic verification: node ${COORDINATOR} automatic --request '${intent.handle}' --progress. Use ordinary Bash output (pty: false). Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
         : "No request handle: retain normal full verification selection without reuse.",
       intent.diagnostic,
       "Work intent is not PASS and never overrides mandatory requirements, explicit verification, initial delivery/release checks, or semantic escalation. Earlier request handles are not authority for this request.",

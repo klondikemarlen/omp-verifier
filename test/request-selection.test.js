@@ -227,8 +227,8 @@ console.log(JSON.stringify({
   const args = ["automatic", "source.js", "--request", request.handle, "--full"];
 
   // Act
-  const constrained = run(...args, "--lint-budget-ms", "1");
-  const recovered = run(...args, "--lint-budget-ms", "10000");
+  const constrained = run(...args, "--lint-budget-ms", "1", "--progress");
+  const recovered = run(...args, "--lint-budget-ms", "10000", "--progress");
   const defaultBudget = run(...args);
 
   // Assert
@@ -239,6 +239,14 @@ console.log(JSON.stringify({
   const blockedLint = constrainedChecks.find(check => check.id === "verifier:project-lint");
   assert.equal(blockedLint?.status, "BLOCKED");
   assert.match(blockedLint.evidence, /\b1\s*ms\b/i);
+
+  assert.match(constrained.stderr, /verifier:project-lint returned BLOCKED/);
+  assert.match(recovered.stderr, /verifier:project-lint returned PASS/);
+  for (const result of [constrained, recovered]) {
+    assert.match(result.stderr, /verifier:project-lint started .*enforced timeout: \d+ ms/);
+    assert.match(result.stderr, /coordinator finished/);
+  }
+  assert.equal(defaultBudget.stderr, "");
 
   for (const result of [recovered, defaultBudget]) {
     assert.equal(result.status, 0, result.stderr || result.stdout);

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.29.0 - 2026-11-24
+
+- Automatic checks use inline Bash output instead of taking over the prompt editor. Use `automatic --progress` to include check transitions on stderr when output is piped.
+
 ## 1.28.0 - 2026-11-24
 
 - Rerun an interrupted verification in the same checkout to reuse completed checks and lint groups. The interrupted command runs again; `--fresh` discards saved work.
