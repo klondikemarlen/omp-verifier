@@ -169,6 +169,7 @@ console.log(JSON.stringify({
       if (!(await invocations()).includes(unit)) {
         return false;
       }
+
       if (!completedCheckId) {
         return true;
       }
@@ -242,11 +243,13 @@ async function semanticCheck(provider) {
 }
 
 test("when automatic verification is cancelled, the same command resumes completed checks and preserves semantic review", async t => {
+  // Arrange
   const project = await restartProject(t);
   const review = await semanticCheck(project.provider);
   await project.installChecks([executableCheck("completed"), review, executableCheck("interrupted")]);
   const args = ["automatic", "source.js"];
 
+  // Act
   await project.cancelAt(args, "interrupted");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted"]);
   const [cancelled] = project.runJson(["timings"]);
@@ -255,6 +258,7 @@ test("when automatic verification is cancelled, the same command resumes complet
   await project.release();
   const resumed = project.runJson(args);
 
+  // Assert
   assert.deepEqual(await project.invocations(), ["completed", "interrupted", "interrupted"]);
   assert.deepEqual(resumed.map(({ id, status }) => [id, status]), [
     ["publisher:completed", "PASS"],
@@ -279,15 +283,18 @@ test("when automatic verification is cancelled, the same command resumes complet
 });
 
 test("when a manual verification is cancelled, an explicit rerun reports both the completed and interrupted checks", async t => {
+  // Arrange
   const project = await restartProject(t);
   await project.installChecks([executableCheck("completed"), executableCheck("interrupted")]);
   const args = ["verify", "publisher:completed", "publisher:interrupted"];
 
+  // Act
   await project.cancelAt(args, "interrupted", "publisher:completed");
   assert.deepEqual((await project.invocations()).sort(), ["completed", "interrupted"]);
   await project.release();
   const resumed = project.runJson(args);
 
+  // Assert
   assert.deepEqual((await project.invocations()).sort(), ["completed", "interrupted", "interrupted"]);
   assert.deepEqual(resumed, [
     {
@@ -306,16 +313,19 @@ test("when a manual verification is cancelled, an explicit rerun reports both th
 });
 
 test("when untracked source bytes change before a restart, automatic verification discards the interrupted run's evidence", async t => {
+  // Arrange
   const project = await restartProject(t);
   await project.installChecks([executableCheck("completed"), executableCheck("interrupted")]);
   const args = ["automatic", "--worktree"];
 
+  // Act
   await project.cancelAt(args, "interrupted");
   assert.deepEqual(await project.invocations(), ["completed", "interrupted"]);
   await writeFile(join(project.cwd, "notes.js"), "export const note = 'second';\n");
   await project.release();
   const restarted = project.runJson(args);
 
+  // Assert
   assert.deepEqual(await project.invocations(), ["completed", "interrupted", "completed", "interrupted"]);
   assert.deepEqual(restarted.map(({ id, status }) => [id, status]), [
     ["publisher:completed", "PASS"],
@@ -325,6 +335,7 @@ test("when untracked source bytes change before a restart, automatic verificatio
 });
 
 test("when lint is cancelled during a second project group, the same command reports both real lint outcomes", async t => {
+  // Arrange
   const project = await restartProject(t);
   const wrapper = join(project.root, "lint-wrapper.mjs");
   await writeFile(wrapper, `${project.recordInvocation}
@@ -345,7 +356,12 @@ process.exitCode = result.status ?? 2;
     const owner = join(project.cwd, unit);
     await mkdir(owner);
     await writeFile(join(owner, "source.js"), SOURCE);
-    await writeFile(join(owner, "eslint.config.mjs"), 'export default [{ rules: { "no-unused-vars": "error" } }];\n');
+    await writeFile(join(owner, "eslint.config.mjs"), `export default [{
+  rules: {
+    "no-unused-vars": "error",
+  },
+}];
+`);
     await writeFile(join(owner, ".omp-verifier.json"), JSON.stringify({
       lint: {
         commands: {
@@ -360,11 +376,13 @@ process.exitCode = result.status ?? 2;
   }
   const args = ["lint", "first/source.js", "second/source.js", "--budget-ms", "30000"];
 
+  // Act
   await project.cancelAt(args, "second");
   assert.deepEqual(await project.invocations(), ["first", "second"]);
   await project.release();
   const [resumed] = project.runJson(args);
 
+  // Assert
   assert.deepEqual(await project.invocations(), ["first", "second", "second"]);
   assert.equal(resumed.id, "verifier:project-lint");
   assert.equal(resumed.status, "PASS");

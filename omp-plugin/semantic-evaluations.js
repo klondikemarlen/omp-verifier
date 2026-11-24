@@ -662,7 +662,10 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
   try {
     const state = await readCurrentState(cacheDirectory, check.id);
     if (!state?.requestId) return undefined;
-    if (!reuseExisting && state.requestId !== restartId) return undefined;
+    if (!reuseExisting && state.requestId !== restartId) {
+      return undefined;
+    }
+
     const { stored, requestPath } = await readStoredRequest(cacheDirectory, check.id, state.requestId, {
       requireCurrent: false,
     });
@@ -685,7 +688,10 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
     // Validate the whole capture, including selectors enrolled during review.
     // A narrower automatic invocation must not silently discard material evidence.
     await validateFreshness({ checkId: check.id, repositoryRoot, stored });
-    if (state.consumed) return result;
+    if (state.consumed) {
+      return result;
+    }
+
     const pending = requestEnvelope(payload, requestPath, state);
     if (restartId === state.requestId) {
       const view = paginateSemanticReview(pending);

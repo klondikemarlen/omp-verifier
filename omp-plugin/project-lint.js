@@ -602,6 +602,7 @@ async function restartArgumentIdentity(cwd, argument) {
     if (equals === -1) {
       return undefined;
     }
+
     filename = argument.slice(equals + 1);
   }
 
@@ -611,6 +612,7 @@ async function restartArgumentIdentity(cwd, argument) {
     if (error.code === "ENOENT" || error.code === "ENOTDIR") {
       return undefined;
     }
+
     throw error;
   }
 }
@@ -642,11 +644,14 @@ async function lintRestartKey(plan) {
     const argumentFiles = [];
     for (const argument of plan.restartArguments ?? []) {
       const identity = await restartArgumentIdentity(plan.cwd, argument);
-      if (!identity) continue;
+      if (!identity) {
+        continue;
+      }
 
       if (!identity.isFile && !inside(plan.repositoryRoot, identity.target)) {
         return undefined;
       }
+
       argumentFiles.push(identity);
     }
 

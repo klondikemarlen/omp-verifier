@@ -38,6 +38,7 @@ async function requirePrivateDirectory(path, excludedMode = 0o077) {
   if (!info.isDirectory() || !owned(info, excludedMode) || await realpath(path) !== path) {
     throw new Error("Not a private verifier restart directory");
   }
+
   return info;
 }
 
@@ -58,11 +59,15 @@ async function requireOutsideCheckout(path) {
   let ancestor = path;
   for (;;) {
     try {
-      if (await realpath(ancestor) !== ancestor) throw new Error("Restart storage requires a canonical path");
+      if (await realpath(ancestor) !== ancestor) {
+        throw new Error("Restart storage requires a canonical path");
+      }
 
       break;
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
 
       ancestor = dirname(ancestor);
     }
@@ -72,7 +77,9 @@ async function requireOutsideCheckout(path) {
       await lstat(join(ancestor, ".git"));
       throw new Error("Restart storage must be outside a Git checkout");
     } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+      if (error.code !== "ENOENT") {
+        throw error;
+      }
     }
     const parent = dirname(ancestor);
     if (parent === ancestor) return;
@@ -88,16 +95,22 @@ async function takeLock(directory) {
   try {
     requirePrivateFile(await file.stat(), 0);
     held = await acquireFileLease(file);
-    if (held) return file;
+    if (held) {
+      return file;
+    }
   } finally {
-    if (!held) await file.close();
+    if (!held) {
+      await file.close();
+    }
   }
 }
 
 async function pruneWorkspaces(root, wanted) {
   const workspaces = [];
   for (const name of await readdir(root)) {
-    if (name === wanted || !HASH.test(name)) continue;
+    if (name === wanted || !HASH.test(name)) {
+      continue;
+    }
 
     const path = join(root, name);
     try {
@@ -110,11 +123,15 @@ async function pruneWorkspaces(root, wanted) {
   workspaces.sort((left, right) => left[1] - right[1]);
   let count = workspaces.length + 1;
   for (const [path, modified] of workspaces) {
-    if (count <= MAX_WORKSPACES && Date.now() - modified <= MAX_AGE_MS) break;
+    if (count <= MAX_WORKSPACES && Date.now() - modified <= MAX_AGE_MS) {
+      break;
+    }
 
     try {
       const lock = await takeLock(path);
-      if (!lock) continue;
+      if (!lock) {
+        continue;
+      }
 
       try {
         await rm(path, {
@@ -178,7 +195,9 @@ async function readFile(path, maxBytes) {
   try {
     requirePrivateFile(await file.stat(), maxBytes);
     const data = await file.readFile("utf8");
-    if (Buffer.byteLength(data) > maxBytes) throw new Error("Verifier restart file exceeds size limit");
+    if (Buffer.byteLength(data) > maxBytes) {
+      throw new Error("Verifier restart file exceeds size limit");
+    }
 
     return data;
   } finally {
@@ -211,11 +230,12 @@ function decodeUnit(name, text) {
   if (typeof data !== "string" || checksum !== digest(`${name}\0${data}`)) {
     throw new Error("Damaged verifier restart unit");
   }
+
   return JSON.parse(data);
 }
 
 function unitName(key) {
-  if (typeof key !== "string" || !key.length || Buffer.byteLength(key) > 4_096) return;
+  if (typeof key !== "string" || !key.length) return;
 
   return `${digest(key)}.json`;
 }
@@ -223,7 +243,9 @@ function unitName(key) {
 async function saveUnit(directory, name, value) {
   try {
     const data = JSON.stringify(value);
-    if (data === undefined || Buffer.byteLength(data) > MAX_UNIT_BYTES) return;
+    if (data === undefined || Buffer.byteLength(data) > MAX_UNIT_BYTES) {
+      return;
+    }
 
     const text = JSON.stringify({
       data,
@@ -271,11 +293,15 @@ export function currentVerificationRestart() {
 }
 
 export async function openRestartUnits(directory) {
-  if (typeof directory !== "string" || !ATTEMPT_DIRECTORY.test(basename(directory))) return;
+  if (typeof directory !== "string" || !ATTEMPT_DIRECTORY.test(basename(directory))) {
+    return;
+  }
 
   const workspace = dirname(directory);
   const root = restartRoot();
-  if (dirname(workspace) !== root || !HASH.test(basename(workspace))) return;
+  if (dirname(workspace) !== root || !HASH.test(basename(workspace))) {
+    return;
+  }
 
   try {
     await requirePrivateDirectory(root);
@@ -348,11 +374,15 @@ export async function withVerificationRestart({ cwd, command, scope, packageDire
   } catch {
     // No lease means this process must not read or modify restart data.
   }
-  if (!workspace) return await restartContext.run(undefined, execute);
+  if (!workspace) {
+    return await restartContext.run(undefined, execute);
+  }
 
   try {
     let units;
-    if (fresh) await clearWorkspace(workspace.directory);
+    if (fresh) {
+      await clearWorkspace(workspace.directory);
+    }
 
     try {
       const identity = await verificationRestartIdentity({
@@ -363,12 +393,16 @@ export async function withVerificationRestart({ cwd, command, scope, packageDire
       });
       units = await beginAttempt(workspace.directory, identity);
     } catch {
-      if (!signal?.aborted) await clearWorkspace(workspace.directory);
+      if (!signal?.aborted) {
+        await clearWorkspace(workspace.directory);
+      }
     }
     return await restartContext.run(units, execute);
   } finally {
     try {
-      if (!signal?.aborted) await clearWorkspace(workspace.directory);
+      if (!signal?.aborted) {
+        await clearWorkspace(workspace.directory);
+      }
     } finally {
       await workspace.lock.close().catch(() => {});
     }

@@ -12,8 +12,14 @@ export async function acquireFileLease(handle, waitMs = 0) {
     lock.once("error", reject);
     lock.once("exit", accept);
   });
-  if (status === 1) return false;
-  if (status !== 0) throw new Error("Could not acquire the verifier file lease; check the installed flock command");
+  if (status === 1) {
+    return false;
+  }
+
+  if (status !== 0) {
+    throw new Error("Could not acquire the verifier file lease; check the installed flock command");
+  }
+
   return true;
 }
 
@@ -23,11 +29,17 @@ export async function claimOperationLock(path, waitMs, busyMessage) {
   const stablePath = `${path}.lease`;
   const handle = await open(stablePath, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
   try {
-    if (!await acquireFileLease(handle, waitMs)) throw new Error(busyMessage);
+    if (!await acquireFileLease(handle, waitMs)) {
+      throw new Error(busyMessage);
+    }
+
     try {
       await link(stablePath, path);
     } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      if (error.code !== "EEXIST") {
+        throw error;
+      }
+
       const marker = await lstat(path, {
         bigint: true,
       });

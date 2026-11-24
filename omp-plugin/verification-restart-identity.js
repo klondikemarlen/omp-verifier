@@ -46,7 +46,9 @@ async function optionalStat(path) {
       bigint: true,
     });
   } catch (error) {
-    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+    if (error.code !== "ENOENT" && error.code !== "ENOTDIR") {
+      throw error;
+    }
   }
 }
 
@@ -56,7 +58,9 @@ function sameFile(before, after) {
 }
 
 async function fileDigest(path, info, budget) {
-  if (info.size > BigInt(budget.bytes)) unavailable();
+  if (info.size > BigInt(budget.bytes)) {
+    unavailable();
+  }
 
   budget.bytes -= Number(info.size);
   const file = await open(path, READ_FLAGS);
@@ -64,14 +68,18 @@ async function fileDigest(path, info, budget) {
     const before = await file.stat({
       bigint: true,
     });
-    if (!sameFile(info, before)) unavailable();
+    if (!sameFile(info, before)) {
+      unavailable();
+    }
 
     const hash = createHash("sha256");
     let remaining = Number(info.size);
     if (remaining <= 128 * 1024) {
       const bytes = Buffer.allocUnsafe(remaining);
       const { bytesRead } = await file.read(bytes);
-      if (bytesRead !== remaining) unavailable();
+      if (bytesRead !== remaining) {
+        unavailable();
+      }
 
       hash.update(bytes);
       remaining = 0;
@@ -81,7 +89,9 @@ async function fileDigest(path, info, budget) {
       });
       for await (const bytes of stream) {
         remaining -= bytes.length;
-        if (remaining < 0) unavailable();
+        if (remaining < 0) {
+          unavailable();
+        }
 
         hash.update(bytes);
       }
@@ -89,7 +99,9 @@ async function fileDigest(path, info, budget) {
     const after = await file.stat({
       bigint: true,
     });
-    if (remaining !== 0 || !sameFile(info, after)) unavailable();
+    if (remaining !== 0 || !sameFile(info, after)) {
+      unavailable();
+    }
 
     return hash.digest("hex");
   } finally {
@@ -98,12 +110,22 @@ async function fileDigest(path, info, budget) {
 }
 
 async function describePath(path, info, budget) {
-  if (!info) return ["missing"];
+  if (!info) {
+    return ["missing"];
+  }
 
   const mode = Number(info.mode);
-  if (info.isDirectory()) return ["directory", mode];
-  if (info.isFile()) return ["file", mode, await fileDigest(path, info, budget)];
-  if (!info.isSymbolicLink()) unavailable();
+  if (info.isDirectory()) {
+    return ["directory", mode];
+  }
+
+  if (info.isFile()) {
+    return ["file", mode, await fileDigest(path, info, budget)];
+  }
+
+  if (!info.isSymbolicLink()) {
+    unavailable();
+  }
 
   const target = await readlink(path, {
     encoding: "buffer",
@@ -111,7 +133,9 @@ async function describePath(path, info, budget) {
   const after = await lstat(path, {
     bigint: true,
   });
-  if (!sameFile(info, after)) unavailable();
+  if (!sameFile(info, after)) {
+    unavailable();
+  }
 
   return ["link", mode, target.toString("base64")];
 }
@@ -142,21 +166,27 @@ async function git(cwd, args, maxBuffer = MAX_GIT_OUTPUT, input) {
     command.child.stdin.end(input);
   }
   const { stdout } = await command;
-  if (inputError) throw inputError;
+  if (inputError) {
+    throw inputError;
+  }
 
   return stdout;
 }
 
 async function gitLine(cwd, args) {
   const output = decoder.decode(await git(cwd, args));
-  if (!output.endsWith("\n")) unavailable();
+  if (!output.endsWith("\n")) {
+    unavailable();
+  }
 
   return output.slice(0, -1);
 }
 
 async function gitCommit(root, ref) {
   const commit = await gitLine(root, ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`]);
-  if (!COMMIT.test(commit)) unavailable();
+  if (!COMMIT.test(commit)) {
+    unavailable();
+  }
 
   return commit;
 }
@@ -165,19 +195,26 @@ function indexPaths(index) {
   const tracked = new Set();
   const readRaw = new Set();
   for (const entry of decoder.decode(index).split("\0")) {
-    if (!entry) continue;
+    if (!entry) {
+      continue;
+    }
 
     const tab = entry.indexOf("\t");
     const fields = entry.slice(0, tab).split(" ");
     if (tab < 0 || fields.length !== 4 || !INDEX_MODES.has(fields[1])) {
       unavailable();
     }
+
     const path = entry.slice(tab + 1);
     tracked.add(path);
     // Git may omit hidden index entries from diff-files entirely.
-    if (fields[0] !== "H" || fields[1] === "120000" || fields[3] !== "0") readRaw.add(path);
+    if (fields[0] !== "H" || fields[1] === "120000" || fields[3] !== "0") {
+      readRaw.add(path);
+    }
   }
-  if (tracked.size > 200_000) unavailable();
+  if (tracked.size > 200_000) {
+    unavailable();
+  }
 
   return {
     tracked,
@@ -190,7 +227,9 @@ async function hasAutomaticLineEndingConversion(root) {
     const value = await gitLine(root, ["config", "--type=bool-or-str", "--get", "core.autocrlf"]);
     return value !== "false";
   } catch (error) {
-    if (error.code !== 1) throw error;
+    if (error.code !== 1) {
+      throw error;
+    }
 
     return false;
   }
@@ -200,7 +239,9 @@ async function worktreePaths(root, index, untracked, dirty) {
   const { tracked, readRaw } = indexPaths(index);
   for (const bytes of [untracked, dirty]) {
     for (const path of decoder.decode(bytes).split("\0")) {
-      if (path) readRaw.add(path);
+      if (path) {
+        readRaw.add(path);
+      }
     }
   }
 
@@ -213,7 +254,9 @@ async function worktreePaths(root, index, untracked, dirty) {
     ]);
     attributes = attributeBytes;
     const fields = decoder.decode(attributes).split("\0");
-    if (fields.pop() !== "" || fields.length % 3 !== 0) unavailable();
+    if (fields.pop() !== "" || fields.length % 3 !== 0) {
+      unavailable();
+    }
 
     // An index blob can differ from the exact worktree bytes after Git filters,
     // even if Git reports that the path is clean.
@@ -228,7 +271,9 @@ async function worktreePaths(root, index, untracked, dirty) {
       for (const path of tracked) readRaw.add(path);
     }
   }
-  if (readRaw.size > 25_000) unavailable();
+  if (readRaw.size > 25_000) {
+    unavailable();
+  }
 
   return {
     paths: [...readRaw].sort(),
@@ -240,11 +285,15 @@ function realParent(root, path, parents) {
   let pending = parents.get(path);
   if (!pending) {
     pending = realpath(path).then(canonical => {
-      if (canonical !== path || !inside(root, canonical)) unavailable();
+      if (canonical !== path || !inside(root, canonical)) {
+        unavailable();
+      }
 
       return true;
     }).catch(error => {
-      if (error.code !== "ENOENT" && error.code !== "ENOTDIR") throw error;
+      if (error.code !== "ENOENT" && error.code !== "ENOTDIR") {
+        throw error;
+      }
 
       return false;
     });
@@ -257,17 +306,39 @@ async function checkoutPath(root, name, parents, budget) {
   if (!name || name.split("/").some(part => !part || part === "." || part === ".." || part === ".git")) {
     unavailable();
   }
-  const path = join(root, name);
-  if (!await realParent(root, dirname(path), parents)) return [name, ["missing"]];
 
-  return [name, await describePath(path, await optionalStat(path), budget)];
+  const path = join(root, name);
+  if (!await realParent(root, dirname(path), parents)) {
+    return [name, ["missing"]];
+  }
+
+  const info = await optionalStat(path);
+  const description = await describePath(path, info, budget);
+  if (info?.isSymbolicLink()) {
+    const target = await realpath(path);
+    if (!inside(root, target)) {
+      unavailable();
+    }
+
+    const file = await optionalStat(target);
+    if (!file?.isFile()) {
+      unavailable();
+    }
+
+    description.push(target, await fileDigest(target, file, budget));
+  }
+  return [name, description];
 }
 
 async function checkoutIdentity(cwd, base) {
-  if (GIT_ENV_REDIRECTS.some(name => Object.hasOwn(process.env, name))) unavailable();
+  if (GIT_ENV_REDIRECTS.some(name => Object.hasOwn(process.env, name))) {
+    unavailable();
+  }
 
   const root = await realpath(await gitLine(cwd, ["rev-parse", "--show-toplevel"]));
-  if (!inside(root, cwd)) unavailable();
+  if (!inside(root, cwd)) {
+    unavailable();
+  }
 
   const [gitDirectory, head, branch, index, untracked, dirty, configuration, replacements] = await Promise.all([
     gitLine(cwd, ["rev-parse", "--absolute-git-dir"]),
@@ -296,11 +367,15 @@ async function checkoutIdentity(cwd, base) {
     add(hash, createHash("sha256").update(bytes).digest("hex"));
   }
   if (base !== undefined) {
-    if (typeof base !== "string" || !base || base.length > 4_096) unavailable();
+    if (typeof base !== "string" || !base || base.length > 4_096) {
+      unavailable();
+    }
 
     const commit = await gitCommit(root, base);
     const mergeBase = await gitLine(root, ["merge-base", commit, head]);
-    if (!COMMIT.test(mergeBase)) unavailable();
+    if (!COMMIT.test(mergeBase)) {
+      unavailable();
+    }
 
     add(hash, [commit, mergeBase]);
   }
@@ -320,16 +395,23 @@ async function checkoutIdentity(cwd, base) {
 }
 
 async function providerPath(hash, path, boundary, budget) {
-  if (--budget.entries < 0) unavailable();
+  if (--budget.entries < 0) {
+    unavailable();
+  }
 
   const info = await optionalStat(path);
   add(hash, [path, await describePath(path, info, budget)]);
-  if (info?.isSymbolicLink() && !inside(boundary, await realpath(path))) unavailable();
+  if (info?.isSymbolicLink() && !inside(boundary, await realpath(path))) {
+    unavailable();
+  }
+
   if (!info?.isDirectory()) return;
 
   const names = [];
   for await (const entry of await opendir(path)) {
-    if (names.length >= budget.entries) unavailable();
+    if (names.length >= budget.entries) {
+      unavailable();
+    }
 
     names.push(entry.name);
   }
@@ -348,7 +430,9 @@ async function providerIdentity(command, packageDirectory) {
       unavailable();
     }
     const packages = await realpath(packageDirectory);
-    if (packages !== await realpath(pinnedPackages)) unavailable();
+    if (packages !== await realpath(pinnedPackages)) {
+      unavailable();
+    }
 
     return ["generation", id, digest, packages];
   }
@@ -366,7 +450,9 @@ async function providerIdentity(command, packageDirectory) {
     const packages = resolve(packageDirectory);
     const parent = await realpath(dirname(packages));
     const registry = join(parent, "package.json");
-    if ((await optionalStat(registry))?.isSymbolicLink()) unavailable();
+    if ((await optionalStat(registry))?.isSymbolicLink()) {
+      unavailable();
+    }
 
     await providerPath(hash, registry, parent, budget);
     if (await optionalStat(packages)) {
