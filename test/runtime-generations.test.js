@@ -394,12 +394,20 @@ test("when a review handle is shortened between pages, retrying the exact footer
   const nextCommand = firstPage.match(/^Next command: (.+)$/m)[1];
   const before = JSON.parse(await current.cli(["diagnostics", path]));
   const shortenedPath = join(current.paths.root, "reviews", requestId.slice(0, 12));
+  const shortenedFilename = path.slice(0, -10);
+  const replacement = await current.replacement();
+  await activateGeneration(replacement.id, {
+    agentDir: current.agentDir,
+  });
 
   // Act
   const invalidCommands = [
     ["review", shortenedPath, "--reporter", "text", "--page", "1"],
     ["evaluate", shortenedPath, "--assessment", "{}"],
     ["diagnostics", shortenedPath],
+    ["review", shortenedFilename, "--reporter", "text", "--page", "1"],
+    ["evaluate", shortenedFilename, "--assessment", "{}"],
+    ["diagnostics", shortenedFilename],
   ];
   const failures = await Promise.allSettled(invalidCommands.map(args => current.cli(args)));
 

@@ -91,12 +91,20 @@ function requestFileName(checkId, requestId) {
   return `${Buffer.from(checkId).toString("base64url")}.${requestId}.json`;
 }
 
+export class InvalidSemanticRequestFilename extends Error {
+  constructor() {
+    super("Invalid review request filename. Retry the last page footer's exact Next command, or copy the complete request path from the coordinator's response.");
+  }
+}
+
 function checkIdFromRequestPath(requestPath) {
   const match = basename(requestPath).match(/^([A-Za-z0-9_-]+)\.([0-9a-f-]{36})\.json$/);
-  if (!match) throw new Error("request path does not identify a semantic evaluation request");
+  if (!match) {
+    throw new InvalidSemanticRequestFilename();
+  }
   const checkId = Buffer.from(match[1], "base64url").toString("utf8");
   if (!/^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/.test(checkId)) {
-    throw new Error("request path has an invalid check identity");
+    throw new InvalidSemanticRequestFilename();
   }
   return { checkId, requestId: match[2] };
 }
@@ -770,6 +778,10 @@ export async function readSemanticEvaluation({
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
   } catch (error) {
+    if (error instanceof InvalidSemanticRequestFilename) {
+      throw error;
+    }
+
     return requestBlock(undefined, error.message);
   }
 
@@ -1111,6 +1123,10 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
   } catch (error) {
+    if (error instanceof InvalidSemanticRequestFilename) {
+      throw error;
+    }
+
     return requestBlock(undefined, error.message);
   }
 

@@ -398,7 +398,7 @@ The protocol uses the same coordinator and named verifier advisor:
 
 Invalid assessment input, including a mismatched citation, returns `BLOCKED` with summary `Semantic assessment is invalid` without consuming the request. Read its current evidence, correct the request ID or original-line citation, and resubmit with `evaluate`. This is distinct from `Semantic request is unavailable`, which reports an unavailable or invalid request prerequisite and calls for fresh preparation with the complete original scope and actual delivery base.
 
-The installed launcher rejects a truncated request path as an invocation error (exit `2`), before opening a generation or recording a page. Retry the literal `Next command` from the last successful page, in the same checkout. A complete handle owned by another runtime still needs its original coordinator; a missing pinned generation remains `BLOCKED`. The launcher does not search other requests or fall back to the active generation.
+If a copied path loses its generation prefix or its request filename is shortened, the command reports an invocation error (exit `2`) without recording a page. Retry the literal `Next command` from the last successful page in the same checkout. The launcher selects the generation; the pinned coordinator interprets its own filenames. A complete request file in another runtime still needs its original coordinator, and a missing pinned generation remains `BLOCKED`. The launcher does not search for similar requests or fall back to the active generation.
 
 ### Finding Eligibility
 

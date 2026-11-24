@@ -1,13 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { lstatSync } from "node:fs";
 import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const GENERATION_ID = /^[a-f0-9-]{36}$/;
-const SCOPE_DIGEST = /^[a-f0-9]{64}$/;
-const REQUEST_FILENAME = /^[A-Za-z0-9_-]+\.[a-f0-9-]{36}\.json$/;
 const ownPath = fileURLToPath(import.meta.url);
 
 export async function privateDirectory(path) {
@@ -149,15 +148,15 @@ function requestedGeneration(root, args) {
   }
   const request = resolve(args[1]);
   const parts = relative(join(root, "reviews"), request).split("/");
-  // Both legacy and generation-pinned handles have this request-file suffix.
-  const [scope, requestsDirectory, filename] = parts.slice(-3);
-  if (!SCOPE_DIGEST.test(scope) || requestsDirectory !== "requests" || !REQUEST_FILENAME.test(filename)) {
-    throw new InvalidReviewRequestPath();
-  }
   if (parts[0] === "..") {
+    // A complete file from another runtime belongs to its original coordinator.
+    if (!lstatSync(request, { throwIfNoEntry: false })?.isFile()) {
+      throw new InvalidReviewRequestPath();
+    }
     throw new Error("Request predates generation isolation or belongs to another runtime; use its original coordinator or prepare a fresh complete review");
   }
-  if (parts.length !== 4 || !GENERATION_ID.test(parts[0])) {
+  // Only the generation prefix belongs to the launcher. Its coordinator owns the rest.
+  if (!GENERATION_ID.test(parts[0]) || parts.length < 2) {
     throw new InvalidReviewRequestPath();
   }
   return parts[0];

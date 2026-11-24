@@ -6,6 +6,7 @@ import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { validateContextPathLimit } from "#root/omp-plugin/semantic-context.js";
 import {
   completeSemanticEvaluation,
+  InvalidSemanticRequestFilename,
   readSemanticDiagnostics,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
@@ -119,7 +120,11 @@ async function showDiagnostics(requestPath, options) {
     writeJson(diagnostics, {
       pretty,
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof InvalidSemanticRequestFilename) {
+      throw error;
+    }
+
     // Routine telemetry must not echo private paths or source-bearing errors.
     writeJson({
       status: "BLOCKED",
