@@ -58,8 +58,8 @@ function createTimingPublisher(cwd, run) {
   };
 }
 
-export async function timeVerificationRun(cwd, command, execute) {
-  const started = performance.now();
+export async function timeVerificationRun(cwd, command, execute, progress) {
+  const runStarted = performance.now();
   const run = {
     id: randomUUID(),
     command,
@@ -84,8 +84,9 @@ export async function timeVerificationRun(cwd, command, execute) {
     // while analytics is being saved must not resume the CLI reporter.
     interruption = new Promise(() => {});
     run.coordinatorMs = null;
-    run.cancelledAfterMs = Math.round(performance.now() - started);
+    run.cancelledAfterMs = Math.round(performance.now() - runStarted);
     run.cancellationSignal = signal;
+    progress?.cancelled(signal, run.cancelledAfterMs);
     cancellation.abort();
     await publish();
     stopObserving();
@@ -98,9 +99,12 @@ export async function timeVerificationRun(cwd, command, execute) {
   }
 
   try {
+    progress?.started();
     const execution = activeRun.run({
       run,
       publish,
+      progress,
+      runStarted,
       signal: cancellation?.signal,
     }, execute);
     publish();
@@ -109,10 +113,15 @@ export async function timeVerificationRun(cwd, command, execute) {
       return interruption;
     }
 
-    run.coordinatorMs = Math.round(performance.now() - started);
+    run.coordinatorMs = Math.round(performance.now() - runStarted);
     recordUnexecutedChecks(run, results);
     await publish();
-    return interruption ?? results;
+    if (interruption) {
+      return interruption;
+    }
+
+    progress?.finished(run.coordinatorMs);
+    return results;
   } catch (error) {
     if (interruption) {
       return interruption;
@@ -142,7 +151,7 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
     return execute();
   }
 
-  const { run, signal, publish } = context;
+  const { run, signal, publish, progress, runStarted } = context;
   signal?.throwIfAborted();
   const started = performance.now();
   const startedAt = Date.now();
@@ -157,6 +166,7 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
     observation.timeoutMs = timeoutMs;
   }
   const index = run.checks.push(observation) - 1;
+  progress?.checkStarted(observation, Math.round(started - runStarted));
   publish();
 
   const result = await execution;
@@ -171,6 +181,7 @@ export async function timeVerificationCheck(id, execute, timeoutMs) {
     completed.timedOut = true;
   }
   run.checks[index] = completed;
+  progress?.checkReturned(completed);
   publish();
   return result;
 }

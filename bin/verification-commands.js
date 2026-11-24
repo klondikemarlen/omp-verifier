@@ -150,10 +150,48 @@ async function verifyAutomatic(paths, options) {
   if (options.wholeFile && options.base === undefined) {
     throw new Error("--whole-file requires --base and exact paths in the PR");
   }
+
   const cwd = process.cwd();
-  const results = await timeVerificationRun(cwd, "automatic", () => automaticResults(cwd, paths, options));
+  let progress;
+  if (process.stdout.isTTY && process.stderr.isTTY) {
+    progress = automaticConsole;
+  }
+
+  const results = await timeVerificationRun(
+    cwd,
+    "automatic",
+    () => automaticResults(cwd, paths, options),
+    progress,
+  );
   await writeResults(results, options);
 }
+
+function writeAutomaticProgress(message) {
+  process.stderr.write(`[verifier progress] ${message}\n`);
+}
+
+const automaticConsole = {
+  started() {
+    writeAutomaticProgress("Automatic verification started. In the OMP Console, wait to return to the editor. Keys go to the command; Esc force-kills it. There is no detach.");
+  },
+  checkStarted(check, elapsedMs) {
+    let details = `${elapsedMs} ms run elapsed`;
+    if (check.timeoutMs !== undefined) {
+      details += `; enforced timeout: ${check.timeoutMs} ms`;
+    }
+
+    writeAutomaticProgress(`Check ${check.id} started (${details}).`);
+  },
+  checkReturned(check) {
+    writeAutomaticProgress(`Check ${check.id} returned ${check.status} (${check.durationMs} ms check elapsed).`);
+  },
+  cancelled(signal, elapsedMs) {
+    writeAutomaticProgress(`Automatic verification cancelled by ${signal} (${elapsedMs} ms elapsed).`);
+  },
+  finished(elapsedMs) {
+    writeAutomaticProgress(`Automatic verification coordinator finished (${elapsedMs} ms elapsed).`);
+  },
+};
 
 async function automaticResults(cwd, paths, options) {
   let intent;
