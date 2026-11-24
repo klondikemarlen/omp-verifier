@@ -44,6 +44,8 @@ Run `automatic` in the foreground: set `pty: true` on the Bash tool call, omit `
 
 In the interactive Console, `[verifier progress]` lines describe execution, not findings. Bash can capture them together with the reporter output. Never relay these lines as advice or use them as a verdict. If only progress was printed, apply the same failure-only reporting rules as for empty reporter output; preserve any pending review or interrupted invocation.
 
+After confirmed cancellation, if verification is still requested, rerun the same command in its owning checkout. Do not start a second invocation while the first is still active. An interrupted command has no verdict; use the rerun's results and continue any returned semantic request.
+
 If asked what a quiet invocation has reached, use `node {{OMP_VERIFIER_CLI}} timings --reporter text` in its original working directory. Match the run ID when known; do not assume the newest of overlapping runs is yours. Report the last observed check and its budget, not a hang inferred from elapsed time. Timing history is not a substitute for a job's output or a semantic reviewer's next action.
 
 Use the generated persistent launcher for ordinary verification. A result's generation ID identifies its coordinator and provider artifacts; a result from an old generation is not proof from the active replacement. Keep the exact request path for review/evaluation so the launcher selects its original generation. Do not activate, collect, or delete runtime generations as part of assessment; those are operator lifecycle actions. A request predating generation isolation needs its original coordinator or a fresh complete review, not an edited cache path.

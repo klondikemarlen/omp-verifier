@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -8,10 +9,13 @@ import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import { changedProjectPaths, validateProjectLintBudget } from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
+const MAX_RESTART_EVIDENCE = MAX_EVIDENCE + 1;
+const MAX_RESTART_ARGUMENTS = 64;
 const EXECUTION_BUDGET_MS = 100_000;
 const lintProviderPath = fileURLToPath(new URL("./project-lint-check.mjs", import.meta.url));
 const PROJECT_MARKERS = {
@@ -227,7 +231,20 @@ async function lintPlan(group, repositoryRoot, env) {
       const argument = relative(binding.directory, join(repositoryRoot, path));
       return argument.startsWith("-") ? `./${argument}` : argument;
     }) : [];
-    return { plan: { language: family.id, tool, cwd: binding.directory, command: [program, ...command.slice(1), ...sourceArguments], paths, wholeProject, configuration: "project binding", requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(tool) } };
+    const restartArguments = command.slice(1);
+    return {
+      plan: {
+        language: family.id,
+        tool,
+        cwd: binding.directory,
+        command: [program, ...restartArguments, ...sourceArguments],
+        paths,
+        wholeProject,
+        configuration: "project binding",
+        requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(tool),
+        restartArguments,
+      },
+    };
   }
 
   const pkg = await readJson(join(root, "package.json"));
@@ -257,7 +274,21 @@ async function lintPlan(group, repositoryRoot, env) {
     if (!program) return { result: blocked(family.id, root, "The declared execution wrapper is unavailable", executionWrapper[0]) };
     const command = [program, ...executionWrapper.slice(1), "npm", "run", script.name];
     if (script.tool === "eslint") command.push("--", "--no-fix");
-    return { plan: { language: family.id, tool: script.tool, cwd: root, command, paths, wholeProject, configuration: "project execution wrapper", requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(script.tool) } };
+
+    // The wrapper may run npm and its linter outside the host's tooling.
+    return {
+      plan: {
+        language: family.id,
+        tool: script.tool,
+        cwd: root,
+        command,
+        paths,
+        wholeProject,
+        configuration: "project execution wrapper",
+        requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(script.tool),
+        restartDisabled: true,
+      },
+    };
   }
 
   const wrapper = await wrapperIn(root, repositoryRoot);
@@ -288,14 +319,33 @@ async function lintPlan(group, repositoryRoot, env) {
   if (!program) return { result: blocked(family.id, root, "The configured linter is unavailable", `${tool} could not be found in the project, its installed environment, or PATH. Restore the existing project setup; Verifier does not provision tools.`) };
 
   let command = [program, ...prefix, ...nativeArguments(tool, paths.map(path => relative(root, join(repositoryRoot, path))))];
+  let restartDisabled = prefix.length > 0;
   if (script) {
     const manager = await projectPackageManager(pkg, root);
     if (!["npm", "pnpm", "yarn", "bun"].includes(manager)) return { result: blocked(family.id, root, "The declared package manager is unsupported", manager) };
     const runner = await executable(manager, root, repositoryRoot, env);
     if (!runner) return { result: blocked(family.id, root, "The project package manager is unavailable", manager) };
     command = [runner, "run", script.name];
+    // A delegated script can select another executable or run arbitrary lifecycle hooks.
+    restartDisabled ||= program !== join(root, "node_modules", ".bin", scriptBinary)
+      || Object.hasOwn(pkg.scripts, `pre${script.name}`)
+      || Object.hasOwn(pkg.scripts, `post${script.name}`);
   }
-  return { plan: { language: family.id, tool, cwd: root, command, paths, wholeProject, configuration: configurations[0]?.path ?? "Explicit tool defaults", inspectEslint: tool === "eslint", requiresDiagnostics: ["oxlint", "pyflakes"].includes(tool), executable: program } };
+  return {
+    plan: {
+      language: family.id,
+      tool,
+      cwd: root,
+      command,
+      paths,
+      wholeProject,
+      configuration: configurations[0]?.path ?? "Explicit tool defaults",
+      inspectEslint: tool === "eslint",
+      requiresDiagnostics: ["oxlint", "pyflakes"].includes(tool),
+      executable: program,
+      restartDisabled,
+    },
+  };
 }
 
 export async function discoverProjectLinters({ cwd, changedPaths, env = process.env }) {
@@ -529,18 +579,145 @@ function hasLintDiagnostics(tool, output) {
   }
 }
 
-export async function verifyProjectLint({ cwd, changedPaths, env = process.env, budgetMs = EXECUTION_BUDGET_MS }) {
+async function restartFileIdentity(path) {
+  const target = await realpath(path);
+  const file = await stat(target, {
+    bigint: true,
+  });
+  return {
+    target,
+    isFile: file.isFile(),
+    generation: `${file.dev}:${file.ino}:${file.mode}:${file.size}:${file.mtimeNs}:${file.ctimeNs}`,
+  };
+}
+
+async function restartArgumentIdentity(cwd, argument) {
+  if (argument === "--") {
+    return undefined;
+  }
+
+  const equals = argument.indexOf("=");
+  let filename = argument;
+  if (argument.startsWith("-")) {
+    if (equals === -1) {
+      return undefined;
+    }
+    filename = argument.slice(equals + 1);
+  }
+
+  try {
+    return await restartFileIdentity(resolve(cwd, filename));
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function lintRestartKey(plan) {
+  if (plan.restartDisabled || plan.restartArguments?.length > MAX_RESTART_ARGUMENTS) {
+    return undefined;
+  }
+
+  try {
+    const launcher = await restartFileIdentity(plan.command[0]);
+    if (!launcher.isFile) {
+      return undefined;
+    }
+
+    let tool = launcher;
+    if (plan.executable && plan.executable !== plan.command[0]) {
+      tool = await restartFileIdentity(plan.executable);
+      if (!tool.isFile) {
+        return undefined;
+      }
+    }
+
+    let configuration;
+    if (isAbsolute(plan.configuration)) {
+      configuration = await restartFileIdentity(plan.configuration.replace(/:eslintConfig$/, ""));
+    }
+
+    const argumentFiles = [];
+    for (const argument of plan.restartArguments ?? []) {
+      const identity = await restartArgumentIdentity(plan.cwd, argument);
+      if (!identity) continue;
+
+      if (!identity.isFile && !inside(plan.repositoryRoot, identity.target)) {
+        return undefined;
+      }
+      argumentFiles.push(identity);
+    }
+
+    const identity = JSON.stringify([
+      plan.cwd,
+      plan.language,
+      plan.tool,
+      plan.command,
+      plan.paths,
+      plan.wholeProject,
+      launcher,
+      tool,
+      configuration,
+      argumentFiles,
+    ]);
+    return `project-lint:${createHash("sha256").update(identity).digest("hex")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function passedLintGroup(plan, evidence) {
+  return {
+    language: plan.language,
+    root: plan.cwd,
+    status: "PASS",
+    summary: "The existing non-fixing lint command exited 0",
+    evidence,
+  };
+}
+
+export async function verifyProjectLint({
+  cwd,
+  changedPaths,
+  env = process.env,
+  budgetMs = EXECUTION_BUDGET_MS,
+  restart = currentVerificationRestart(),
+}) {
   validateProjectLintBudget(budgetMs);
 
   const cancellationSignal = verificationCancellationSignal();
+  cancellationSignal?.throwIfAborted();
+
   const deadline = Date.now() + budgetMs;
   const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
+  cancellationSignal?.throwIfAborted();
+
   const outcomes = [...discovery.results];
   let timedOut = false;
   for (const plan of discovery.plans) {
+    cancellationSignal?.throwIfAborted();
+
     try {
       plan.repositoryRoot = discovery.repositoryRoot;
+      let restartKey;
+      if (restart && Date.now() < deadline) {
+        restartKey = await lintRestartKey(plan);
+        const previous = restartKey && await restart.read(restartKey);
+        cancellationSignal?.throwIfAborted();
+        if (previous?.status === "PASS"
+          && typeof previous.evidence === "string"
+          && previous.evidence.length <= MAX_RESTART_EVIDENCE
+          && Date.now() < deadline) {
+          outcomes.push(passedLintGroup(plan, previous.evidence));
+          continue;
+        }
+      }
+
       const applicable = await inspectEslint(plan);
+      cancellationSignal?.throwIfAborted();
+
       if (plan.inspectEslint && applicable.length === 0) {
         outcomes.push({ language: plan.language, root: plan.cwd, status: "N/A", summary: "Changed source is outside the configured ESLint scope" });
         continue;
@@ -551,7 +728,19 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
       }
 
       const { stdout, stderr } = await executeLint(plan, env, remaining, cancellationSignal);
-      outcomes.push({ language: plan.language, root: plan.cwd, status: "PASS", summary: "The existing non-fixing lint command exited 0", evidence: [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ") });
+      cancellationSignal?.throwIfAborted();
+
+      const evidence = [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ");
+      outcomes.push(passedLintGroup(plan, evidence));
+      if (restartKey && await lintRestartKey(plan) === restartKey) {
+        cancellationSignal?.throwIfAborted();
+
+        // One character beyond the transport limit preserves its truncation marker on replay.
+        await restart.save(restartKey, {
+          status: "PASS",
+          evidence: evidence.slice(0, MAX_RESTART_EVIDENCE),
+        });
+      }
     } catch (error) {
       cancellationSignal?.throwIfAborted();
 
@@ -580,6 +769,8 @@ export async function verifyProjectLint({ cwd, changedPaths, env = process.env, 
       outcomes.push({ language: plan.language, root: plan.cwd, status, summary, evidence: [plan.command.join(" "), output, error.message].filter(Boolean).join("\n") });
     }
   }
+  cancellationSignal?.throwIfAborted();
+
   const result = combinedResult(outcomes, discovery.repositoryRoot);
   if (timedOut) {
     return markVerificationTimeout(result);

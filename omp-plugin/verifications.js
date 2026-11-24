@@ -1,12 +1,13 @@
 import { access } from "node:fs/promises";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { prepareSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
-import { discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
+import { defaultPackageDirectory, discoverAutomaticVerification, discoverVerificationChecks, projectPath } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
-import { markVerificationTimeout, timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { markVerificationTimeout, recordRestoredCheck, timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -59,10 +60,15 @@ function resultFromOutput(check, output) {
   }
 }
 
-function verificationEnvironment(changedPaths, delivery) {
+function verificationEnvironment(changedPaths, delivery, lintRestartDirectory) {
   const environment = { ...process.env };
   delete environment.OMP_VERIFIER_CHANGED_PATHS;
   delete environment.OMP_VERIFIER_PR_SCOPE;
+  delete environment.OMP_VERIFIER_LINT_RESTART_DIRECTORY;
+  if (lintRestartDirectory) {
+    environment.OMP_VERIFIER_LINT_RESTART_DIRECTORY = lintRestartDirectory;
+  }
+
   if (!changedPaths) {
     return environment;
   }
@@ -121,7 +127,7 @@ async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, ma
   });
 }
 
-async function executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs) {
+async function executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs, lintRestartDirectory) {
   const args = [check.entryPath];
   if (lintBudgetMs !== undefined) {
     args.push(String(lintBudgetMs));
@@ -132,7 +138,7 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
     signal?.throwIfAborted();
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, args, {
       cwd,
-      env: verificationEnvironment(changedPaths, automaticScope?.delivery),
+      env: verificationEnvironment(changedPaths, automaticScope?.delivery, lintRestartDirectory),
       timeout: timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
       signal,
@@ -183,11 +189,30 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
     timeoutMs = lintBudgetMs + PROJECT_LINT_PROVIDER_ALLOWANCE_MS;
   }
 
-  return timeVerificationCheck(
-    check.id,
-    () => executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs),
-    timeoutMs,
-  );
+  const restart = currentVerificationRestart();
+  const isProjectLint = isInstalledProjectLint(check, resolve(defaultPackageDirectory()));
+  const key = `check:${JSON.stringify([check.id, changedPaths])}`;
+  if (restart && !isProjectLint) {
+    const saved = await restart.read(key);
+    if (saved?.id === check.id && saved.status === "PASS") {
+      const result = resultFromOutput(check, JSON.stringify(saved));
+      if (result?.status === "PASS") {
+        recordRestoredCheck(result);
+        return result;
+      }
+    }
+  }
+
+  return timeVerificationCheck(check.id, async () => {
+    const result = await executeVerificationCheck(
+      check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs,
+      isProjectLint ? restart?.directory : undefined,
+    );
+    if (restart && !isProjectLint && result?.status === "PASS") {
+      await restart.save(key, result);
+    }
+    return result;
+  }, timeoutMs);
 }
 
 export async function runVerificationCheck(check, cwd, changedPaths, maxSourceBytes) {

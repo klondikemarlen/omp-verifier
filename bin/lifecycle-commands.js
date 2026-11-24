@@ -50,6 +50,7 @@ export function registerLifecycleCommands(program) {
     failuresOnly: true,
   })
     .description("Check the pinned delivery and retain it while assessments are outstanding")
+    .option("--fresh", "discard saved work from an interrupted matching run")
     .action(checkHandoff);
 
   addReportingOptions(handoff.command("release <handoff-file>"))
@@ -136,6 +137,7 @@ async function checkHandoff(handoffPath, options) {
     try {
       return await checkDeliveryHandoff({
         handoffPath,
+        fresh: options.fresh,
       });
     } catch (error) {
       return [handoffBlocker(error)];

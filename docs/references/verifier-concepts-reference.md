@@ -219,6 +219,14 @@ For normal intent, automatic semantic preparation can return the exact previousl
 
 OMP 18.19.0 exposes the hook but truncates generic custom-message content in advisor history. The handle and normalized level therefore occupy the compact beginning of a displayed message; hidden custom messages are not suitable transport. Supported-hook availability, current handle visibility, selection, and native safety escalation must be exercised in a fresh process. This feature does not fix native completion gating, literal result transport, or within-review context exhaustion.
 
+### Interrupted Verification
+
+Rerun `verify`, `automatic`, `lint`, or `handoff check` with the same scope in the same working directory. No job ID or resume flag is needed. A private journal retains completed executable PASS results and supported project/language lint groups from an unfinished run. A command interrupted before returning runs again from its beginning. Failures and blockers are checked again, not converted to successes. Resource closeout always makes fresh observations.
+
+A saved semantic request ID is a pointer, not a verdict. The semantic coordinator validates the current request and evidence before restoring it. Continue with `review --resume` in the owning checkout. Completing the coordinator run retires its restart journal, even if a named reviewer still owes an assessment. An explicit full check after a completed run stays fresh.
+
+Changed Git-visible source, delivery base, selected scope, runtime or options invalidate saved work. An overlapping invocation does not read or overwrite the active invocation's journal. If proof is unavailable, Verifier runs the checks normally. Use `--fresh` when inputs outside that identity change, such as an external service or ignored dependencies. Timing history is never used as proof.
+
 ### Run Timings
 
 `/verifier timings` and `omp-verifier timings [--reporter text|json]` show recent `verify`, `automatic`, `lint`, and `handoff check` runs, newest first, for the invocation's working directory. Read history from the same directory, even when a handoff selected a different checkout. Compare like runs and check IDs: different inputs, generations or outcomes can explain a timing change. A slow sample or a change from PASS to FAIL is not itself proof of flakiness.
@@ -472,7 +480,7 @@ Partial records expose `startLine`, full `lineCount`, `partial`, and `omittedRan
 
 Without automatic source recovery, a required changed file exceeding the effective whole-source cap initially remains unavailable. Recover present source with repeated `review --context 'src/module.js#L1-L120'` selectors covering all original lines; explicit historical whole-source overrides retain their separate authorization contract. Default automatic checks instead capture supported required source in bounded chunks without manual selectors. In either chunked path, `context.changedCodeCoverage` exposes each recovered path's `lineCount`, `coveredRanges`, `omittedRanges`, and `complete` state. Only complete admitted coverage clears the required changed-code gap; a valid citation or a union with even one omitted line cannot establish PASS/FAIL. Each admitted chunk retains its original line numbers and the full current source hash. Recovery stays within its recorded policy and does not change the supplied rubric; the request stays PENDING while supported recovery can complete coverage and yields final BLOCKED without `reviewRequest` if the source cannot fit.
 
-Requests are private, atomically written, per-project operational cache, not a knowledge store or reusable PASS cache. Per-check locks serialize overlapping preparation/completion. A busy or abandoned lock is BLOCKED; it is not automatically stolen. Only remove a reported abandoned lock after confirming the owner PID recorded in it has exited.
+Requests are private, atomically written, per-project operational cache, not a knowledge store or reusable PASS cache. Per-check locks serialize overlapping preparation/completion. Process-lifetime leases release when the owner exits. An existing lock from an older coordinator is never stolen: finish the owner operation or confirm its recorded PID has exited before removing an abandoned legacy lock.
 
 ### Bounded Semantic Continuation
 

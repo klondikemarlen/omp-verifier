@@ -1,4 +1,5 @@
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
+import { openRestartUnits } from "#root/omp-plugin/verification-restart.js";
 
 try {
   const budgetArgument = process.argv[2];
@@ -15,10 +16,17 @@ try {
     ? undefined
     : JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
   const cwd = process.cwd();
+  const restartDirectory = process.env.OMP_VERIFIER_LINT_RESTART_DIRECTORY;
+  delete process.env.OMP_VERIFIER_LINT_RESTART_DIRECTORY;
+  let restart;
+  if (restartDirectory !== undefined) {
+    restart = await openRestartUnits(restartDirectory);
+  }
   const result = await verifyProjectLint({
     cwd,
     changedPaths,
     budgetMs,
+    restart,
   });
   process.stdout.write(`${JSON.stringify(result)}\n`);
   process.exitCode = result.status === "FAIL" || result.status === "BLOCKED" ? 1 : 0;

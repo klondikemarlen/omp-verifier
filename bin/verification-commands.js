@@ -6,16 +6,19 @@ import { formatRunTimings, formatVerificationInventory } from "#root/omp-plugin/
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
-import { timeVerificationCheck, timeVerificationRun } from "#root/omp-plugin/run-timings.js";
+import { timeVerificationCheck, timeVerificationRun, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
 import { readTimingHistory } from "#root/omp-plugin/timing-history.js";
-import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { defaultPackageDirectory, discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
+import { withVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
   runInstalledVerificationChecks,
   validateProjectLintBudget,
 } from "#root/omp-plugin/verifications.js";
+
+const freshDescription = "discard saved work from an interrupted matching run";
 
 export function registerVerificationCommands(program) {
   const checks = program.command("checks")
@@ -29,6 +32,7 @@ export function registerVerificationCommands(program) {
 
   const verify = program.command("verify [check-id...]")
     .description("Run selected installed checks, or all checks when no IDs are supplied")
+    .option("--fresh", freshDescription)
     .option("--max-source-bytes <bytes>", "source capture budget (16000–256000)", parseSourceByteLimit);
   addReportingOptions(verify, {
     failuresOnly: true,
@@ -36,6 +40,7 @@ export function registerVerificationCommands(program) {
 
   const lint = program.command("lint <changed-path...>")
     .description("Run existing project lint tooling with an explicit time budget")
+    .option("--fresh", freshDescription)
     .requiredOption("--budget-ms <milliseconds>", "execution budget (1–600000)", parseLintBudget);
   addReportingOptions(lint, {
     failuresOnly: true,
@@ -45,6 +50,7 @@ export function registerVerificationCommands(program) {
     .conflicts("worktree");
   const automatic = program.command("automatic [changed-path...]")
     .description("Select checks for changed paths, the current worktree, or declared closeout")
+    .option("--fresh", freshDescription)
     .option("--worktree", "inspect current worktree changes instead of supplied paths")
     .addOption(base)
     .option("--whole-file <path...>", "include unchanged lines in these selected PR files for cleanup; requires --base")
@@ -104,19 +110,38 @@ async function listChecks(options) {
   process.exitCode = blockedResults.length > 0 ? 1 : 0;
 }
 
+function runRestartableCommand(command, scope, options, execute, progress) {
+  const cwd = process.cwd();
+  return timeVerificationRun(cwd, command, () => withVerificationRestart({
+    cwd,
+    command,
+    scope,
+    fresh: options.fresh,
+    packageDirectory: defaultPackageDirectory(),
+    signal: verificationCancellationSignal(),
+  }, execute), progress);
+}
+
 async function verifyChecks(ids, options) {
   const cwd = process.cwd();
-  const results = await timeVerificationRun(cwd, "verify", () => runInstalledVerificationChecks({
-    cwd,
+  const scope = {
     ids,
     maxSourceBytes: options.maxSourceBytes,
+  };
+  const results = await runRestartableCommand("verify", scope, options, () => runInstalledVerificationChecks({
+    cwd,
+    ...scope,
   }));
   await writeResults(results, options);
 }
 
 async function lintPaths(paths, options) {
   const cwd = process.cwd();
-  const results = await timeVerificationRun(cwd, "lint", () => lintResults(cwd, paths, options.budgetMs));
+  const scope = {
+    paths,
+    budgetMs: options.budgetMs,
+  };
+  const results = await runRestartableCommand("lint", scope, options, () => lintResults(cwd, paths, options.budgetMs));
   await writeResults(results, options);
 }
 
@@ -157,9 +182,21 @@ async function verifyAutomatic(paths, options) {
     progress = automaticConsole;
   }
 
-  const results = await timeVerificationRun(
-    cwd,
+  const scope = {
+    paths,
+    worktree: options.worktree,
+    base: options.base,
+    wholeFile: options.wholeFile,
+    request: options.request,
+    full: options.full,
+    lintBudgetMs: options.lintBudgetMs,
+    closeout: options.closeout,
+    maxSourceBytes: options.maxSourceBytes,
+  };
+  const results = await runRestartableCommand(
     "automatic",
+    scope,
+    options,
     () => automaticResults(cwd, paths, options),
     progress,
   );
@@ -184,6 +221,9 @@ const automaticConsole = {
   },
   checkReturned(check) {
     writeAutomaticProgress(`Check ${check.id} returned ${check.status} (${check.durationMs} ms check elapsed).`);
+  },
+  checkRestored(check) {
+    writeAutomaticProgress(`Check ${check.id} restored ${check.status} from the interrupted run.`);
   },
   cancelled(signal, elapsedMs) {
     writeAutomaticProgress(`Automatic verification cancelled by ${signal} (${elapsedMs} ms elapsed).`);
@@ -218,7 +258,7 @@ async function automaticResults(cwd, paths, options) {
     maxSourceBytes: options.maxSourceBytes,
     lintBudgetMs: options.lintBudgetMs,
     workLevel: options.full ? "normal" : intent?.level,
-    reuseExisting: !options.full && intent?.level === "normal",
+    reuseExisting: !options.fresh && !options.full && intent?.level === "normal",
     selectionReason,
   };
   let results = [];
