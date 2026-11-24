@@ -50,6 +50,10 @@ async function runtimeCommand(agentDir, cwd, args) {
     const result = await executeRuntimeCommand(agentDir, cwd, args);
     return result.stdout;
   } catch (error) {
+    if (args[0] === "verify" && ["SIGINT", "SIGTERM"].includes(error.signal)) {
+      return `Verification interrupted by ${error.signal}. Rerun the same /verifier verify command to continue.`;
+    }
+
     return error.stdout || `BLOCKED verifier:generation\n${error.stderr || error.message}`;
   }
 }

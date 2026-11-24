@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.28.0 - 2026-11-24
+
+- Rerun an interrupted verification in the same checkout to reuse completed checks and lint groups. The interrupted command runs again; `--fresh` discards saved work.
+
 ## 1.27.1 - 2026-11-23
 
 - A shortened review request path now prompts a retry of the exact page command instead of reporting a generation blocker.

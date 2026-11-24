@@ -1,12 +1,15 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
 import { runAutomaticVerificationForPaths } from "#root/omp-plugin/verifications.js";
 import { defaultPackageDirectory } from "#root/omp-plugin/verification-catalog.js";
+import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
+import { verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
+import { withVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 
 const execFileAsync = promisify(execFile);
 const DELIVERY_DIRECTORY = resolve(tmpdir(), `omp-verifier-deliveries-${process.getuid?.() ?? "user"}`);
@@ -183,20 +186,13 @@ async function withHandoff(handoffPath, operation) {
   await privateEntry(dirname(handoffPath), true);
   await privateEntry(handoffPath, false);
   const lockPath = join(dirname(handoffPath), "operation.lock");
-  let lock;
-  try {
-    lock = await open(lockPath, "wx", 0o600);
-  } catch (error) {
-    if (error.code === "EEXIST") throw new Error("delivery handoff operation is busy; preserve its resources until the owner finishes", { cause: error });
-    throw error;
-  }
+  const release = await claimOperationLock(lockPath, 0, "delivery handoff operation is busy; preserve its resources until the owner finishes");
   try {
     const record = JSON.parse(await readFile(handoffPath, "utf8"));
     validateRecord(record, basename(dirname(handoffPath)));
     return await operation(record);
   } finally {
-    await lock.close();
-    await rm(lockPath);
+    await release();
   }
 }
 
@@ -424,7 +420,7 @@ function mergeCheckResults(results, retainedBlockers) {
   return [...missingBlockers, ...results];
 }
 
-export async function checkDeliveryHandoff({ handoffPath }) {
+export async function checkDeliveryHandoff({ handoffPath, fresh = false }) {
   return withHandoff(handoffPath, async record => {
     if (!["PREPARED", "RECOVERED"].includes(record.status)) {
       throw new Error(`cannot check a ${record.status.toLowerCase()} delivery handoff`);
@@ -443,15 +439,27 @@ export async function checkDeliveryHandoff({ handoffPath }) {
     const packageDirectory = resolve(defaultPackageDirectory());
     const generation = await verificationGeneration(packageDirectory);
     const continuesDelivery = previous?.status === "PENDING" && isDeepStrictEqual(previous.checkout, checkout);
-    const results = await runAutomaticVerificationForPaths({
+    const scope = {
+      base: record.baseCommit,
+      tip: record.tipCommit,
+      handoff: record.id,
+    };
+    const results = await withVerificationRestart({
+      cwd: checkout.path,
+      command: "handoff check",
+      scope,
+      packageDirectory,
+      signal: verificationCancellationSignal(),
+      fresh,
+    }, () => runAutomaticVerificationForPaths({
       cwd: checkout.path,
       changedPaths: record.changedPaths,
       baseRef: record.baseCommit,
       packageDirectory,
       workLevel: "normal",
-      reuseExisting: continuesDelivery && previous.generation === generation,
+      reuseExisting: !fresh && continuesDelivery && previous.generation === generation,
       selectionReason: "full-delivery",
-    });
+    }));
     validateCheckResults(results, record, checkout);
     await validateRepository(record);
     await validateCheckedCheckout(record, checkout);

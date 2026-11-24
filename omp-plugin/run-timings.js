@@ -145,6 +145,15 @@ function recordUnexecutedChecks(run, results) {
   }
 }
 
+export function recordRestoredCheck(result) {
+  const context = activeRun.getStore();
+  if (!context) return;
+
+  context.run.checks.push(checkObservation(result.id, result, null));
+  context.progress?.checkRestored?.(result);
+  context.publish();
+}
+
 export async function timeVerificationCheck(id, execute, timeoutMs) {
   const context = activeRun.getStore();
   if (!context) {

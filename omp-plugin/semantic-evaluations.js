@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, open, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
@@ -30,6 +30,8 @@ import {
 } from "#root/omp-plugin/semantic-continuation-review.js";
 import { buildSemanticReviewPage, paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";
 import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
+import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
+import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
@@ -129,27 +131,7 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
   const locksDirectory = join(cacheDirectory, "locks");
   await ensurePrivateDirectory(locksDirectory);
   const filePath = lockPath(cacheDirectory, checkId);
-  const startedAt = Date.now();
-  let lockHandle;
-  while (!lockHandle) {
-    let candidateHandle;
-    try {
-      candidateHandle = await open(filePath, "wx", 0o600);
-      await candidateHandle.writeFile(JSON.stringify({ pid: process.pid, createdAt: Date.now() }));
-      lockHandle = candidateHandle;
-    } catch (error) {
-      if (candidateHandle) {
-        await candidateHandle.close();
-        await rm(filePath, { force: true });
-        throw error;
-      }
-      if (error?.code !== "EEXIST") throw error;
-      if (Date.now() - startedAt > LOCK_WAIT_MS) {
-        throw new Error(`semantic request state is busy: ${filePath}; finish its owner operation, or remove an abandoned lock only after confirming its recorded owner process has exited`, { cause: error });
-      }
-      await new Promise(resolveDelay => setTimeout(resolveDelay, 20));
-    }
-  }
+  const release = await claimOperationLock(filePath, LOCK_WAIT_MS, `semantic request state is busy: ${filePath}; finish its owner operation`);
 
   let completedAssessment;
   try {
@@ -180,8 +162,7 @@ async function withCheckLock(cacheDirectory, checkId, callback) {
     }
     return result;
   } finally {
-    await lockHandle.close();
-    await rm(filePath, { force: true });
+    await release();
     if (completedAssessment) {
       // History retention must not hold up another operation on the check lock.
       await saveTimingAssessment(completedAssessment).catch(() => {});
@@ -677,10 +658,14 @@ function automaticEvidenceScope(automatic, changedPaths) {
   };
 }
 
-async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPaths, contextPaths, maxSourceBytes, sourceRecovery, automaticScope }) {
+async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPaths, contextPaths, maxSourceBytes, sourceRecovery, automaticScope, restartId, reuseExisting }) {
   try {
     const state = await readCurrentState(cacheDirectory, check.id);
     if (!state?.requestId) return undefined;
+    if (!reuseExisting && state.requestId !== restartId) {
+      return undefined;
+    }
+
     const { stored, requestPath } = await readStoredRequest(cacheDirectory, check.id, state.requestId, {
       requireCurrent: false,
     });
@@ -703,7 +688,19 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
     // Validate the whole capture, including selectors enrolled during review.
     // A narrower automatic invocation must not silently discard material evidence.
     await validateFreshness({ checkId: check.id, repositoryRoot, stored });
-    return state.consumed ? result : requestEnvelope(payload, requestPath, state);
+    if (state.consumed) {
+      return result;
+    }
+
+    const pending = requestEnvelope(payload, requestPath, state);
+    if (restartId === state.requestId) {
+      const view = paginateSemanticReview(pending);
+      const { nextPage } = reviewPageProgress(view, state);
+      pending.reviewProgress = {
+        nextPage: nextPage ?? (view.count - 1),
+      };
+    }
+    return pending;
   } catch {
     // Missing, damaged, or stale prior proof is not an execution failure.
     // Normal capture below must establish a fresh request instead.
@@ -732,12 +729,22 @@ export async function prepareSemanticEvaluation({
     const root = await realpath(repositoryRoot);
     const cacheDirectory = await requestCacheRoot(root);
     return await withCheckLock(cacheDirectory, check.id, async () => {
-      if (reuseExisting) {
+      const restart = currentVerificationRestart();
+      const key = `semantic:${check.id}`;
+      const restartId = await restart?.read(key);
+      if (reuseExisting || typeof restartId === "string") {
         const accepted = await reusableResult({
           cacheDirectory, check, repositoryRoot: root, changedPaths, contextPaths,
           maxSourceBytes: sourceByteLimit, sourceRecovery, automaticScope,
+          restartId,
+          reuseExisting,
         });
-        if (accepted) return accepted;
+        if (accepted) {
+          if (accepted.reviewRequest) {
+            await restart?.save(key, accepted.reviewRequest.requestId);
+          }
+          return accepted;
+        }
       }
       const previous = await previousRequest(cacheDirectory, check.id);
       const isSameEvidenceScope = previous?.payload.scope.repositoryRoot === root
@@ -763,6 +770,7 @@ export async function prepareSemanticEvaluation({
       });
       const requestPath = join(cacheDirectory, "requests", requestFileName(check.id, result.requestId));
       await persistRequest(cacheDirectory, check.id, requestPath, result.stored);
+      await restart?.save(key, result.requestId);
       return requestEnvelope(result.payload, requestPath);
     });
   } catch (error) {
