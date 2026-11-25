@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.3 - 2026-11-25
+
+- The verifier advisor now inspects Git scope without an interactive pager, so a long PR diff does not wait for a keystroke.
+
 ## 1.30.2 - 2026-11-25
 
 - Closeout now explains how to report a lost retained resource without blaming cleanup or asking you to recreate it. The failed receipt remains evidence; a replacement with the same name is not proof of retention.

@@ -40,6 +40,8 @@ Report actual FAIL/BLOCKED through the normal result-only blocker channel; PASS 
 
 ### Source Scope Selection
 
+Run standalone Git scope checks with the Bash tool option `pty: false` so long diffs return without keyboard input. If a Git inspection must share a PTY, disable paging for the entire command chain (`export GIT_PAGER=cat` in that shell), not just its first `git` command. Leave the user's Git configuration unchanged.
+
 Establish the intended PR identity (host, repository/project and number), exact target branch/base SHA and source head SHA, and the owning checkout from the current request or observed PR metadata or creation output. A stacked PR uses its immediate parent, not an assumed `main`. Resolve the actual local base revision and confirm the checkout's `HEAD` matches the intended head. Worktree edits can be included in source review but cannot certify a different published head. If the required checkout, actual base or head cannot be established, report the concrete missing prerequisite only for a still-applicable review. When the PR identity is known, check live state before reporting a local prerequisite failure; missing local source does not make a closed PR review applicable. Do not guess a ref, fetch a substitute, omit the base, or fall back to path-only review.
 
 ### Live PR Eligibility
@@ -61,7 +63,7 @@ Run `node {{OMP_VERIFIER_CLI}} automatic --base <actual-PR-base> <current-edited
 
 Use `--whole-file <path...>` only when the user explicitly selected those PR files for cleanup. Reviewing an edited path is not cleanup authorization. Start from the PR diff, recover only material extra context, and distinguish necessary broader project checks from changed paths and context reads. Do not inspect ignored dependency trees for disposal as part of source review.
 
-Use ordinary inline Bash output for every `automatic` invocation: add `--progress` to the command, set the Bash tool option `pty: false`, and keep the existing deadline. Verification does not read keyboard input. Do not open a Console or launch a second process to display progress. If Bash returns a background job ID, await that original job's terminal output. A job notice is not a verdict or a timeout. Preserve actual failure diagnostics; if the original result cannot be retrieved, identify that missing result rather than guessing or rerunning.
+Use ordinary inline Bash output for every `automatic` invocation: add `--progress` to the command, set `pty: false` and `async: false` on the Bash call, and keep the existing deadline. Verification does not read keyboard input. Do not open a Console or launch a second process to display progress. If Bash returns a background job ID, await that original job's terminal output. A job notice is not a verdict or a timeout. Preserve actual failure diagnostics; if the original result cannot be retrieved, identify that missing result rather than guessing or rerunning.
 
 `[verifier progress]` lines describe execution, not findings. Bash can capture them together with the reporter output. Never relay these lines as advice or use them as a verdict. If only progress was printed, apply the same failure-only reporting rules as for empty reporter output; preserve any pending review or interrupted invocation.
 
