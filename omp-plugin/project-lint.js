@@ -10,13 +10,17 @@ import { promisify, stripVTControlCharacters } from "node:util";
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
-import { changedProjectPaths, MAX_PROJECT_LINT_BUDGET_MS, validateProjectLintBudget } from "#root/omp-plugin/verifications.js";
+import {
+  changedProjectPaths,
+  DEFAULT_PROJECT_LINT_BUDGET_MS,
+  MAX_PROJECT_LINT_BUDGET_MS,
+  validateProjectLintBudget,
+} from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
 const MAX_RESTART_EVIDENCE = MAX_EVIDENCE + 1;
 const MAX_RESTART_ARGUMENTS = 64;
-const EXECUTION_BUDGET_MS = 100_000;
 const lintProviderPath = fileURLToPath(new URL("./project-lint-check.mjs", import.meta.url));
 const PROJECT_MARKERS = {
   javascript: ["package.json"],
@@ -523,7 +527,7 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
   if (exhaustedBudgetMs !== undefined) {
     summary = lintTimeoutSummary(outcomes, repositoryRoot, exhaustedBudgetMs);
     if (exhaustedBudgetMs < MAX_PROJECT_LINT_BUDGET_MS) {
-      nextCheck = `For \`automatic --full\`, retry the same request and scope from the same checkout (including any base and paths) with a larger \`--lint-budget-ms <milliseconds>\` (maximum ${MAX_PROJECT_LINT_BUDGET_MS} ms). For lint alone, use \`lint --budget-ms <milliseconds>\` with the same lint-selected paths.`;
+      nextCheck = `For \`automatic --full\`, retry the same request and scope from the same checkout (including any base and paths) with a larger \`--lint-budget-ms <milliseconds>\` (maximum ${MAX_PROJECT_LINT_BUDGET_MS} ms). For an applicable handoff, retry \`handoff check <same-handoff-file> --lint-budget-ms <milliseconds>\`. For lint alone, use \`lint --budget-ms <milliseconds>\` with the same lint-selected paths.`;
     } else {
       nextCheck = "The lint budget is already at its maximum. Investigate the slow command before retrying the same scope.";
     }
@@ -809,7 +813,7 @@ export async function verifyProjectLint({
   cwd,
   changedPaths,
   env = process.env,
-  budgetMs = EXECUTION_BUDGET_MS,
+  budgetMs = DEFAULT_PROJECT_LINT_BUDGET_MS,
   restart = currentVerificationRestart(),
 }) {
   validateProjectLintBudget(budgetMs);
@@ -939,7 +943,9 @@ export async function verifyProjectLint({
   cancellationSignal?.throwIfAborted();
 
   if (budgetExhausted) {
-    return markVerificationTimeout(combinedResult(outcomes, discovery.repositoryRoot, budgetMs));
+    const result = combinedResult(outcomes, discovery.repositoryRoot, budgetMs);
+    result.lintBudgetExhaustedMs = budgetMs;
+    return markVerificationTimeout(result);
   }
   return combinedResult(outcomes, discovery.repositoryRoot);
 }

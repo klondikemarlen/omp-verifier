@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
-import { runAutomaticVerificationForPaths } from "#root/omp-plugin/verifications.js";
+import {
+  runAutomaticVerificationForPaths,
+  validateProjectLintBudget,
+} from "#root/omp-plugin/verifications.js";
 import { defaultPackageDirectory } from "#root/omp-plugin/verification-catalog.js";
 import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
 import { verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
@@ -415,12 +418,26 @@ function validateCheckResults(results, record, checkout) {
   }
 }
 
+function supersedesLintTimeout(retained, result) {
+  return retained.id === "verifier:project-lint" && retained.status === "BLOCKED" &&
+    Number.isSafeInteger(retained.lintBudgetExhaustedMs) && result.lintBudgetMs !== undefined &&
+    retained.lintBudgetExhaustedMs !== result.lintBudgetMs &&
+    result.id === retained.id && ["PASS", "FAIL", "BLOCKED"].includes(result.status) &&
+    retained.scope !== undefined && isDeepStrictEqual(retained.scope, result.scope);
+}
+
 function mergeCheckResults(results, retainedBlockers) {
-  const missingBlockers = retainedBlockers.filter(retained => !results.some(result => isDeepStrictEqual(retained, result)));
+  const missingBlockers = retainedBlockers.filter(retained => !results.some(result =>
+    isDeepStrictEqual(retained, result) || supersedesLintTimeout(retained, result),
+  ));
   return [...missingBlockers, ...results];
 }
 
-export async function checkDeliveryHandoff({ handoffPath, fresh = false }) {
+export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBudgetMs }) {
+  if (lintBudgetMs !== undefined) {
+    validateProjectLintBudget(lintBudgetMs);
+  }
+
   return withHandoff(handoffPath, async record => {
     if (!["PREPARED", "RECOVERED"].includes(record.status)) {
       throw new Error(`cannot check a ${record.status.toLowerCase()} delivery handoff`);
@@ -443,6 +460,7 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false }) {
       base: record.baseCommit,
       tip: record.tipCommit,
       handoff: record.id,
+      lintBudgetMs,
     };
     const results = await withVerificationRestart({
       cwd: checkout.path,
@@ -456,6 +474,7 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false }) {
       changedPaths: record.changedPaths,
       baseRef: record.baseCommit,
       packageDirectory,
+      lintBudgetMs,
       workLevel: "normal",
       reuseExisting: !fresh && continuesDelivery && previous.generation === generation,
       selectionReason: "full-delivery",

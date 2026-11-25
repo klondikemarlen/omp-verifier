@@ -14,6 +14,7 @@ const MAX_OUTPUT_BYTES = 64_000;
 const MAX_FIELD_LENGTH = 4_000;
 const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
 const NODE_RUNTIME = "node";
+export const DEFAULT_PROJECT_LINT_BUDGET_MS = 100_000;
 export const MAX_PROJECT_LINT_BUDGET_MS = 600_000;
 const PROJECT_LINT_PROVIDER_ALLOWANCE_MS = 20_000;
 const PROJECT_LINT_ENTRY = "omp-plugin/project-lint-check.mjs";
@@ -54,7 +55,26 @@ function resultFromOutput(check, output) {
     if (!STATUSES.has(result.status)) throw new Error("status must be PASS, FAIL, BLOCKED, or N/A");
     const evidence = result.evidence === undefined ? undefined : validString(result.evidence, "evidence", false);
     const nextCheck = result.nextCheck === undefined ? undefined : validString(result.nextCheck, "nextCheck", false);
-    return { id: check.id, status: result.status, summary, ...(evidence ? { evidence } : {}), ...(nextCheck ? { nextCheck } : {}) };
+    let lintBudgetExhaustedMs;
+    if (result.lintBudgetExhaustedMs !== undefined && isInstalledProjectLint(check, resolve(defaultPackageDirectory()))) {
+      validateProjectLintBudget(result.lintBudgetExhaustedMs);
+      lintBudgetExhaustedMs = result.lintBudgetExhaustedMs;
+    }
+
+    return {
+      id: check.id,
+      status: result.status,
+      summary,
+      ...(evidence ? {
+        evidence,
+      } : {}),
+      ...(nextCheck ? {
+        nextCheck,
+      } : {}),
+      ...(lintBudgetExhaustedMs !== undefined ? {
+        lintBudgetExhaustedMs,
+      } : {}),
+    };
   } catch (error) {
     return blocked(check.id, "Verification returned an invalid result", error.message);
   }
@@ -269,10 +289,7 @@ export async function runAutomaticVerification({
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
-    let selectedLintBudgetMs;
-    if (lintBudgetMs !== undefined && isInstalledProjectLint(check, selectedDirectory)) {
-      selectedLintBudgetMs = lintBudgetMs;
-    }
+    const projectLint = isInstalledProjectLint(check, selectedDirectory);
 
     const result = await runVerificationCheckWithRoot(
       check,
@@ -285,10 +302,13 @@ export async function runAutomaticVerification({
         sourceRecovery,
         reuseExisting,
         selectionReason,
-        lintBudgetMs: selectedLintBudgetMs,
+        lintBudgetMs: projectLint ? lintBudgetMs : undefined,
       },
     );
     if (!result) continue;
+    if (projectLint) {
+      result.lintBudgetMs = lintBudgetMs ?? DEFAULT_PROJECT_LINT_BUDGET_MS;
+    }
     const scope = result.scope ?? verificationScope(repositoryRoot, selectedPaths, delivery, check.mode === "agentic" ? "semantic-findings" : "provider-owned");
     results.push({
       ...result,
