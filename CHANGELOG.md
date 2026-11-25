@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.2 - 2026-11-25
+
+- Closeout now explains how to report a lost retained resource without blaming cleanup or asking you to recreate it. The failed receipt remains evidence; a replacement with the same name is not proof of retention.
+
 ## 1.30.1 - 2026-11-25
 
 - Check the PR or MR's live state before starting or resuming automatic review. A delayed review-and-merge request no longer starts a check after merge; explicit retrospective checks remain available.

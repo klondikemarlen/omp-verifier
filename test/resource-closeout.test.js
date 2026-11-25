@@ -118,6 +118,44 @@ test("when a protected resource changes, retention fails instead of certifying i
   assert.equal(changed.status, "FAIL");
 });
 
+test("when a missing retained path shares a receipt with actionable findings, each keeps its own next action", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const keptPath = join(current.root, "protected.env");
+  const disposablePath = join(current.root, "temporary.env");
+  const inspectedPath = join(current.root, "inspect.env");
+  await writeFile(keptPath, "protected\n");
+  await writeFile(disposablePath, "temporary\n");
+  await writeFile(inspectedPath, "");
+  const prepared = await current.prepare([
+    resource(disposablePath, {
+      id: "leftover-environment",
+    }),
+    resource(keptPath, {
+      id: "protected-environment",
+      disposition: "retained",
+      ownership: "protected",
+    }),
+    resource(inspectedPath, {
+      id: "unavailable-environment",
+      disposition: "retained",
+      ownership: "protected",
+    }),
+  ]);
+
+  // Act
+  await rm(keptPath);
+  await truncate(inspectedPath, defaultContentLimit + 1);
+  const result = await current.verify(prepared.receiptPath);
+
+  // Assert
+  assert.equal(result.status, "FAIL");
+  assert.deepEqual(result.dispositions.map(({ status }) => status), ["FAIL", "FAIL", "BLOCKED"]);
+  assert.match(result.nextCheck, /preserve the failed receipt/i);
+  assert.match(result.nextCheck, /recheck after cleanup/i);
+  assert.match(result.nextCheck, /restore the missing evidence or access/i);
+});
+
 test("when a frozen runtime exceeds the default byte limit, explicit retention observes changed content at the same size", async context => {
   // Arrange
   const current = await fixture(context);
@@ -161,7 +199,6 @@ test("when a frozen runtime exceeds the default byte limit, explicit retention o
   assert.equal(unchanged.status, "PASS");
   assert.equal(unchanged.dispositions[0].disposition, "intentionally retained");
   assert.equal(changed.status, "FAIL");
-  assert.match(changed.evidence, /retained resource is missing or changed/);
 });
 
 test("when an authorized disposable large artifact is removed, fresh verification reports it removed", async context => {

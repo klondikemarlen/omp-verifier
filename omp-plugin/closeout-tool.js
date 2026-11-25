@@ -9,8 +9,8 @@ const TOOL_LABEL = "Cleanup check";
 const INDEPENDENT_STATUS = "Independent verifier: unconfirmed.";
 const NEXT_CHECK = {
   PASS: "No action needed from you; the independent check belongs to the verifier.",
-  FAIL: "Next: primary agent investigates and rechecks; ask before any action outside existing authorization.",
-  BLOCKED: "Next: primary agent restores the missing prerequisite or asks the user if needed.",
+  FAIL: "Consult the failed evidence for resource-specific action. Preserve protected or uncertain resources.",
+  BLOCKED: "Primary agent restores the missing prerequisite or asks the user if needed.",
 };
 
 export function registerCloseoutTool(pi, verifyReceipt) {
@@ -118,10 +118,24 @@ function describeCloseout(details) {
     ? "no resource observations verified"
     : `${checkedResources} resource ${observationLabel} checked`;
   const problem = receipts.find(receipt => receipt.status === status)?.problem;
+  const nextChecks = [];
+  for (const [index, receipt] of receipts.entries()) {
+    if (receipt.status === "PASS") continue;
+
+    let label = "Next";
+    if (receipts.length > 1) {
+      label = `Next (receipt ${index + 1})`;
+    }
+    nextChecks.push(`${label}: ${receipt.nextCheck ?? NEXT_CHECK[receipt.status]}`);
+  }
+  if (nextChecks.length === 0) {
+    nextChecks.push(NEXT_CHECK.PASS);
+  }
+
   return {
     primary: `Primary: ${status} — ${receipts.length} ${receiptLabel}, ${observations}.`,
     problem,
-    nextCheck: NEXT_CHECK[status],
+    nextCheck: nextChecks.join("\n"),
   };
 }
 
