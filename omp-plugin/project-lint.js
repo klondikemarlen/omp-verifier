@@ -10,7 +10,7 @@ import { promisify, stripVTControlCharacters } from "node:util";
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
-import { changedProjectPaths, validateProjectLintBudget } from "#root/omp-plugin/verifications.js";
+import { changedProjectPaths, MAX_PROJECT_LINT_BUDGET_MS, validateProjectLintBudget } from "#root/omp-plugin/verifications.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
@@ -217,7 +217,8 @@ function nativeArguments(tool, paths) {
 }
 
 async function lintPlan(group, repositoryRoot, env) {
-  const { family, root, paths, wholeProject } = group;
+  const { family, root, paths, wholeProjectTrigger } = group;
+  const wholeProject = wholeProjectTrigger !== undefined;
   const supportedTools = family.tools.map(tool => tool.id).join(", ");
   const binding = await projectBinding(root, repositoryRoot, family);
   if (binding) {
@@ -381,27 +382,58 @@ export async function discoverProjectLinters({ cwd, changedPaths, env = process.
         if (!source && !configuration && !verifierConfig) continue;
         const root = await owningProject(repositoryRoot, absolute, family);
         const key = `${family.id}\0${root}`;
-        if (!groups.has(key)) groups.set(key, { family, root, paths: [], wholeProject: false });
+        if (!groups.has(key)) {
+          groups.set(key, {
+            family,
+            root,
+            paths: [],
+          });
+        }
         const group = groups.get(key);
         if (source) group.paths.push(path);
-        if (configuration || verifierConfig) group.wholeProject = true;
+        // Prefer the manifest when several edits select the same whole-project run.
+        if ((configuration || verifierConfig) && (!group.wholeProjectTrigger || PROJECT_MARKERS[family.id].includes(name))) {
+          group.wholeProjectTrigger = name;
+        }
       }
     }
     for (const group of groups.values()) {
-      if (group.wholeProject) group.paths = await projectSources(repositoryRoot, group.root, group.family);
+      if (group.wholeProjectTrigger) {
+        group.paths = await projectSources(repositoryRoot, group.root, group.family);
+      }
     }
     for (const group of groups.values()) {
       if (group.paths.length === 0) continue;
+
+      const { root, wholeProjectTrigger } = group;
       try {
         const discovered = await lintPlan(group, repositoryRoot, env);
-        if (discovered.plan) plans.push(discovered.plan);
-        else results.push(discovered.result);
+        if (discovered.plan) {
+          plans.push({
+            ...discovered.plan,
+            root,
+            wholeProjectTrigger,
+          });
+        } else {
+          results.push({
+            ...discovered.result,
+            wholeProjectTrigger,
+            execution: "discovery",
+          });
+        }
       } catch (error) {
-        results.push(blocked(group.family.id, group.root, "Project lint discovery could not complete", error.message));
+        results.push({
+          ...blocked(group.family.id, root, "Project lint discovery could not complete", error.message),
+          wholeProjectTrigger,
+          execution: "discovery",
+        });
       }
     }
   } catch (error) {
-    results.push(blocked("project", repositoryRoot, "Project lint scope could not be established", error.message));
+    results.push({
+      ...blocked("project", repositoryRoot, "Project lint scope could not be established", error.message),
+      execution: "discovery",
+    });
   }
   return { repositoryRoot, plans, results };
 }
@@ -435,26 +467,108 @@ async function inspectEslint(plan) {
   return applicable;
 }
 
-function combinedResult(outcomes, repositoryRoot) {
+function lintGroupLabel(result, repositoryRoot, maxRootLength = Infinity) {
+  const relativeRoot = relative(repositoryRoot, result.root) || ".";
+  let root = JSON.stringify(relativeRoot).slice(1, -1);
+  if (root.length > maxRootLength) {
+    const endLength = Math.floor((maxRootLength - 3) / 2);
+    root = `${root.slice(0, maxRootLength - endLength - 3)}...${root.slice(-endLength)}`;
+  }
+
+  return `${result.language} (${root})`;
+}
+
+function lintTimeoutSummary(outcomes, repositoryRoot, budgetMs) {
+  const categories = [
+    ["Interrupted", result => result.execution === "interrupted"],
+    ["Never started", result => result.execution === "not-started"],
+    ["Finished PASS", result => result.status === "PASS" && result.execution !== "restored"],
+    ["Finished FAIL (lint violations)", result => result.status === "FAIL"],
+    ["Restored PASS", result => result.execution === "restored"],
+    ["Discovery BLOCKED", result => result.execution === "discovery"],
+    ["Other BLOCKED", result => result.status === "BLOCKED" && !result.execution],
+    ["Not applicable", result => result.status === "N/A"],
+    ["Whole-project lint selected by manifest or lint config",
+      result => result.wholeProjectTrigger, result => ` via ${result.wholeProjectTrigger}`],
+    ["Findings reported before interruption", result => result.reportedFindings],
+  ];
+  const summary = [`Shared project lint budget of ${budgetMs} ms expired`];
+  for (const [heading, matches, suffix] of categories) {
+    const groups = outcomes.filter(matches);
+    if (groups.length === 0) continue;
+
+    const labels = groups.slice(0, 3).map(group => lintGroupLabel(group, repositoryRoot, 72) + (suffix?.(group) ?? ""));
+    if (groups.length > labels.length) {
+      labels.push(`+${groups.length - labels.length} more`);
+    }
+
+    summary.push(`${heading}: ${labels.join(", ")}`);
+  }
+  if (outcomes.some(result => result.execution === "interrupted") && !outcomes.some(result => result.reportedFindings)) {
+    summary.push("No findings recognized in the interrupted output");
+  }
+
+  return summary.join("; ");
+}
+
+function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
   const applicable = outcomes.filter(result => result.status !== "N/A");
   if (applicable.length === 0) return { status: "N/A", summary: "No supported changed source requires linting under the detected project configuration" };
   let status = "PASS";
   if (applicable.some(result => result.status === "BLOCKED")) status = "BLOCKED";
   if (applicable.some(result => result.status === "FAIL")) status = "FAIL";
-  const headers = outcomes.map(result => `${result.language} (${relative(repositoryRoot, result.root) || "."}): ${result.status} — ${result.summary}`);
+
+  let summary = `Lint execution for ${applicable.length} applicable project/language group(s)`;
+  let nextCheck = "Resolve each reported violation or unavailable project/tooling prerequisite, then rerun verifier:project-lint.";
+  if (exhaustedBudgetMs !== undefined) {
+    summary = lintTimeoutSummary(outcomes, repositoryRoot, exhaustedBudgetMs);
+    if (exhaustedBudgetMs < MAX_PROJECT_LINT_BUDGET_MS) {
+      nextCheck = `For \`automatic --full\`, retry the same request and scope from the same checkout (including any base and paths) with a larger \`--lint-budget-ms <milliseconds>\` (maximum ${MAX_PROJECT_LINT_BUDGET_MS} ms). For lint alone, use \`lint --budget-ms <milliseconds>\` with the same lint-selected paths.`;
+    } else {
+      nextCheck = "The lint budget is already at its maximum. Investigate the slow command before retrying the same scope.";
+    }
+    if (status === "FAIL") {
+      nextCheck = `Resolve the reported lint violations. ${nextCheck}`;
+    }
+  }
+
+  const headers = outcomes.map(result => `${lintGroupLabel(result, repositoryRoot)}: ${result.status} — ${result.summary}`);
   const headerBytes = headers.join("\n").length;
-  if (headerBytes > MAX_EVIDENCE) return { status: "BLOCKED", summary: "Project lint outcomes exceed the bounded result transport", evidence: `${outcomes.length} project/language outcomes cannot be represented within ${MAX_EVIDENCE} characters; no combined lint approval was issued.` };
+  if (headerBytes > MAX_EVIDENCE) {
+    const evidence = `${outcomes.length} project/language outcomes cannot be represented within ${MAX_EVIDENCE} characters; no combined lint approval was issued.`;
+    if (exhaustedBudgetMs !== undefined) {
+      return {
+        status,
+        summary,
+        evidence,
+        nextCheck,
+      };
+    }
+    return {
+      status: "BLOCKED",
+      summary: "Project lint outcomes exceed the bounded result transport",
+      evidence,
+    };
+  }
   const perOutcome = Math.max(0, Math.floor((MAX_EVIDENCE - headerBytes - outcomes.length * 3) / outcomes.length));
   const evidence = outcomes.map((result, index) => {
-    const detail = result.evidence ?? "";
-    const bounded = detail.length > perOutcome ? `${detail.slice(0, Math.max(0, perOutcome - 20))} [output truncated]` : detail;
-    return `${headers[index]}${bounded ? `\n${bounded}` : ""}`;
+    let detail = result.evidence ?? "";
+    if (detail.length > perOutcome) {
+      const truncated = " [output truncated]";
+      detail = "";
+      if (perOutcome >= truncated.length) {
+        detail = result.evidence.slice(0, perOutcome - truncated.length) + truncated;
+      }
+    }
+    return `${headers[index]}${detail ? `\n${detail}` : ""}`;
   }).join("\n");
   return {
     status,
-    summary: `Lint execution for ${applicable.length} applicable project/language group(s)`,
+    summary,
     evidence,
-    ...(status === "PASS" ? {} : { nextCheck: "Resolve each reported violation or unavailable project/tooling prerequisite, then rerun verifier:project-lint." }),
+    ...(status === "PASS" ? {} : {
+      nextCheck,
+    }),
   };
 }
 
@@ -673,13 +787,21 @@ async function lintRestartKey(plan) {
   }
 }
 
-function passedLintGroup(plan, evidence) {
+function passedLintGroup(group, evidence) {
   return {
-    language: plan.language,
-    root: plan.cwd,
+    ...group,
     status: "PASS",
     summary: "The existing non-fixing lint command exited 0",
     evidence,
+  };
+}
+
+function lintGroupNotStarted(group, budgetMs) {
+  return {
+    ...group,
+    status: "BLOCKED",
+    execution: "not-started",
+    summary: `Lint command never started before the overall time budget (${budgetMs} ms) expired`,
   };
 }
 
@@ -700,9 +822,20 @@ export async function verifyProjectLint({
   cancellationSignal?.throwIfAborted();
 
   const outcomes = [...discovery.results];
-  let timedOut = false;
+  let budgetExhausted = false;
   for (const plan of discovery.plans) {
     cancellationSignal?.throwIfAborted();
+
+    const group = {
+      language: plan.language,
+      root: plan.root,
+      wholeProjectTrigger: plan.wholeProjectTrigger,
+    };
+    if (budgetExhausted || Date.now() >= deadline) {
+      budgetExhausted = true;
+      outcomes.push(lintGroupNotStarted(group, budgetMs));
+      continue;
+    }
 
     try {
       plan.repositoryRoot = discovery.repositoryRoot;
@@ -715,7 +848,10 @@ export async function verifyProjectLint({
           && typeof previous.evidence === "string"
           && previous.evidence.length <= MAX_RESTART_EVIDENCE
           && Date.now() < deadline) {
-          outcomes.push(passedLintGroup(plan, previous.evidence));
+          outcomes.push({
+            ...passedLintGroup(group, previous.evidence),
+            execution: "restored",
+          });
           continue;
         }
       }
@@ -724,19 +860,25 @@ export async function verifyProjectLint({
       cancellationSignal?.throwIfAborted();
 
       if (plan.inspectEslint && applicable.length === 0) {
-        outcomes.push({ language: plan.language, root: plan.cwd, status: "N/A", summary: "Changed source is outside the configured ESLint scope" });
+        outcomes.push({
+          ...group,
+          status: "N/A",
+          summary: "Changed source is outside the configured ESLint scope",
+        });
         continue;
       }
       const remaining = deadline - Date.now();
       if (remaining <= 0) {
-        throw new LintBudgetExceeded();
+        budgetExhausted = true;
+        outcomes.push(lintGroupNotStarted(group, budgetMs));
+        continue;
       }
 
       const { stdout, stderr } = await executeLint(plan, env, remaining, cancellationSignal);
       cancellationSignal?.throwIfAborted();
 
       const evidence = [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ");
-      outcomes.push(passedLintGroup(plan, evidence));
+      outcomes.push(passedLintGroup(group, evidence));
       if (restartKey && await lintRestartKey(plan) === restartKey) {
         cancellationSignal?.throwIfAborted();
 
@@ -751,15 +893,23 @@ export async function verifyProjectLint({
 
       const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
       if (error instanceof LintBudgetExceeded) {
-        timedOut = true;
+        budgetExhausted = true;
+
+        const reportedFindings = hasLintDiagnostics(plan.tool, output);
         const command = plan.command.join(" ");
-        const evidence = [command, output].filter(Boolean).join("\n");
+        let evidence = [command, output].filter(Boolean).join("\n");
+        let summary = `Lint command interrupted after exceeding the overall time budget (${budgetMs} ms)`;
+        if (reportedFindings) {
+          summary += `; ${plan.tool} reported findings before interruption`;
+          evidence = `${output}\n${command}`;
+        }
         outcomes.push({
-          language: plan.language,
-          root: plan.cwd,
+          ...group,
           status: "BLOCKED",
-          summary: `Project lint execution exceeded its overall time budget (${budgetMs} ms)`,
+          execution: "interrupted",
+          summary,
           evidence,
+          reportedFindings,
         });
         continue;
       }
@@ -771,14 +921,25 @@ export async function verifyProjectLint({
         : unprovenFailure
           ? `The declared command failed without recognized ${plan.tool} diagnostics; lint execution is unverified`
           : `${plan.tool} could not complete`;
-      outcomes.push({ language: plan.language, root: plan.cwd, status, summary, evidence: [plan.command.join(" "), output, error.message].filter(Boolean).join("\n") });
+      const command = plan.command.join(" ");
+      let evidence;
+      if (status === "FAIL") {
+        evidence = [output, command, error.message].filter(Boolean).join("\n");
+      } else {
+        evidence = [command, output, error.message].filter(Boolean).join("\n");
+      }
+      outcomes.push({
+        ...group,
+        status,
+        summary,
+        evidence,
+      });
     }
   }
   cancellationSignal?.throwIfAborted();
 
-  const result = combinedResult(outcomes, discovery.repositoryRoot);
-  if (timedOut) {
-    return markVerificationTimeout(result);
+  if (budgetExhausted) {
+    return markVerificationTimeout(combinedResult(outcomes, discovery.repositoryRoot, budgetMs));
   }
-  return result;
+  return combinedResult(outcomes, discovery.repositoryRoot);
 }

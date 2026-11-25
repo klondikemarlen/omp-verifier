@@ -643,7 +643,7 @@ function recoverLint(root, budget, paths, options = []) {
 test("when a later project's lint exceeds the shared budget, bounded recovery completes both whole-project commands", async t => {
   // Arrange
   const root = await wrappedNpmProjects(t, { webDelayMs: 3_000 });
-  const paths = ["api/src/selected file.js", "web/src/selected file.js"];
+  const paths = ["api/package.json", "web/package.json"];
 
   // Act
   const timedOut = recoverLint(root, 2_000, paths);
@@ -653,6 +653,12 @@ test("when a later project's lint exceeds the shared budget, bounded recovery co
   assert.equal(timedOut.status, 1);
   const [blocked] = JSON.parse(timedOut.stdout);
   assert.equal(blocked.status, "BLOCKED");
+  assert.match(blocked.summary, /Shared project lint budget of 2000 ms expired/);
+  assert.match(blocked.summary, /Interrupted: javascript \(web\)/);
+  assert.match(blocked.summary, /Finished PASS: javascript \(api\)/);
+  assert.match(blocked.summary, /Whole-project lint selected by manifest.*javascript \(api\) via package\.json.*javascript \(web\) via package\.json/);
+  assert.match(blocked.summary, /No findings recognized in the interrupted output/);
+  assert.match(blocked.nextCheck, /lint --budget-ms.*same lint-selected paths/);
   assert.match(blocked.evidence, /javascript \(api\): PASS/);
   assert.match(blocked.evidence, /javascript \(web\): BLOCKED/);
   assert.match(blocked.evidence, /web service npm run lint -- --no-fix/);
@@ -663,6 +669,56 @@ test("when a later project's lint exceeds the shared budget, bounded recovery co
   assert.equal(passed.status, "PASS");
   assert.match(passed.evidence, /javascript \(api\): PASS/);
   assert.match(passed.evidence, /javascript \(web\): PASS/);
+});
+
+test("when a child lint command reports findings before timing out, only the completed failure determines FAIL", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await installProjectEslint(root);
+  await writeProjectFile(root, "eslint.config.mjs", `
+export default [{
+  rules: {
+    "no-unused-vars": "error",
+  },
+}];
+`);
+  await writeProjectFile(root, "lint-wrapper.mjs", `
+import { spawnSync } from "node:child_process";
+import { setTimeout } from "node:timers/promises";
+
+const [command, ...args] = process.argv.slice(2);
+const lint = spawnSync(command, args, {
+  stdio: "inherit",
+});
+if (args.at(-1).startsWith("web/")) await setTimeout(6_000);
+process.exitCode = lint.status ?? 2;
+`);
+  await bindLint(root, "javascript", [process.execPath, "lint-wrapper.mjs", "node_modules/.bin/eslint", "--no-fix", "--"], {
+    appendPaths: true,
+  });
+
+  const projects = ["api", "web", "worker"];
+  for (const project of projects) {
+    await writeProjectFile(root, `${project}/package.json`, "{}\n");
+    await writeProjectFile(root, `${project}/source.js`, `const ${project}Unused = true;\n`);
+  }
+
+  // Act
+  const result = recoverLint(root, 2_000, projects.map(project => `${project}/package.json`));
+
+  // Assert
+  assert.equal(result.status, 1, result.stderr);
+  const [lint] = JSON.parse(result.stdout);
+  assert.equal(lint.status, "FAIL");
+  assert.match(lint.summary, /Interrupted: javascript \(web\)/);
+  assert.match(lint.summary, /Never started: javascript \(worker\)/);
+  assert.match(lint.summary, /Finished FAIL \(lint violations\): javascript \(api\)/);
+  assert.match(lint.summary, /Findings reported before interruption: javascript \(web\)/);
+  assert.ok(!lint.summary.includes(root));
+  assert.match(lint.evidence, /javascript \(api\): FAIL[^\n]*\n[\s\S]*apiUnused/);
+  assert.match(lint.evidence, /javascript \(web\): BLOCKED[^\n]*eslint reported findings before interruption[\s\S]*webUnused/);
+  assert.doesNotMatch(lint.evidence, /workerUnused/);
+  assert.match(lint.nextCheck, /Resolve the reported lint violations.*lint --budget-ms/);
 });
 
 test("when recovery finds a violation outside selected files, full-project lint still fails", async t => {

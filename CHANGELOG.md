@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.4 - 2026-11-25
+
+- When projects share a lint budget, the timeout report names the work that finished, stopped, or never started and explains how to retry the same scope.
+
 ## 1.30.3 - 2026-11-25
 
 - The verifier advisor now inspects Git scope without an interactive pager, so a long PR diff does not wait for a keystroke.

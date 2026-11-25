@@ -354,6 +354,8 @@ Missing or unsupported tooling/configuration and invocation prerequisites are `B
 
 By default, automatic project lint shares 100 seconds across discovery and sequential project commands, with a 120-second outer timeout. Increasing the calling shell's timeout alone does not extend that internal budget.
 
+When the budget expires, use the summary to distinguish commands that finished from one interrupted in flight and any that never started. A changed package manifest can select whole-project lint even when no source file changed. A timeout leaves that work unverified; it neither proves a violation nor clears findings from a completed group.
+
 For a known slow project, supply the budget on the full verification itself:
 
 ```sh
