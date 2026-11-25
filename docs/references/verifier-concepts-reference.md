@@ -63,7 +63,7 @@ Cleanup may remove an edit-owning checkout before native final-yield review star
 ```text
 omp-verifier handoff prepare --base <actual-delivery-base>
 omp-verifier handoff recover <handoff-file>
-omp-verifier handoff check <handoff-file> [--reporter text] [--failures-only]
+omp-verifier handoff check <handoff-file> [--lint-budget-ms <milliseconds>] [--reporter text] [--failures-only]
 omp-verifier handoff release <handoff-file>
 omp-verifier handoff cancel <handoff-file> --reason <explicit-user-reason>
 ```
@@ -361,6 +361,8 @@ For a known slow project, supply the budget on the full verification itself:
 ```sh
 omp-verifier automatic --request "$current_handle" --full --base "$pr_base" --lint-budget-ms 600000
 ```
+
+For an eligible delivery handoff, use `omp-verifier handoff check "$handoff_file" --lint-budget-ms 600000`. The handoff still supplies the complete pinned scope; a previous lint result does not replace this run.
 
 The budget is a whole number from 1 through 600000 milliseconds. It applies once, across all selected lint groups, with another 20 seconds for the lint subprocess to start and return its result. Allow enough time for the other selected checks too. This neither forces lint to run nor skips any checks: selection, suppression, project wrappers, other check deadlines, and combined reporting are unchanged. The run executes applicable lint on the current source rather than reusing an earlier result.
 

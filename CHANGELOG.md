@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.6 - 2026-11-25
+
+- A delivery handoff can use the same bounded lint budget as full PR verification. The advisor rechecks PR state before reporting a source blocker, so a result that arrives after merge stays historical.
+
 ## 1.30.5 - 2026-11-25
 
 - A delayed check using a recent, replaced request handle now reports `SUPERSEDED` rather than blocking the current request.
