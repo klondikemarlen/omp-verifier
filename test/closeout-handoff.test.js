@@ -85,8 +85,8 @@ async function closeoutFixture(context) {
     });
   }
 
-  function review(id) {
-    return spawnSync(process.execPath, [cli, "closeout", "review", id], {
+  function review(id, ...options) {
+    return spawnSync(process.execPath, [cli, "closeout", "review", id, ...options], {
       cwd: unrelatedDirectory,
       env,
       encoding: "utf8",
@@ -176,6 +176,24 @@ test("when retained resources change or disappear after a passing review, the sa
       resources: ["saved-config-c"],
     },
   ]);
+});
+
+test("when independent review finds only a lost retained identity, text output calls for a terminal exception report", async context => {
+  // Arrange
+  const fixture = await closeoutFixture(context);
+  const retained = await fixture.prepareRetainedPath("saved-config");
+  const id = fixture.prepareHandoff(retained.receiptPath);
+  await rm(retained.path);
+
+  // Act
+  const review = fixture.review(id, "--reporter", "text", "--failures-only");
+
+  // Assert
+  assert.equal(review.status, 1, review.stderr);
+  const report = review.stdout.replace(/\s+/g, " ");
+  assert.match(review.stdout, /saved-config.*missing/);
+  assert.match(report, /preserve the failed receipt/);
+  assert.equal(review.stdout.includes(retained.receiptPath), false);
 });
 
 test("when a handoff ID is mistyped or replaced with a receipt path, review blocks lookup without judging any resource", async context => {

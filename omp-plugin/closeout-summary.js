@@ -28,6 +28,9 @@ export async function checkCloseoutReceipts({ repositoryRoot, receiptPaths, veri
       ...(receipt.problem && {
         problem: receipt.problem,
       }),
+      ...(receipt.nextCheck && {
+        nextCheck: receipt.nextCheck,
+      }),
     });
   }
   return {
@@ -109,6 +112,7 @@ function summarizeReceipt(result, exactReceiptPaths) {
       checkedResources: 0,
       summary,
       problem,
+      nextCheck: evidenceExcerpt(result.nextCheck, exactReceiptPaths, 800),
     };
   }
 
@@ -154,6 +158,7 @@ function summarizeReceipt(result, exactReceiptPaths) {
     checkedResources,
     summary,
     problem: `${resourceId}: ${evidence}`,
+    nextCheck: evidenceExcerpt(result.nextCheck, exactReceiptPaths, 800),
   };
 }
 

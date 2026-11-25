@@ -97,7 +97,9 @@ test("when receipts contain failures and blockers, failures control without supp
     evidence: "Declared disposable resource remains present",
   };
   const blocked = observedReceipt("BLOCKED", [deniedResource]);
+  blocked.nextCheck = "Restore Docker daemon access.";
   const failed = observedReceipt("FAIL", [deniedResource, retainedResource, leftoverResource]);
+  failed.nextCheck = `Preserve ${secondReceipt} for the protected-environment mismatch. Clean the sandbox before rechecking.`;
   const passed = observedReceipt("PASS", [passingResource("primary-worktree")]);
   const results = new Map([
     [firstReceipt, blocked],
@@ -121,12 +123,14 @@ test("when receipts contain failures and blockers, failures control without supp
       status: "BLOCKED",
       summary: "Declared resource closeout is incomplete",
       problem: "container: Docker daemon could not be reached",
+      nextCheck: "Restore Docker daemon access.",
     },
     {
       receiptPath: secondReceipt,
       status: "FAIL",
       summary: "Declared resource closeout is incomplete",
       problem: "protected-environment: Required retained resource is missing or changed",
+      nextCheck: "Preserve [receipt path] for the protected-environment mismatch. Clean the sandbox before rechecking.",
     },
     {
       receiptPath: thirdReceipt,

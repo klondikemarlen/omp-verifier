@@ -466,7 +466,8 @@ export async function verifyResourceCloseout({ cwd, receiptPath }) {
     const payload = await readReceipt(cwd, receiptPath);
     const observations = await observeResources(payload.declaration);
     const dispositions = [];
-    let hasFailure = false;
+    let hasRetentionMismatch = false;
+    let hasLeftover = false;
     let hasBlocker = false;
     for (const [index, resource] of payload.declaration.resources.entries()) {
       const before = payload.observations[index];
@@ -483,6 +484,7 @@ export async function verifyResourceCloseout({ cwd, receiptPath }) {
       } else if (resource.disposition === "absent") {
         if (current.present) {
           status = "FAIL";
+          hasLeftover = true;
           evidence = "Declared disposable resource remains present";
         } else {
           disposition = before.present ? "removed" : "already absent";
@@ -490,13 +492,15 @@ export async function verifyResourceCloseout({ cwd, receiptPath }) {
         }
       } else if (!current.present || JSON.stringify(before.identity) !== JSON.stringify(current.identity)) {
         status = "FAIL";
-        evidence = "Required retained resource is missing or changed; investigate preservation before claiming closeout";
+        hasRetentionMismatch = true;
+        evidence = current.present ? "Required retained resource identity or content changed" : "Required retained resource is missing";
       } else {
         disposition = "intentionally retained";
         evidence = resource.reason;
       }
-      if (status === "FAIL") hasFailure = true;
-      if (status === "BLOCKED") hasBlocker = true;
+      if (status === "BLOCKED") {
+        hasBlocker = true;
+      }
       dispositions.push({
         id: resource.id,
         status,
@@ -505,8 +509,33 @@ export async function verifyResourceCloseout({ cwd, receiptPath }) {
       });
     }
     let status = "PASS";
-    if (hasFailure) status = "FAIL";
-    else if (hasBlocker) status = "BLOCKED";
+    if (hasRetentionMismatch || hasLeftover) {
+      status = "FAIL";
+    } else if (hasBlocker) {
+      status = "BLOCKED";
+    }
+
+    const nextChecks = [];
+    if (hasRetentionMismatch) {
+      nextChecks.push(
+        "For a retention mismatch, preserve the failed receipt. " +
+        "Compare captured identity and timestamps with cleanup and event records; report the exception and unknowns. " +
+        "The mismatch alone does not establish cause. Do not repeatedly recheck a lost identity, recreate the resource, " +
+        "or omit it from a replacement receipt to obtain PASS.",
+      );
+    }
+    if (hasLeftover) {
+      nextChecks.push(
+        "For remaining disposable resources, use the authorized project cleanup workflow and recheck after cleanup. " +
+        "Do not delete protected or uncertain resources.",
+      );
+    }
+    if (hasBlocker) {
+      nextChecks.push(
+        "For blocked inspections, restore the missing evidence or access before rechecking; " +
+        "preserve uncertain resources.",
+      );
+    }
     const evidence = dispositions.map(item => `${item.id}: ${item.disposition ?? item.status} — ${item.evidence}`).join("\n");
     const observedAt = new Date().toISOString();
     return {
@@ -518,8 +547,8 @@ export async function verifyResourceCloseout({ cwd, receiptPath }) {
       capturedAt: payload.capturedAt,
       observedAt,
       dispositions,
-      ...(status === "PASS" ? {} : {
-        nextCheck: "Resolve each resource finding through the authorized project workflow, then run a fresh closeout verify. Do not delete protected or uncertain resources.",
+      ...(nextChecks.length > 0 && {
+        nextCheck: nextChecks.join("\n"),
       }),
     };
   } catch (error) {
