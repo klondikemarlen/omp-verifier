@@ -75,6 +75,9 @@ function descriptor(record, path) {
   };
 }
 
+// Retain only identifiers, not old intent records. Keep the pointer below its 4 KiB limit.
+const MAX_SUPERSEDED_IDS = 64;
+
 // Only an actual host prompt creates an instance. Identical text is still a new request.
 export async function createRequestIntent({ sessionId, prompt }) {
   if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 512) {
@@ -98,7 +101,18 @@ export async function createRequestIntent({ sessionId, prompt }) {
     if (error.code !== "ENOENT") throw error;
   }
   const temporaryPath = join(directory, `${requestId}.current`);
-  await writeFile(temporaryPath, JSON.stringify({ requestId, sha256: hash(text) }), { mode: 0o600, flag: "wx" });
+  const supersededIds = previous && UUID_PATTERN.test(previous.requestId)
+    ? [previous.requestId, ...(previous.supersededIds ?? [])].slice(0, MAX_SUPERSEDED_IDS)
+    : [];
+  const pointer = {
+    requestId,
+    sha256: hash(text),
+    supersededIds,
+  };
+  await writeFile(temporaryPath, JSON.stringify(pointer), {
+    mode: 0o600,
+    flag: "wx",
+  });
   await rename(temporaryPath, currentPath);
   if (previous && UUID_PATTERN.test(previous.requestId)) {
     await rm(join(directory, `${previous.requestId}.json`), { force: true });
@@ -106,15 +120,26 @@ export async function createRequestIntent({ sessionId, prompt }) {
   return descriptor(record, path);
 }
 
+export class SupersededRequestIntent extends Error {
+  constructor() {
+    super("The supplied request handle was superseded by a later prompt in this session.");
+  }
+}
+
 export async function readRequestIntent(handle) {
   const match = typeof handle === "string" && /^([0-9a-f]{32})\.([0-9a-f-]{36})$/.exec(handle);
   if (!match || !UUID_PATTERN.test(match[2])) throw new Error("invalid request intent handle");
-  const path = join(INTENT_DIRECTORY, match[1], `${match[2]}.json`);
+  const directory = join(INTENT_DIRECTORY, match[1]);
   await privateEntry(INTENT_DIRECTORY, true);
-  await privateEntry(dirname(path), true);
-  await privateEntry(path, false);
-  const currentPath = join(dirname(path), "current.json");
+  await privateEntry(directory, true);
+  const currentPath = join(directory, "current.json");
   await privateEntry(currentPath, false);
+  const pointer = JSON.parse(await readFile(currentPath, "utf8"));
+  if (!UUID_PATTERN.test(pointer.requestId)) {
+    throw new Error("invalid current request intent pointer");
+  }
+  const path = join(directory, `${pointer.requestId}.json`);
+  await privateEntry(path, false);
   const text = await readFile(path, "utf8");
   const record = JSON.parse(text);
   const current = JSON.parse(await readFile(currentPath, "utf8"));
@@ -125,6 +150,12 @@ export async function readRequestIntent(handle) {
       hash(record.sessionId).slice(0, 32) !== basename(dirname(path)) || basename(path) !== `${record.requestId}.json` ||
       current.requestId !== record.requestId || current.sha256 !== hash(text)) {
     throw new Error("request intent is changed, invalid, or superseded");
+  }
+  if (record.requestId !== match[2]) {
+    if (Array.isArray(current.supersededIds) && current.supersededIds.includes(match[2])) {
+      throw new SupersededRequestIntent();
+    }
+    throw new Error("supplied handle does not identify the current request");
   }
   return descriptor(record, path);
 }
