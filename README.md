@@ -153,10 +153,10 @@ For an explicitly authorized one-off larger changed-source capture, start `autom
 
 If a project's lint wrapper needs more time, pass `--lint-budget-ms` on the full verification run to get lint and the other selected checks together. To retry just lint, use `lint --budget-ms` with the original lint-selected paths. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint).
 
-The advisor runs, for example:
+For a PR targeting `origin/main`, the advisor runs, for example:
 
 ```text
-omp-verifier automatic api/tests/downloads.test.ts --reporter text --failures-only
+omp-verifier automatic --base origin/main api/tests/downloads.test.ts --progress --reporter text --failures-only
 ```
 
 Its blocker note contains the reporter output, without JSON or a code fence:
