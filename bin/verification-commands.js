@@ -4,7 +4,7 @@ import { addReportingOptions, parseWholeNumber } from "#root/bin/cli-options.js"
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { formatRunTimings, formatVerificationInventory } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
-import { readRequestIntent } from "#root/omp-plugin/request-intent.js";
+import { readRequestIntent, SupersededRequestIntent } from "#root/omp-plugin/request-intent.js";
 import { verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
 import { timeVerificationCheck, timeVerificationRun, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { validateSourceByteLimit } from "#root/omp-plugin/semantic-context.js";
@@ -240,12 +240,21 @@ async function automaticResults(cwd, paths, options) {
     try {
       intent = await readRequestIntent(options.request);
     } catch (error) {
+      if (error instanceof SupersededRequestIntent) {
+        return [{
+          id: "verifier:request-intent",
+          status: "SUPERSEDED",
+          summary: "Historical request; no checks ran and no verdict was produced",
+          evidence: error.message,
+          nextCheck: "Do not retry this historical invocation. Only if the current request needs verification, use its host-injected handle and current scope.",
+        }];
+      }
       return [{
         id: "verifier:request-intent",
         status: "BLOCKED",
-        summary: "Current request intent is unavailable",
+        summary: "Request intent could not be verified",
         evidence: error.message,
-        nextCheck: "Use the active request handle, or run without --request to perform full automatic verification.",
+        nextCheck: "Use the active request's host-injected handle and explicit scope. For full PR verification: automatic --request <current-handle> --full --base <actual-PR-base> <changed-path...>.",
       }];
     }
   }

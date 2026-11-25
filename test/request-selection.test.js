@@ -153,6 +153,7 @@ test("when a new request supersedes quick intent, its stale handle cannot exempt
   // Arrange
   const f = await fixture(t);
   const previous = await f.intent("Verifier work level: quick tweak\nRename local value.");
+  await f.intent("Review the intermediate edit.");
   const current = await f.intent("Change authorization to require membership.");
 
   // Act
@@ -160,12 +161,35 @@ test("when a new request supersedes quick intent, its stale handle cannot exempt
   const normal = f.run("automatic", "source.js", "--request", current.handle);
 
   // Assert
-  assert.equal(stale.status, 1, stale.stderr);
-  assert.equal(JSON.parse(stale.stdout)[0].id, "verifier:request-intent");
-  assert.equal(JSON.parse(stale.stdout)[0].status, "BLOCKED");
+  assert.equal(stale.status, 0, stale.stderr);
+  const [historical] = JSON.parse(stale.stdout);
+  assert.equal(historical.status, "SUPERSEDED");
   assert.equal(normal.status, 1, normal.stderr);
   assert.equal(JSON.parse(normal.stdout)[0].id, "publisher:optional");
   assert.equal(await readFile(join(f.project, "executed.txt"), "utf8"), "optional\n");
+});
+
+test("when the active record is missing, even a historical handle cannot hide the blocker", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const previous = await f.intent("Review the first edit.");
+  const current = await f.intent("Review the second edit.");
+  await rm(current.path);
+
+  // Act
+  const stale = f.run("automatic", "source.js", "--request", previous.handle);
+  const active = f.run("automatic", "source.js", "--request", current.handle);
+
+  // Assert
+  for (const result of [stale, active]) {
+    assert.equal(result.status, 1, result.stderr);
+    const [blocker] = JSON.parse(result.stdout);
+    assert.equal(blocker.status, "BLOCKED");
+    assert.match(blocker.nextCheck, /--request <current-handle> --full --base/);
+  }
+  await assert.rejects(readFile(join(f.project, "executed.txt")), {
+    code: "ENOENT",
+  });
 });
 
 test("when full verification uses a larger lint budget, it reruns lint alongside other selected checks", async t => {
