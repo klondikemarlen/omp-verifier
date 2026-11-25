@@ -238,6 +238,8 @@ console.log(JSON.stringify({
   assert.equal(constrainedChecks.find(check => check.id === "publisher:optional")?.status, "PASS");
   const blockedLint = constrainedChecks.find(check => check.id === "verifier:project-lint");
   assert.equal(blockedLint?.status, "BLOCKED");
+  assert.match(blockedLint.summary, /Shared project lint budget of 1 ms expired; Never started: javascript \(\.\)/);
+  assert.match(blockedLint.nextCheck, /For `automatic --full`, retry the same request and scope.*--lint-budget-ms/);
   assert.match(blockedLint.evidence, /\b1\s*ms\b/i);
 
   assert.match(constrained.stderr, /verifier:project-lint returned BLOCKED/);
