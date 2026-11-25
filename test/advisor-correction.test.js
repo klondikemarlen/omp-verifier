@@ -39,7 +39,6 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
 
     await mkdir(join(projectDir, "src"), { recursive: true });
     await mkdir(packageDir, { recursive: true });
-    await writeFile(join(projectDir, "src", "changed.txt"), "BROKEN\n");
     await writeFile(join(root, "plugins", "package.json"), JSON.stringify({
       name: "omp-plugins",
       dependencies: { publisher: "1.0.0" },
@@ -66,7 +65,18 @@ process.stdout.write(JSON.stringify(failed
   : { status: "PASS", summary: "Fixture repaired", evidence: "src/changed.txt has no BROKEN marker" }));
 process.exitCode = failed ? 1 : 0;
 `);
-    execFileSync("git", ["init", "--quiet"], { cwd: projectDir });
+    const git = (...args) => execFileSync("git", args, {
+      cwd: projectDir,
+      encoding: "utf8",
+    }).trim();
+    git("init", "--quiet");
+    git("config", "user.name", "Verifier Tests");
+    git("config", "user.email", "tests@example.invalid");
+    git("commit", "--allow-empty", "--quiet", "-m", "PR base");
+    const base = git("rev-parse", "HEAD");
+    await writeFile(join(projectDir, "src", "changed.txt"), "BROKEN\n");
+    git("add", "src/changed.txt");
+    git("commit", "--quiet", "-m", "PR head");
     await mkdir(join(agentDir, "verifier"), { recursive: true, mode: 0o755 });
     await writeFile(previousCliPath, "process.stdout.write('');\n");
     await writeFile(guidancePath, `Run \`node '${previousCliPath}' automatic <changed-path...> --reporter text --failures-only\`.\n`);
@@ -74,9 +84,9 @@ process.exitCode = failed ? 1 : 0;
     // Act
     await verifierPlugin(pi);
     const guidance = await readFile(guidancePath, "utf8");
-    const [, command, options] = guidance.match(/`(node .+? automatic )<changed-path\.\.\.>(.*?)`/);
+    const [, command, options] = guidance.match(/`(node .+? automatic --base )<actual-PR-base> <current-edited-path\.\.\.>(.*?)`/);
     const runGeneratedCommand = () => {
-      const result = spawnSync("/bin/sh", ["-c", `${command}src/changed.txt${options}`], {
+      const result = spawnSync("/bin/sh", ["-c", `${command}${base}${options}`], {
         cwd: projectDir,
         encoding: "utf8",
         env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, VERIFIER_PATH: "expanded-variable" },
@@ -86,6 +96,8 @@ process.exitCode = failed ? 1 : 0;
 
     const failure = runGeneratedCommand();
     await writeFile(join(projectDir, "src", "changed.txt"), "REPAIRED\n");
+    git("add", "src/changed.txt");
+    git("commit", "--quiet", "-m", "Corrected PR head");
     const repaired = runGeneratedCommand();
     const evidence = failure.stdout.includes("src/changed.txt contains BROKEN");
 

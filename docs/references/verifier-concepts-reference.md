@@ -82,6 +82,8 @@ The reviewer releases its handoff after all applicable assessments finish, befor
 
 `verifier:resource-closeout` verifies an explicitly declared final inventory independently of source review. The primary owns resource creation, cleanup authority, project wrappers, and retention decisions. Verifier only observes; it cannot authorize deletion, run cleanup commands, prove an omitted resource absent, or enforce native host settlement.
 
+Use this procedure when resource verification is explicitly requested. Routine post-merge cleanup uses the project's safety checks without preparing a Verifier inventory. The inventory limit measures resources considered for disposal, not the number of changed paths in the PR.
+
 Before cleanup, write a JSON declaration and invoke `omp-verifier closeout prepare <declaration.json>` from the surviving repository. The declaration contains `version: 1`, a nonempty `taskId`, absolute normalized `repositoryRoot`, concrete `authorization` evidence, and between 1 and 64 exact `resources`. Every resource has unique `id`, `kind`, `disposition` (`absent` or `retained`), `ownership` (`task`, `protected`, or `unknown`), `ownershipEvidence`, and a concrete `reason`. Only task-owned resources may request absence. Declare protected or uncertain resources as retained, including shared resources whose preservation matters to this cleanup.
 
 Kind-specific fields:

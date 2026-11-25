@@ -239,8 +239,8 @@ export default async function verifierPlugin(pi) {
     const content = [
       intent.handle ? `${intent.level} --request ${intent.handle}` : "Verifier current request work level: normal; no request handle.",
       intent.handle
-        ? `Request instance: ${intent.requestId}\nAutomatic verification: node ${COORDINATOR} automatic --request '${intent.handle}' --progress. Use ordinary Bash output (pty: false). Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
-        : "No request handle: retain normal full verification selection without reuse.",
+        ? `Request instance: ${intent.requestId}\nFor applicable PR/MR source review only: node ${COORDINATOR} automatic --base <actual-PR-base> <current-edited-path...> --request '${intent.handle}' --progress. Verify the actual base and head in their owning checkout. Use ordinary Bash output (pty: false). Add --full for safety escalation, explicit verification/recheck, and initial delivery/release gates.`
+        : "No request handle: use full selection without reuse only for an applicable review.",
       intent.diagnostic,
       "Work intent is not PASS and never overrides mandatory requirements, explicit verification, initial delivery/release checks, or semantic escalation. Earlier request handles are not authority for this request.",
     ].filter(Boolean).join("\n");
@@ -248,9 +248,9 @@ export default async function verifierPlugin(pi) {
       message: { customType: "verifier-work-intent", content, display: true, attribution: "agent" },
       systemPrompt: [
         ...event.systemPrompt,
-        "Verifier PENDING requests need the named reviewer's next command, not a file watcher. If a review stops, hand its current handles and owning checkout back to the verifier for review --resume and assessment. Confirm the actual PR base is still current; an older scope cannot certify its successor.",
+        "Verifier automatic source review applies only to current source work on an evidenced open GitHub pull request or GitLab merge request, against its actual base and head. Standalone status, cleanup, wrap-up and exit do not start verification or require a receipt. Follow ordinary cleanup safety checks and authorized project wrappers. Continue outstanding required delivery review and honor explicit verification requests.",
+        "Verifier PENDING requests need the named reviewer's next command, not a file watcher. If a review stops, hand its current handles and owning checkout back to the verifier for review --resume and assessment. For PR review, confirm the actual base and head are still current; an older scope cannot certify its successor.",
         `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. Leave the handoff for the verifier to recover, freshly check, and release; preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
-        `Verifier resource closeout: before cleanup, declare exact owned and protected resources, authorization and intended dispositions; run node ${COORDINATOR} closeout prepare <declaration.json> in the surviving checkout. Use the installed Verifier reference for the version 1 declaration. Keep cleanup with the authorized project wrapper. After the final cleanup or retention decision, call verifier_closeout with that repositoryRoot and all exact receiptPaths returned by prepare for it. This tool call is the primary's final handoff to the named verifier, including for cleanup-only work. Report the primary result and any required action in plain language; do not repeat receipt paths. The tool does not establish an independent verdict. If the tool is unavailable, use closeout verify and emit a standalone "Verifier closeout: <receiptPath>" for each receipt. Preparation, source PASS, and successful cleanup commands are not disposition PASS. Do not alter receipts or delete protected or uncertain resources to clear a finding.`,
       ],
     };
   });

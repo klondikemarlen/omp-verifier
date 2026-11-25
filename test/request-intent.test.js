@@ -213,10 +213,43 @@ test("when the prompt hook supplies request intent, the chat stays quiet without
   assert.equal(result.message.attribution, "agent");
   assert.equal(intent.level, "quick-tweak");
   assert.ok(result.message.content.slice(0, 120).includes(`quick-tweak --request ${handle}`));
-  assert.match(result.message.content, /automatic --request/);
+  assert.match(result.message.content, /For applicable PR\/MR source review only: .* automatic --base <actual-PR-base> <current-edited-path\.\.\.> --request/);
   assert.match(result.message.content, /--full/);
   assert.match(result.message.content, /not PASS.*mandatory.*explicit verification.*initial delivery\/release.*semantic escalation/);
   assert.equal(result.systemPrompt[0], "Existing policy.");
+});
+
+test("when a delivered PR is merged, the prompt does not make wrap-up and exit a verifier gate", async t => {
+  // Arrange
+  const { hook } = await pluginFixture(t);
+  const sessionId = randomUUID();
+  const event = {
+    reason: "prompt",
+    prompt: "The PR is merged and independently verified. Wrap up, remove its disposable worktree, and exit.",
+    systemPrompt: ["Existing policy."],
+  };
+  const ctx = {
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+  };
+
+  // Act
+  const result = await hook(event, ctx);
+  const handle = result.message.content.match(/--request ([0-9a-f.-]+)/)[1];
+  const intent = await readRequestIntent(handle);
+  t.after(() => rm(dirname(intent.path), {
+    recursive: true,
+    force: true,
+  }));
+
+  // Assert
+  const prompt = result.systemPrompt.join("\n");
+  assert.match(prompt, /Standalone status, cleanup, wrap-up and exit do not start verification or require a receipt/);
+  assert.match(prompt, /Follow ordinary cleanup safety checks and authorized project wrappers/);
+  assert.doesNotMatch(prompt, /closeout prepare|verifier_closeout/);
+  assert.match(prompt, /before removing an edit-owning Git worktree with committed delivery changes awaiting final review/);
+  assert.doesNotMatch(result.message.content, /automatic --request/);
 });
 
 test("when revive fires for the same proven instance, it preserves rather than recreates request intent", async t => {
