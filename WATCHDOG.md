@@ -40,6 +40,8 @@ Report actual FAIL/BLOCKED through the normal result-only blocker channel; PASS 
 
 ### Source Scope Selection
 
+Run standalone Git scope checks with the Bash tool option `pty: false` so long diffs return without keyboard input. If a Git inspection must share a PTY, disable paging for the entire command chain (`export GIT_PAGER=cat` in that shell), not just its first `git` command. Leave the user's Git configuration unchanged.
+
 Establish the intended PR identity (host, repository/project and number), exact target branch/base SHA and source head SHA, and the owning checkout from the current request or observed PR metadata or creation output. A stacked PR uses its immediate parent, not an assumed `main`. Resolve the actual local base revision and confirm the checkout's `HEAD` matches the intended head. Worktree edits can be included in source review but cannot certify a different published head. If the required checkout, actual base or head cannot be established, report the concrete missing prerequisite only for a still-applicable review. When the PR identity is known, check live state before reporting a local prerequisite failure; missing local source does not make a closed PR review applicable. Do not guess a ref, fetch a substitute, omit the base, or fall back to path-only review.
 
 ### Live PR Eligibility
