@@ -1,6 +1,6 @@
 import { InvalidArgumentError, Option } from "commander";
 
-import { addReportingOptions, parseWholeNumber } from "#root/bin/cli-options.js";
+import { addReportingOptions, parseLintBudget, parseWholeNumber } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { formatRunTimings, formatVerificationInventory } from "#root/omp-plugin/reporters.js";
 import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
@@ -15,7 +15,6 @@ import {
   runAutomaticVerificationForPaths,
   runCurrentAutomaticVerification,
   runInstalledVerificationChecks,
-  validateProjectLintBudget,
 } from "#root/omp-plugin/verifications.js";
 
 const freshDescription = "discard saved work from an interrupted matching run";
@@ -80,16 +79,6 @@ async function showTimings(options) {
 function parseSourceByteLimit(value) {
   const limit = parseWholeNumber(value);
   return validateSourceByteLimit(limit);
-}
-
-function parseLintBudget(value) {
-  const budget = parseWholeNumber(value);
-  try {
-    validateProjectLintBudget(budget);
-  } catch (error) {
-    throw new InvalidArgumentError(error.message);
-  }
-  return budget;
 }
 
 async function listChecks(options) {
