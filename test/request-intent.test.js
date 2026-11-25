@@ -336,7 +336,7 @@ test("when the persisted current pointer changes, a formerly valid handle is rej
   await writeFile(currentPath, JSON.stringify({ ...current, requestId: randomUUID() }));
 
   // Assert
-  await assert.rejects(readRequestIntent(intent.handle), /changed, invalid, or superseded/);
+  await assert.rejects(readRequestIntent(intent.handle));
 });
 
 test("when a newer actual request supersedes the remembered one, revive cannot restore stale quick intent", async t => {

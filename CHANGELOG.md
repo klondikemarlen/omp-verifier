@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.5 - 2026-11-25
+
+- A delayed check using a recent, replaced request handle now reports `SUPERSEDED` rather than blocking the current request.
+
 ## 1.30.4 - 2026-11-25
 
 - When projects share a lint budget, the timeout report names the work that finished, stopped, or never started and explains how to retry the same scope.
