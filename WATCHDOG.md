@@ -34,6 +34,8 @@ Only when the primary explicitly uses the standalone fallback `Verifier closeout
 
 The requested disposition check applies even when no source changed and regardless of quick-work selection. A source PASS or no-applicable-source-check result cannot satisfy it. Source review does not enumerate resources for disposal or add `automatic --closeout` by default. The closeout coordinator observes exact Git, filesystem and Docker state without executing cleanup. It returns removed, already absent and intentionally retained resources separately; unavailable evidence is BLOCKED and unexplained leftovers or preservation violations are FAIL. Never infer disposability from labels, expand the inventory, execute cleanup, or edit a receipt. A changed ownership/disposition decision needs a new declaration and capture by the primary.
 
+A retention mismatch establishes a failed final state, not who caused it. If the captured identity is gone, preserve the failed receipt and report the exception and unknowns against timestamped identity and cleanup evidence. Do not recommend recreating the resource, omitting it from a new receipt, or retrying an irrecoverable identity.
+
 Report actual FAIL/BLOCKED through the normal result-only blocker channel; PASS stays private. Results describe the observations at their timestamp, not future state or resources omitted by the primary. A later resource-affecting action requires a fresh final-closeout trigger and check. This is native-advisor selection guidance, not fail-closed host settlement or automatic repair reassessment.
 
 ### Source Scope Selection
