@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.1 - 2026-11-25
+
+- Check the PR or MR's live state before starting or resuming automatic review. A delayed review-and-merge request no longer starts a check after merge; explicit retrospective checks remain available.
+
 ## 1.30.0 - 2026-11-24
 
 - Limit automatic source review to current PR and MR changes. Routine wrap-up no longer requests a Verifier inventory; explicit source and resource checks remain available.
