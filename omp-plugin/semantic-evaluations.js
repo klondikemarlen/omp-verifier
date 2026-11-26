@@ -321,6 +321,7 @@ async function captureRequest({
   maxContextPaths,
   sourceRecovery,
   automaticScope,
+  deferOptionalSource = Boolean(automaticScope?.delivery),
   continuation = false,
   selectionReason,
   renewalReason = "initial",
@@ -341,6 +342,7 @@ async function captureRequest({
     maxContextPaths,
     sourceRecovery,
     delivery: automaticScope?.delivery,
+    requiredContext: deferOptionalSource ? definition.contract.requiredContext : undefined,
   });
   const missingContext = semanticContextMissing(definition.contract.requiredContext, captured);
   const requestId = randomUUID();
@@ -375,6 +377,9 @@ async function captureRequest({
       }),
       ...(sourceRecovery ? { sourceRecovery: { ...sourceRecovery } } : {}),
       ...(automaticScope ? { automatic: automaticScope } : {}),
+      ...(deferOptionalSource ? {
+        deferOptionalSource: true,
+      } : {}),
     },
     context: captured.context,
     missingContext,
@@ -392,6 +397,7 @@ async function captureRequest({
       maxContextPaths,
       sourceRecovery,
       automaticScope,
+      deferOptionalSource,
     }, definition.contract.requiredContext);
   }
   const stored = {
@@ -501,6 +507,8 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
     sourceRecovery: payload.scope.sourceRecovery,
     legacyRequest: usesLegacySourceLimit,
     delivery,
+    // Requests prepared before this policy keep their original evidence and page identity.
+    requiredContext: payload.scope.deferOptionalSource ? definition.contract.requiredContext : undefined,
   });
   if (captured.fingerprint !== runtime.contextFingerprint || captured.fingerprint !== payload.context.fingerprint) {
     throw new Error("captured source or project context changed after the request was prepared");
@@ -583,6 +591,7 @@ async function reconcileAutomaticScope(target, current) {
     sourceRecovery: payload.scope.sourceRecovery,
     continuation: Boolean(payload.continuation),
     automaticScope: { packageDirectory: plan.packageDirectory, delivery, ...(automatic.workLevel ? { workLevel: automatic.workLevel } : {}) },
+    deferOptionalSource: payload.scope.deferOptionalSource === true,
     selectionReason: current.stored.diagnostics?.selectionReason,
     renewalReason: sameScope ? "evidence-or-provider-changed" : "delivery-scope-changed",
     previousRequestId: payload.requestId,
@@ -890,6 +899,7 @@ export async function readSemanticEvaluation({
         sourceRecovery: stored.payload.scope.sourceRecovery,
         previousContext: previousSourceContext(stored.payload),
         automaticScope: stored.payload.scope.automatic,
+        deferOptionalSource: stored.payload.scope.deferOptionalSource === true,
         continuation: continuation || Boolean(stored.payload.continuation),
         selectionReason: stored.diagnostics?.selectionReason,
         renewalReason: hasLimitChange ? "selector-limit-changed" : hasContextChanges ? "context-enrichment" : "bounded-continuation",

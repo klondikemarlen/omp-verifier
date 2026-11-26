@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.32.1 - 2026-11-26
+
+- Automatic PR reviews no longer send live caller and sibling source by default when the check does not request it. Reviewers can still retrieve material dependencies before assessing the change.
+
 ## 1.32.0 - 2026-11-26
 
 - When transcript presenters are enabled, the primary terminal can show a compact project-lint verdict. Expand the same note with Ctrl+O to inspect the retained evidence.
