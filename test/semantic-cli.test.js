@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import { createRequestIntent, openRequestWaiverAuthority } from "#root/omp-plugin/request-intent.js";
 
 const cliPath = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const policySource = "export function positive(value) { if (value <= 0) throw new RangeError(); return value; }\n";
@@ -225,4 +228,32 @@ test("when diagnostics cannot read a request, private paths and source-bearing e
     assert.ok(!diagnostics.stdout.includes(fixture.root));
     assert.ok(!diagnostics.stdout.includes("PRIVATE_SOURCE_CONTENT"));
   }
+});
+
+test("when the user waives a pending semantic assessment, review leaves the saved evidence intact", async t => {
+  // Arrange
+  const fixture = await semanticCliFixture(t);
+  const before = await cacheSnapshot(fixture.cacheDirectory);
+  const authority = await openRequestWaiverAuthority();
+  t.after(authority.close);
+  const intent = await createRequestIntent({
+    sessionId: randomUUID(),
+    prompt: "/verifier waive publisher:alignment",
+    waiver: "publisher:alignment",
+    waiverAuthorityId: authority.id,
+  });
+  t.after(() => rm(dirname(intent.path), {
+    recursive: true,
+    force: true,
+  }));
+
+  // Act
+  const result = fixture.run([
+    "review", fixture.request.path, "--resume", "--reporter", "text", "--request", intent.handle,
+  ]);
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^WAIVED publisher:alignment\n\s*Verification waived by user/);
+  assert.deepEqual(await cacheSnapshot(fixture.cacheDirectory), before);
 });

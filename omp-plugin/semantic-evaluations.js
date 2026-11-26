@@ -32,6 +32,7 @@ import { buildSemanticReviewPage, paginateSemanticReview } from "#root/omp-plugi
 import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
 import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
+import { waivedVerificationResult } from "#root/omp-plugin/waived-verification-result.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
@@ -781,6 +782,7 @@ export async function prepareSemanticEvaluation({
 export async function readSemanticEvaluation({
   cwd, requestPath, contextPaths = [], callerContextPaths = [], externalContextPaths = [],
   removeContextPaths = [], continuation = false, batchIndex, maxContextPaths, resume = false,
+  waiver,
 }) {
   let target;
   try {
@@ -791,6 +793,10 @@ export async function readSemanticEvaluation({
     }
 
     return requestBlock(undefined, error.message);
+  }
+
+  if (target.checkId === waiver?.id) {
+    return waivedVerificationResult(waiver);
   }
 
   try {
@@ -1126,7 +1132,7 @@ function resultFromAssessment(payload, assessment) {
   };
 }
 
-export async function completeSemanticEvaluation({ cwd, requestPath, assessment }) {
+export async function completeSemanticEvaluation({ cwd, requestPath, assessment, waiver }) {
   let target;
   try {
     target = await loadRequestForOperation({ cwd, requestPath });
@@ -1136,6 +1142,10 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment 
     }
 
     return requestBlock(undefined, error.message);
+  }
+
+  if (target.checkId === waiver?.id) {
+    return waivedVerificationResult(waiver);
   }
 
   try {

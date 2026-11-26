@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.31.0 - 2026-11-26
+
+- Users can waive a Verifier gate for one prompt or explicitly for the live session without converting missing or failed verification into a pass.
+
 ## 1.30.7 - 2026-11-25
 
 - Verifier reports its own prompt and session startup time in OMP's local debug log, separately from verification runs.

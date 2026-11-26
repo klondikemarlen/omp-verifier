@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -8,9 +9,68 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0
 const HASH_PATTERN = /^[0-9a-f]{64}$/;
 const LEVELS = new Map([["quick tweak", "quick-tweak"], ["normal", "normal"], ["rearchitecture", "rearchitecture"]]);
 const PREFIX = "Verifier work level: ";
+const WAIVER_CHECK_ID = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
+const WAIVER_AUTHORITY_TIMEOUT_MS = 1_000;
 
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+export function isRequestWaiver(value) {
+  return value === "verification" || (
+    typeof value === "string" &&
+    value.length <= 512 &&
+    value === value.trim() &&
+    WAIVER_CHECK_ID.test(value)
+  );
+}
+
+function isWaiverAuthorityId(value) {
+  return typeof value === "string" && value.length === 36 && UUID_PATTERN.test(value);
+}
+
+function waiverAuthorityPath(id) {
+  return join(INTENT_DIRECTORY, `${id}.sock`);
+}
+
+// The private listening socket lives only as long as its owning OMP session.
+// Even after a crash leaves the socket pathname on disk, a connection fails closed.
+export async function openRequestWaiverAuthority() {
+  await ensureDirectory(INTENT_DIRECTORY);
+  const id = randomUUID();
+  const path = waiverAuthorityPath(id);
+  if (Buffer.byteLength(path) > 103) {
+    throw new Error("request waiver authority socket path exceeds the Unix socket limit");
+  }
+
+  const server = createServer(socket => socket.destroy());
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(path, () => {
+      server.off("error", reject);
+      server.unref();
+      resolve();
+    });
+  });
+  return {
+    id,
+    close: () => new Promise(resolve => server.close(() => resolve())),
+  };
+}
+
+function isWaiverAuthorityLive(id) {
+  return new Promise(resolve => {
+    const socket = createConnection(waiverAuthorityPath(id));
+    function finish(isLive) {
+      socket.destroy();
+      resolve(isLive);
+    }
+
+    socket.setTimeout(WAIVER_AUTHORITY_TIMEOUT_MS);
+    socket.once("connect", () => finish(true));
+    socket.once("error", () => finish(false));
+    socket.once("timeout", () => finish(false));
+  });
 }
 
 function parseIntent(prompt) {
@@ -62,7 +122,7 @@ async function ensureDirectory(path) {
   await privateEntry(path, true);
 }
 
-function descriptor(record, path) {
+function descriptor(record, path, waiver) {
   return {
     handle: `${hash(record.sessionId).slice(0, 32)}.${record.requestId}`,
     path,
@@ -72,6 +132,9 @@ function descriptor(record, path) {
     ...(record.diagnostic ? {
       diagnostic: record.diagnostic,
     } : {}),
+    ...(waiver !== undefined ? {
+      waiver,
+    } : {}),
   };
 }
 
@@ -79,16 +142,31 @@ function descriptor(record, path) {
 const MAX_SUPERSEDED_IDS = 64;
 
 // Only an actual host prompt creates an instance. Identical text is still a new request.
-export async function createRequestIntent({ sessionId, prompt }) {
+export async function createRequestIntent({ sessionId, prompt, waiver, waiverAuthorityId }) {
   if (typeof sessionId !== "string" || !sessionId.trim() || sessionId.length > 512) {
     throw new Error("request intent requires a session identity");
   }
   if (typeof prompt !== "string") throw new Error("request intent requires the actual prompt");
+  if (waiver !== undefined && !isRequestWaiver(waiver)) {
+    throw new Error("request intent requires an exact Verifier gate selector for a waiver");
+  }
+  if (waiver === undefined ? waiverAuthorityId !== undefined : !isWaiverAuthorityId(waiverAuthorityId)) {
+    throw new Error("request intent requires a session authority for the waiver");
+  }
+
   await ensureDirectory(INTENT_DIRECTORY);
   const directory = join(INTENT_DIRECTORY, hash(sessionId).slice(0, 32));
   await ensureDirectory(directory);
   const requestId = randomUUID();
-  const record = { version: 1, sessionId, requestId, promptHash: hash(prompt), ...parseIntent(prompt) };
+  const record = {
+    version: 1,
+    sessionId,
+    requestId,
+    promptHash: hash(prompt),
+    ...parseIntent(prompt),
+    waiver,
+    waiverAuthorityId,
+  };
   const text = JSON.stringify(record);
   const path = join(directory, `${requestId}.json`);
   await writeFile(path, text, { mode: 0o400, flag: "wx" });
@@ -117,7 +195,7 @@ export async function createRequestIntent({ sessionId, prompt }) {
   if (previous && UUID_PATTERN.test(previous.requestId)) {
     await rm(join(directory, `${previous.requestId}.json`), { force: true });
   }
-  return descriptor(record, path);
+  return descriptor(record, path, waiver);
 }
 
 export class SupersededRequestIntent extends Error {
@@ -142,11 +220,22 @@ export async function readRequestIntent(handle) {
   await privateEntry(path, false);
   const text = await readFile(path, "utf8");
   const record = JSON.parse(text);
+  const isValidStoredWaiver = record.waiver === undefined
+    ? record.waiverAuthorityId === undefined
+    : isRequestWaiver(record.waiver) && isWaiverAuthorityId(record.waiverAuthorityId);
+  let waiver;
+  if (record.waiver !== undefined && isValidStoredWaiver && record.requestId === match[2] &&
+      await isWaiverAuthorityLive(record.waiverAuthorityId)) {
+    waiver = record.waiver;
+  }
+
+  // Check that the pointer did not change while reading the record or its authority.
   const current = JSON.parse(await readFile(currentPath, "utf8"));
   if (record.version !== 1 || !UUID_PATTERN.test(record.requestId) ||
       typeof record.sessionId !== "string" || !record.sessionId.trim() || record.sessionId.length > 512 ||
       !HASH_PATTERN.test(record.promptHash) || ![...LEVELS.values()].includes(record.level) ||
       (record.diagnostic !== undefined && typeof record.diagnostic !== "string") ||
+      !isValidStoredWaiver ||
       hash(record.sessionId).slice(0, 32) !== basename(dirname(path)) || basename(path) !== `${record.requestId}.json` ||
       current.requestId !== record.requestId || current.sha256 !== hash(text)) {
     throw new Error("request intent is changed, invalid, or superseded");
@@ -157,5 +246,5 @@ export async function readRequestIntent(handle) {
     }
     throw new Error("supplied handle does not identify the current request");
   }
-  return descriptor(record, path);
+  return descriptor(record, path, waiver);
 }

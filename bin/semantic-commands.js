@@ -3,6 +3,7 @@ import { Option } from "commander";
 
 import { addReportingOptions, parseWholeNumber } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
+import { addRequestOption, resolveVerificationInvocation } from "#root/bin/request-invocation.js";
 import { validateContextPathLimit } from "#root/omp-plugin/semantic-context.js";
 import {
   completeSemanticEvaluation,
@@ -24,16 +25,16 @@ export function registerSemanticCommands(program) {
     .option("--resume", "Read the first undelivered text page of the current review")
     .addOption(new Option("--continue", "Restart the complete review as bounded batches").conflicts("batch"))
     .option("--batch <index>", "Zero-based semantic batch", parseWholeNumber);
-  addReportingOptions(review);
+  addRequestOption(addReportingOptions(review));
   review.action(reviewRequest);
 
   const evaluate = program.command("evaluate")
     .description("Complete a semantic review using a structured assessment")
     .argument("<request-file>", "Semantic request file")
     .requiredOption("--assessment <json>", "Assessment JSON, or - to read stdin");
-  addReportingOptions(evaluate, {
+  addRequestOption(addReportingOptions(evaluate, {
     failuresOnly: true,
-  });
+  }));
   evaluate.action(evaluateRequest);
 
   const diagnostics = program.command("diagnostics")
@@ -73,6 +74,12 @@ async function reviewRequest(requestPath, options) {
     maxContextPaths = validateContextPathLimit(options.maxContextPaths);
   }
 
+  const invocation = await resolveVerificationInvocation(options.request);
+  if (invocation.result) {
+    await writeResults([invocation.result], options);
+    return;
+  }
+
   const cwd = process.cwd();
   const result = await readSemanticEvaluation({
     cwd,
@@ -85,6 +92,7 @@ async function reviewRequest(requestPath, options) {
     continuation: options.continue,
     batchIndex: options.batch,
     resume: options.resume,
+    waiver: invocation.waiver,
   });
   await writeResults([result], {
     reporter: options.reporter,
@@ -94,6 +102,12 @@ async function reviewRequest(requestPath, options) {
 }
 
 async function evaluateRequest(requestPath, options) {
+  const invocation = await resolveVerificationInvocation(options.request);
+  if (invocation.result) {
+    await writeResults([invocation.result], options);
+    return;
+  }
+
   let assessmentText = options.assessment;
   if (assessmentText === "-") assessmentText = readFileSync(0, "utf8");
   const assessment = JSON.parse(assessmentText);
@@ -102,6 +116,7 @@ async function evaluateRequest(requestPath, options) {
     cwd,
     requestPath,
     assessment,
+    waiver: invocation.waiver,
   });
   await writeResults([result], {
     reporter: options.reporter,

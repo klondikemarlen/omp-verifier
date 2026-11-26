@@ -31,6 +31,7 @@ assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), [
   "uninstall",
   "generation",
   "closeout",
+  "waive",
 ]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
 

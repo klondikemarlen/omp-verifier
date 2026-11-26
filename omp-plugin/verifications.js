@@ -8,6 +8,7 @@ import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
 import { deliveryFindingEligibility, verificationScope } from "#root/omp-plugin/finding-scope.js";
 import { markVerificationTimeout, recordRestoredCheck, timeVerificationCheck, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
+import { waivedVerificationResult } from "#root/omp-plugin/waived-verification-result.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 64_000;
@@ -238,25 +239,53 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
 export async function runVerificationCheck(check, cwd, changedPaths, maxSourceBytes) {
   return runVerificationCheckWithRoot(check, cwd, changedPaths, cwd, maxSourceBytes);
 }
-export async function runVerificationChecks(checks, cwd, ids = [], maxSourceBytes) {
+export async function runVerificationChecks(checks, cwd, ids = [], maxSourceBytes, waiver) {
   const byId = new Map(checks.map(check => [check.id, check]));
   const requestedIds = [...new Set(ids)];
   const selected = requestedIds.length === 0 ? checks : requestedIds.map(id => byId.get(id)).filter(Boolean);
-  const unknown = requestedIds.filter(id => !byId.has(id)).map(id => blocked(id, "Verification check is not installed"));
+  const unknown = requestedIds.filter(id => !byId.has(id)).map(id => {
+    if (id === waiver?.id) return waivedVerificationResult(waiver);
+
+    return blocked(id, "Verification check is not installed");
+  });
+  const results = await Promise.all(selected.map(check => {
+    if (check.id === waiver?.id) return waivedVerificationResult(waiver);
+
+    return runVerificationCheck(check, cwd, undefined, maxSourceBytes);
+  }));
   return [
     ...unknown,
-    ...(await Promise.all(selected.map(check => runVerificationCheck(check, cwd, undefined, maxSourceBytes)))).filter(Boolean),
+    ...results.filter(Boolean),
   ];
 }
 
-export async function runInstalledVerificationChecks({ cwd, ids = [], packageDirectory, maxSourceBytes }) {
+export async function runInstalledVerificationChecks({ cwd, ids = [], packageDirectory, maxSourceBytes, waiver }) {
   const { checks, blockedResults } = await discoverVerificationChecks({ packageDirectory });
   const selectedBlocked = ids.length === 0 ? blockedResults : blockedResults.filter(result => ids.includes(result.id));
-  const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids, maxSourceBytes))];
+  const results = [...selectedBlocked, ...(await runVerificationChecks(checks, cwd, ids, maxSourceBytes, waiver))];
   if (results.length === 0 && checks.length === 0) {
     results.push(blocked("verifier", "No verification checks are installed"));
   }
-  return results;
+  return reportWaivedGate(results, waiver);
+}
+
+function reportWaivedGate(results, waiver) {
+  if (!waiver) return results;
+
+  const reported = [];
+  let reportedWaiver = false;
+  for (const result of results) {
+    if (result.id !== waiver.id) {
+      reported.push(result);
+      continue;
+    }
+
+    if (!reportedWaiver) {
+      reported.push(waivedVerificationResult(waiver));
+      reportedWaiver = true;
+    }
+  }
+  return reported;
 }
 
 export async function runAutomaticVerification({
@@ -270,6 +299,7 @@ export async function runAutomaticVerification({
   workLevel = "normal",
   reuseExisting = false,
   selectionReason = "automatic-normal",
+  waiver,
 }) {
   if (lintBudgetMs !== undefined) {
     validateProjectLintBudget(lintBudgetMs);
@@ -286,6 +316,11 @@ export async function runAutomaticVerification({
   const sourceRecovery = maxSourceBytes === undefined ? AUTOMATIC_SOURCE_RECOVERY : undefined;
 
   for (const { check, matches, suppressedResults } of selections) {
+    if (check.id === waiver?.id) {
+      results.push(waivedVerificationResult(waiver));
+      continue;
+    }
+
     results.push(...suppressedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
@@ -316,7 +351,7 @@ export async function runAutomaticVerification({
       scope,
     });
   }
-  return results;
+  return reportWaivedGate(results, waiver);
 }
 
 export async function runAutomaticVerificationForPaths({
@@ -330,13 +365,14 @@ export async function runAutomaticVerificationForPaths({
   workLevel,
   reuseExisting,
   selectionReason,
+  waiver,
 }) {
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
-    if (baseRef !== undefined) return [blocked("verifier:auto-selection", "Could not inspect base changes", root.error)];
+    if (baseRef !== undefined) return [automaticSelectionBlocker(waiver, "Could not inspect base changes", root.error)];
     const { checks } = await discoverVerificationChecks({ packageDirectory });
     if (!checks.some(check => check.pathTriggers)) return [];
-    return [blocked("verifier:auto-selection", "Could not inspect changed paths", root.error)];
+    return [automaticSelectionBlocker(waiver, "Could not inspect changed paths", root.error)];
   }
   let delivery;
   if (baseRef !== undefined) {
@@ -349,7 +385,7 @@ export async function runAutomaticVerificationForPaths({
       });
       changedPaths = delivery.changedPaths;
     } catch (error) {
-      return [blocked("verifier:auto-selection", "Could not inspect base changes", error.message)];
+      return [automaticSelectionBlocker(waiver, "Could not inspect base changes", error.message)];
     }
   }
   return runAutomaticVerification({
@@ -363,6 +399,7 @@ export async function runAutomaticVerificationForPaths({
     workLevel,
     reuseExisting,
     selectionReason,
+    waiver,
   });
 }
 
@@ -374,12 +411,13 @@ export async function runCurrentAutomaticVerification({
   workLevel,
   reuseExisting,
   selectionReason,
+  waiver,
 }) {
   const changeSet = await changedProjectPaths(cwd);
   if (changeSet.error) {
     const { checks } = await discoverVerificationChecks({ packageDirectory });
     if (!checks.some(check => check.pathTriggers)) return [];
-    return [blocked("verifier:auto-selection", "Could not inspect changed paths", changeSet.error)];
+    return [automaticSelectionBlocker(waiver, "Could not inspect changed paths", changeSet.error)];
   }
   if (changeSet.paths.length === 0) return [];
 
@@ -393,7 +431,15 @@ export async function runCurrentAutomaticVerification({
     workLevel,
     reuseExisting,
     selectionReason,
+    waiver,
   });
+}
+
+function automaticSelectionBlocker(waiver, summary, evidence) {
+  const id = "verifier:auto-selection";
+  if (waiver?.id === id) return waivedVerificationResult(waiver);
+
+  return blocked(id, summary, evidence);
 }
 
 

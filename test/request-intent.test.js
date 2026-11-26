@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { chmod, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import verifierPlugin from "#root/omp-plugin/index.js";
-import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
+import { createRequestIntent, openRequestWaiverAuthority, readRequestIntent } from "#root/omp-plugin/request-intent.js";
 
 async function requestFixture(t, prompt, sessionId = randomUUID()) {
   const intent = await createRequestIntent({ sessionId, prompt });
@@ -18,15 +20,36 @@ async function pluginFixture(t) {
   const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-intent-plugin-"));
   t.after(() => rm(agentDir, { recursive: true, force: true }));
   const events = new Map();
+  const commands = new Map();
   const renderers = new Map();
+  const tools = new Map();
+  const schema = {
+    min: () => schema,
+    max: () => schema,
+    describe: () => schema,
+    strict: () => schema,
+  };
   await verifierPlugin({
     setLabel() {},
     pi: { getAgentDir: () => agentDir },
     on: (event, handler) => events.set(event, handler),
-    registerCommand() {},
+    registerCommand: (name, command) => commands.set(name, command),
+    registerTool: tool => tools.set(tool.name, tool),
+    zod: {
+      string: () => schema,
+      array: () => schema,
+      object: () => schema,
+    },
     registerMessageRenderer: (type, renderer) => renderers.set(type, renderer),
   });
-  return { hook: events.get("before_agent_start"), renderers };
+  t.after(() => events.get("session_shutdown")());
+  return {
+    hook: events.get("before_agent_start"),
+    command: commands.get("verifier").handler,
+    events,
+    renderers,
+    tools,
+  };
 }
 
 const prefixCases = [
@@ -355,4 +378,324 @@ test("when a newer actual request supersedes the remembered one, revive cannot r
   assert.match(revived.message.content, /Request intent unavailable/);
   assert.equal(revived.message.content.includes("--request"), false);
   assert.equal((await readRequestIntent(newer.handle)).level, "normal");
+});
+
+test("when a persisted waiver is not an exact selector, reading rejects it even with a matching digest", async t => {
+  // Arrange
+  const { intent } = await requestFixture(t, "Normal request.");
+  const authority = await openRequestWaiverAuthority();
+  t.after(authority.close);
+  const record = JSON.parse(await readFile(intent.path, "utf8"));
+  record.waiver = "verifier:resource-closeout\n";
+  record.waiverAuthorityId = authority.id;
+  const text = JSON.stringify(record);
+  const currentPath = join(dirname(intent.path), "current.json");
+  const pointer = JSON.parse(await readFile(currentPath, "utf8"));
+  pointer.sha256 = createHash("sha256").update(text).digest("hex");
+  await chmod(intent.path, 0o600);
+  await writeFile(intent.path, text);
+  await writeFile(currentPath, JSON.stringify(pointer));
+
+  // Act
+  const reading = readRequestIntent(intent.handle);
+
+  // Assert
+  await assert.rejects(reading, /changed, invalid, or superseded/);
+});
+
+test("when creating a request with a wildcard waiver, storage refuses the waiver", async () => {
+  // Arrange
+  const request = {
+    sessionId: randomUUID(),
+    prompt: "Normal request.",
+    waiver: "*",
+  };
+
+  // Act
+  const creation = createRequestIntent(request);
+
+  // Assert
+  await assert.rejects(creation, /exact Verifier gate selector/);
+});
+
+test("when creating a request with no authority, storage refuses the waiver", async () => {
+  // Arrange
+  const request = {
+    sessionId: randomUUID(),
+    prompt: "Normal request.",
+    waiver: "verification",
+  };
+
+  // Act
+  const creation = createRequestIntent(request);
+
+  // Assert
+  await assert.rejects(creation, /requires a session authority/);
+});
+
+async function runIntentHook(t, hook, ctx, prompt) {
+  const response = await hook({
+    reason: "prompt",
+    prompt,
+    systemPrompt: [],
+  }, ctx);
+  const handle = response.message.content.match(/--request ([0-9a-f.-]+)/)[1];
+  const intent = await readRequestIntent(handle);
+  t.after(() => rm(dirname(intent.path), {
+    recursive: true,
+    force: true,
+  }));
+  return {
+    intent,
+    response,
+  };
+}
+
+test("when the user confirms a named waiver, it applies only to the next prompt and its revive", async t => {
+  // Arrange
+  const { hook, command } = await pluginFixture(t);
+  const sessionId = randomUUID();
+  let confirmation;
+  const ctx = {
+    hasUI: true,
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+    ui: {
+      async confirm(title, message) {
+        confirmation = {
+          title,
+          message,
+        };
+        return true;
+      },
+      notify() {},
+    },
+  };
+
+  // Act
+  await command("waive verifier:resource-closeout", ctx);
+
+  const { intent, response } = await runIntentHook(t, hook, ctx, "Continue cleanup.");
+
+  const revived = await hook({
+    reason: "revive",
+    prompt: "",
+    systemPrompt: [],
+  }, ctx);
+  const next = await runIntentHook(t, hook, ctx, "Continue cleanup.");
+  const readingSupersededIntent = readRequestIntent(intent.handle);
+
+  // Assert
+  assert.match(confirmation.title, /Waive a Verifier gate/);
+  assert.match(confirmation.message, /"verifier:resource-closeout" for the next prompt in this session/);
+  assert.equal(intent.waiver, "verifier:resource-closeout");
+  assert.match(response.message.content, /Verifier gate "verifier:resource-closeout" is waived by user for this request/);
+  assert.match(response.systemPrompt.join("\n"), /not merge approval/);
+  assert.equal(revived.message.content, response.message.content);
+  assert.equal(Object.hasOwn(next.intent, "waiver"), false);
+  assert.match(next.response.message.content, /Earlier waivers are not authority/);
+  await assert.rejects(readingSupersededIntent, /superseded by a later prompt/);
+});
+
+test("when the user selects live session scope, the selected gate persists in that session until it switches", async t => {
+  // Arrange
+  const { hook, command, events } = await pluginFixture(t);
+  let sessionId = randomUUID();
+  let confirmationMessage;
+  const ctx = {
+    hasUI: true,
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+    ui: {
+      async confirm(_title, message) {
+        confirmationMessage = message;
+        return true;
+      },
+      notify() {},
+    },
+  };
+
+  // Act
+  await command("waive verification --session", ctx);
+
+  const first = await runIntentHook(t, hook, ctx, "First task.");
+  const second = await runIntentHook(t, hook, ctx, "Second task.");
+
+  sessionId = randomUUID();
+  await events.get("session_switch")({}, ctx);
+  const switched = await runIntentHook(t, hook, ctx, "Unrelated task.");
+
+  // Assert
+  assert.match(confirmationMessage, /"verification" for each prompt in this live session/);
+  assert.equal(first.intent.waiver, "verification");
+  assert.equal(second.intent.waiver, "verification");
+  assert.equal(Object.hasOwn(switched.intent, "waiver"), false);
+});
+
+test("when no interactive confirmation grants a waiver, commands or lookalike chat cannot authorize one", async t => {
+  // Arrange
+  const { hook, command } = await pluginFixture(t);
+  const sessionId = randomUUID();
+  const notices = [];
+  const confirmationMessages = [];
+  const ctx = {
+    hasUI: false,
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+    ui: {
+      async confirm(_title, message) {
+        confirmationMessages.push(message);
+        return false;
+      },
+      notify(message) {
+        notices.push(message);
+      },
+    },
+  };
+  const interactiveCtx = {
+    ...ctx,
+    hasUI: true,
+  };
+
+  // Act
+  await command("waive verification", ctx);
+  await command("waive * --session", interactiveCtx);
+  await command("waive verification", interactiveCtx);
+
+  const { intent } = await runIntentHook(t, hook, interactiveCtx, "/verifier waive verification");
+
+  // Assert
+  assert.match(notices[0], /requires user confirmation in the active session UI/);
+  assert.match(notices[1], /Usage: \/verifier waive/);
+  assert.equal(notices[2], "Verifier waiver not granted.");
+  assert.equal(confirmationMessages.length, 1);
+  assert.match(confirmationMessages[0], /"verification" for the next prompt/);
+  assert.equal(Object.hasOwn(intent, "waiver"), false);
+});
+
+test("when the session resets during confirmation, a late response cannot grant a waiver", async t => {
+  // Arrange
+  const { hook, command, events } = await pluginFixture(t);
+  const sessionId = randomUUID();
+  const notices = [];
+  const ctx = {
+    hasUI: true,
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+    ui: {
+      async confirm() {
+        await events.get("session_clear")({}, ctx);
+        return true;
+      },
+      notify(message) {
+        notices.push(message);
+      },
+    },
+  };
+
+  // Act
+  await command("waive verifier:project-lint", ctx);
+  const { intent } = await runIntentHook(t, hook, ctx, "Fresh task.");
+
+  // Assert
+  assert.match(notices.at(-1), /not granted because the active session changed/);
+  assert.equal(Object.hasOwn(intent, "waiver"), false);
+});
+
+test("when a closeout waiver applies, the native closeout tool does not read a receipt or prepare a handoff", async t => {
+  // Arrange
+  const { hook, command, events, tools } = await pluginFixture(t);
+  const sessionId = randomUUID();
+  const ctx = {
+    agent: {
+      kind: "main",
+    },
+    hasUI: true,
+    sessionManager: {
+      getSessionId: () => sessionId,
+    },
+    ui: {
+      async confirm() {
+        return true;
+      },
+      notify() {},
+    },
+  };
+  await command("waive verifier:resource-closeout", ctx);
+  const { intent } = await runIntentHook(t, hook, ctx, "Continue cleanup.");
+  const closeout = tools.get("verifier_closeout");
+
+  // Act
+  const result = await closeout.execute("call-id", {
+    repositoryRoot: "/nonexistent-waived-repository",
+    receiptPaths: ["/nonexistent-waived-receipt"],
+  }, undefined, undefined, ctx);
+  await events.get("session_shutdown")({}, ctx);
+  const expiredIntent = await readRequestIntent(intent.handle);
+
+  // Assert
+  assert.equal(result.details.status, "WAIVED");
+  assert.equal(result.details.handoffId, undefined);
+  assert.deepEqual(result.details.receipts, []);
+  assert.match(result.content[0].text, /waived by user for this request/);
+
+  assert.equal(Object.hasOwn(expiredIntent, "waiver"), false);
+});
+
+test("when the host dies unexpectedly, the persisted handle no longer authorizes a waiver", async t => {
+  // Arrange
+  const intentModule = new URL("../omp-plugin/request-intent.js", import.meta.url);
+  const script = `
+    import { createRequestIntent, openRequestWaiverAuthority } from ${JSON.stringify(intentModule.href)};
+    const authority = await openRequestWaiverAuthority();
+    const intent = await createRequestIntent({
+      sessionId: ${JSON.stringify(randomUUID())},
+      prompt: "Continue cleanup.",
+      waiver: "verifier:resource-closeout",
+      waiverAuthorityId: authority.id,
+    });
+    process.stdout.write(JSON.stringify({
+      handle: intent.handle,
+      path: intent.path,
+      authorityId: authority.id,
+    }));
+    process.stdin.resume();
+  `;
+  const child = spawn(process.execPath, ["--input-type=module", "--eval", script]);
+  const exited = once(child, "exit");
+  t.after(async () => {
+    child.kill();
+    await exited;
+  });
+  const [data] = await Promise.race([
+    once(child.stdout, "data"),
+    exited.then(([code]) => {
+      throw new Error(`Waiver fixture process exited before showing its handle (status ${code}).`);
+    }),
+  ]);
+  const { handle, path, authorityId } = JSON.parse(data);
+  const requestDirectory = dirname(path);
+  t.after(async () => {
+    await rm(requestDirectory, {
+      recursive: true,
+      force: true,
+    });
+    await rm(join(dirname(requestDirectory), `${authorityId}.sock`), {
+      force: true,
+    });
+  });
+
+  // Act
+  const liveIntent = await readRequestIntent(handle);
+  child.kill("SIGKILL");
+  await exited;
+  const expiredIntent = await readRequestIntent(handle);
+
+  // Assert
+  assert.equal(liveIntent.waiver, "verifier:resource-closeout");
+  assert.equal(Object.hasOwn(expiredIntent, "waiver"), false);
 });

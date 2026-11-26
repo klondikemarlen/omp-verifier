@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+
+import { createRequestIntent, openRequestWaiverAuthority } from "#root/omp-plugin/request-intent.js";
 
 const cliPath = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const activeId = "11111111-1111-4111-8111-111111111111";
@@ -33,10 +36,28 @@ async function cliFixture(context) {
     });
   }
 
+  async function intent(waiver) {
+    const authority = await openRequestWaiverAuthority();
+    context.after(authority.close);
+
+    const result = await createRequestIntent({
+      sessionId: randomUUID(),
+      prompt: `/verifier waive ${waiver}`,
+      waiver,
+      waiverAuthorityId: authority.id,
+    });
+    context.after(() => rm(dirname(result.path), {
+      recursive: true,
+      force: true,
+    }));
+    return result;
+  }
+
   return {
     root,
     runtimeRoot,
     run,
+    intent,
   };
 }
 
@@ -182,4 +203,59 @@ test("when closeout inputs or prerequisites are missing, invocation errors remai
     assert.equal(blocked.id, "verifier:resource-closeout");
     assert.equal(blocked.status, "BLOCKED");
   }
+});
+
+test("when the user waives closeout preparation, no declaration or receipt is required", async context => {
+  // Arrange
+  const { root, run, intent } = await cliFixture(context);
+  const path = join(root, "missing.json");
+  const request = await intent("verifier:resource-closeout");
+
+  // Act
+  const result = run("closeout", "prepare", path, "--request", request.handle);
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    {
+      id: "verifier:resource-closeout",
+      status: "WAIVED",
+      summary: "Verification waived by user; no verdict was produced",
+      evidence: `User authorization in request ${request.requestId}.`,
+    },
+  ]);
+});
+
+test("when a failed closeout verification is waived, failures-only still reports the waiver", async context => {
+  // Arrange
+  const { root, run, intent } = await cliFixture(context);
+  const missingPath = join(root, "missing.json");
+  const request = await intent("verifier:resource-closeout");
+  const historical = run("closeout", "verify", missingPath);
+
+  // Act
+  const result = run("closeout", "verify", missingPath, "--request", request.handle, "--failures-only", "--reporter", "text");
+
+  // Assert
+  assert.equal(historical.status, 1, historical.stderr);
+  assert.equal(JSON.parse(historical.stdout)[0].status, "BLOCKED");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^WAIVED verifier:resource-closeout\n\s*Verification waived by user/);
+});
+
+test("when the user waives a handoff check, it does not update or release the handoff evidence", async context => {
+  // Arrange
+  const { root, run, intent } = await cliFixture(context);
+  const handoffPath = join(root, "handoff.json");
+  const evidence = "prior delivery evidence\n";
+  await writeFile(handoffPath, evidence);
+  const request = await intent("verifier:delivery-handoff");
+
+  // Act
+  const result = run("handoff", "check", handoffPath, "--request", request.handle);
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout)[0].status, "WAIVED");
+  assert.equal(await readFile(handoffPath, "utf8"), evidence);
 });

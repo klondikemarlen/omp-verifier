@@ -23,6 +23,12 @@ Verifier checks code adherence, not whether a human correction has been recorded
 
 For routine development, use current check results to guide repairs and request a fresh scoped recheck after fixing a reported problem. Silence alone is not proof that a check ran. Verifier is an advisory development aid, not a fail-closed completion gate: [automatic repair reassessment](https://github.com/klondikemarlen/omp-verifier/issues/150), [literal evidence relay](https://github.com/klondikemarlen/omp-verifier/issues/171), and [context exhaustion during long reviews](https://github.com/klondikemarlen/omp-verifier/issues/206) remain known native-advisor limitations. Missing prerequisites remain BLOCKED, not approval.
 
+### Waive a Verifier gate
+
+To continue without a Verifier closeout receipt, enter `/verifier waive verifier:resource-closeout`, confirm the waiver, then submit the prompt requesting cleanup. By default the waiver applies to that prompt only. For repeated work in the same live session, explicitly append `--session`.
+
+Use an installed check ID to waive only that check, or `verification` to waive the whole verification run. A waiver records **waived by user**. It neither erases earlier findings nor satisfies CI, branch protections, or filesystem permissions.
+
 ## Install
 
 ```bash

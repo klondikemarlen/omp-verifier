@@ -30,7 +30,7 @@ export async function writeResults(results, {
   let reported = results;
   if (failuresOnly) {
     reported = results.filter(result =>
-      ["FAIL", "BLOCKED", "PENDING", "SUPERSEDED"].includes(result.status),
+      ["FAIL", "BLOCKED", "PENDING", "SUPERSEDED", "WAIVED"].includes(result.status),
     );
   }
 

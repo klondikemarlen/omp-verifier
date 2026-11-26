@@ -18,7 +18,7 @@ const execFileAsync = promisify(execFile);
 const DELIVERY_DIRECTORY = resolve(tmpdir(), `omp-verifier-deliveries-${process.getuid?.() ?? "user"}`);
 const ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-const CHECK_STATUSES = new Set(["PASS", "FAIL", "BLOCKED", "SUPPRESSED", "PENDING"]);
+const CHECK_STATUSES = new Set(["PASS", "FAIL", "BLOCKED", "SUPPRESSED", "PENDING", "WAIVED"]);
 const GIT_SCOPE_ENVIRONMENT = [
   "GIT_DIR",
   "GIT_WORK_TREE",
@@ -433,7 +433,7 @@ function mergeCheckResults(results, retainedBlockers) {
   return [...missingBlockers, ...results];
 }
 
-export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBudgetMs }) {
+export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBudgetMs, waiver }) {
   if (lintBudgetMs !== undefined) {
     validateProjectLintBudget(lintBudgetMs);
   }
@@ -444,7 +444,7 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBud
     }
 
     const previous = record.verification;
-    if (previous?.status === "COMPLETE") {
+    if (previous?.status === "COMPLETE" && !waiver) {
       delete record.verification;
       await writeRecord(handoffPath, record);
     }
@@ -456,20 +456,7 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBud
     const packageDirectory = resolve(defaultPackageDirectory());
     const generation = await verificationGeneration(packageDirectory);
     const continuesDelivery = previous?.status === "PENDING" && isDeepStrictEqual(previous.checkout, checkout);
-    const scope = {
-      base: record.baseCommit,
-      tip: record.tipCommit,
-      handoff: record.id,
-      lintBudgetMs,
-    };
-    const results = await withVerificationRestart({
-      cwd: checkout.path,
-      command: "handoff check",
-      scope,
-      packageDirectory,
-      signal: verificationCancellationSignal(),
-      fresh,
-    }, () => runAutomaticVerificationForPaths({
+    const execute = () => runAutomaticVerificationForPaths({
       cwd: checkout.path,
       changedPaths: record.changedPaths,
       baseRef: record.baseCommit,
@@ -478,7 +465,26 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBud
       workLevel: "normal",
       reuseExisting: !fresh && continuesDelivery && previous.generation === generation,
       selectionReason: "full-delivery",
-    }));
+      waiver,
+    });
+    let results;
+    if (waiver) {
+      results = await execute();
+    } else {
+      results = await withVerificationRestart({
+        cwd: checkout.path,
+        command: "handoff check",
+        scope: {
+          base: record.baseCommit,
+          tip: record.tipCommit,
+          handoff: record.id,
+          lintBudgetMs,
+        },
+        packageDirectory,
+        signal: verificationCancellationSignal(),
+        fresh,
+      }, execute);
+    }
     validateCheckResults(results, record, checkout);
     await validateRepository(record);
     await validateCheckedCheckout(record, checkout);
@@ -489,6 +495,12 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBud
     const hasPendingAssessment = results.some(result => result.status === "PENDING");
     const retainedBlockers = continuesDelivery ? previous.blockers : [];
     const report = mergeCheckResults(results, retainedBlockers);
+    if (report.some(result => result.status === "WAIVED")) {
+      // An invocation waiver is not a completion receipt. Keep prior evidence
+      // on disk, but don't return it as a current blocker for the waived gate.
+      return report.filter(result => result.id !== waiver.id || result.status === "WAIVED");
+    }
+
     record.verification = {
       status: hasPendingAssessment ? "PENDING" : "COMPLETE",
       checkout,
