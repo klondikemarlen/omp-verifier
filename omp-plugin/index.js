@@ -194,6 +194,7 @@ function logStartupTiming(pi, phase, startedAt) {
   try {
     const logger = pi.logger;
     if (!logger) return;
+
     const durationMs = Math.round(performance.now() - startedAt);
     logger.debug("verifier.startup-timing", {
       phase,
