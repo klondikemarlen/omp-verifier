@@ -280,6 +280,8 @@ console.log(JSON.stringify({
   assert.match(blockedLint.summary, /Shared project lint budget of 1 ms expired; Never started: javascript \(\.\)/);
   assert.match(blockedLint.nextCheck, /For `automatic --full`, retry the same request and scope.*--lint-budget-ms/);
   assert.match(blockedLint.evidence, /\b1\s*ms\b/i);
+  assert.match(blockedLint.lintVerdicts, /BLOCKED — lint did not complete · javascript \(\.\)/);
+  assert.match(blockedLint.lintVerdicts, /Next: retry the same scope with a larger lint budget/);
 
   assert.match(constrained.stderr, /verifier:project-lint returned BLOCKED/);
   assert.match(recovered.stderr, /verifier:project-lint returned PASS/);

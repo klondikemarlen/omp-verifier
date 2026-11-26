@@ -7,6 +7,7 @@ import {
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
+import { presentLintAdvisor } from "#root/omp-plugin/lint-presentation.js";
 import { registerAdvisorCheckWidget } from "#root/omp-plugin/register-advisor-check-widget.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import {
@@ -219,6 +220,7 @@ export default async function verifierPlugin(pi) {
   const loadStartedAt = performance.now();
   pi.setLabel("Verifier");
   registerAdvisorCheckWidget(pi);
+  pi.registerTranscriptPresenter?.(presentLintAdvisor);
   let currentIntent;
   let currentSessionId;
   if (pi.registerTool) {

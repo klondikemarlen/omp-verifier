@@ -1,3 +1,4 @@
+import { LINT_EVIDENCE, LINT_VERDICTS } from "#root/omp-plugin/lint-presentation.js";
 import { resumeReviewCommand } from "#root/omp-plugin/semantic-review-pages.js";
 
 function indented(value) {
@@ -63,7 +64,11 @@ function formatVerificationResult(result) {
     lines.push(`  Reviewer action: ${resumeReviewCommand(result.reviewRequest.path)}`);
   }
 
-  if (result.evidence) {
+  if (result.lintVerdicts && result.evidence) {
+    const verdicts = result.lintVerdicts.replaceAll("\n", "\n  ");
+    const evidence = result.evidence.replaceAll("\n", "\n  ");
+    lines.push(`  ${LINT_VERDICTS}\n  ${verdicts}\n  ${LINT_EVIDENCE}\n  ${evidence}`);
+  } else if (result.evidence) {
     lines.push(`  Evidence: ${indented(result.evidence)}`);
   }
 

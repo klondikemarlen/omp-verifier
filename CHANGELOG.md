@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.32.0 - 2026-11-26
+
+- When transcript presenters are enabled, the primary terminal can show a compact project-lint verdict. Expand the same note with Ctrl+O to inspect the retained evidence.
+
 ## 1.31.1 - 2026-11-26
 
 - Verbose lint commands can finish after the retained output limit is reached. Reports distinguish truncated evidence from an interrupted process and no longer list every input filename as evidence of failure.
