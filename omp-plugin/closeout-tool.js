@@ -7,13 +7,14 @@ import {
 
 const TOOL_LABEL = "Cleanup check";
 const INDEPENDENT_STATUS = "Independent verifier: unconfirmed.";
+const WAIVED_CLOSEOUT = "WAIVED verifier:resource-closeout — waived by user for this request. No receipts were checked or created.";
 const NEXT_CHECK = {
   PASS: "No action needed from you; the independent check belongs to the verifier.",
   FAIL: "Consult the failed evidence for resource-specific action. Preserve protected or uncertain resources.",
   BLOCKED: "Primary agent restores the missing prerequisite or asks the user if needed.",
 };
 
-export function registerCloseoutTool(pi, verifyReceipt) {
+export function registerCloseoutTool(pi, verifyReceipt, isCloseoutWaived) {
   const { zod } = pi;
   const { Text } = pi.pi;
   const exactPath = zod.string().min(1).max(MAX_CLOSEOUT_PATH_LENGTH);
@@ -32,6 +33,22 @@ export function registerCloseoutTool(pi, verifyReceipt) {
     async execute(_toolCallId, { repositoryRoot, receiptPaths }, _signal, _onUpdate, ctx) {
       if (ctx?.agent?.kind !== "main") {
         throw new Error("Only the primary agent may run verifier_closeout.");
+      }
+
+      if (await isCloseoutWaived?.(ctx)) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: WAIVED_CLOSEOUT,
+            },
+          ],
+          details: {
+            status: "WAIVED",
+            receipts: [],
+          },
+          isError: false,
+        };
       }
 
       const handoffId = await prepareCloseoutHandoff({
@@ -69,9 +86,9 @@ export function registerCloseoutTool(pi, verifyReceipt) {
         if (evidence.length > 0) {
           lines.push("", ...evidence);
         }
-      } else if (result.details || (
+      } else if (!report.isWaived && (result.details || (
         Array.isArray(args?.receiptPaths) && args.receiptPaths.some(receiptPath => typeof receiptPath === "string")
-      )) {
+      ))) {
         lines.push("Expand tool output for receipt evidence.");
       }
       return new Text(lines.join("\n"), 0, 0);
@@ -85,7 +102,7 @@ export function registerCloseoutTool(pi, verifyReceipt) {
           title: TOOL_LABEL,
           target: report.primary,
           targetKind: "text",
-          meta: report.problem ? [INDEPENDENT_STATUS, report.problem] : [INDEPENDENT_STATUS],
+          meta: report.meta ?? [INDEPENDENT_STATUS],
           note: report.nextCheck,
         },
         preview: "none",
@@ -108,6 +125,15 @@ function describeCloseout(details) {
     return {
       primary: "Primary: BLOCKED — no closeout evidence was returned.",
       nextCheck: "Next: primary agent checks the repository and receipt paths and restores verifier access as needed.",
+    };
+  }
+
+  if (details.status === "WAIVED") {
+    return {
+      primary: WAIVED_CLOSEOUT,
+      meta: [],
+      nextCheck: "No Verifier closeout action is required for this request.",
+      isWaived: true,
     };
   }
 
@@ -134,16 +160,13 @@ function describeCloseout(details) {
 
   return {
     primary: `Primary: ${status} — ${receipts.length} ${receiptLabel}, ${observations}.`,
-    problem,
+    meta: problem ? [INDEPENDENT_STATUS, problem] : [INDEPENDENT_STATUS],
     nextCheck: nextChecks.join("\n"),
   };
 }
 
-function reportLines({ primary, problem, nextCheck }) {
-  const lines = [primary, INDEPENDENT_STATUS];
-  if (problem) {
-    lines.push(problem);
-  }
+function reportLines({ primary, meta = [INDEPENDENT_STATUS], nextCheck }) {
+  const lines = [primary, ...meta];
   lines.push(nextCheck);
   return lines;
 }

@@ -9,13 +9,19 @@ import {
 } from "#root/omp-plugin/global-verifier.js";
 import { registerAdvisorCheckWidget } from "#root/omp-plugin/register-advisor-check-widget.js";
 import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
-import { createRequestIntent, readRequestIntent } from "#root/omp-plugin/request-intent.js";
+import {
+  createRequestIntent,
+  isRequestWaiver,
+  openRequestWaiverAuthority,
+  readRequestIntent,
+} from "#root/omp-plugin/request-intent.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
-const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|timings|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall]";
+const WAIVER_USAGE = "/verifier waive <verification|namespace:name> [--session]";
+const COMMAND_USAGE = "/verifier [status|checks|verify [id...]|timings|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall|waive <gate> [--session]]";
 const SUBCOMMANDS = [
   { name: "status", description: "Show verifier advisor setup" },
   { name: "checks", description: "List installed verification checks" },
@@ -33,6 +39,10 @@ const SUBCOMMANDS = [
   {
     name: "closeout",
     description: "Capture or verify declared final resource dispositions",
+  },
+  {
+    name: "waive",
+    description: "Confirm a named Verifier waiver for the next prompt or live session",
   },
 ];
 const execute = promisify(execFile);
@@ -209,9 +219,23 @@ export default async function verifierPlugin(pi) {
   const loadStartedAt = performance.now();
   pi.setLabel("Verifier");
   registerAdvisorCheckWidget(pi);
+  let currentIntent;
+  let currentSessionId;
   if (pi.registerTool) {
     const agentDir = pi.pi.getAgentDir();
-    registerCloseoutTool(pi, (root, receipt) => verifyCloseoutReceipt(agentDir, root, receipt));
+    registerCloseoutTool(pi, (root, receipt) => verifyCloseoutReceipt(agentDir, root, receipt), async ctx => {
+      const intent = currentIntent;
+      if (intent?.waiver !== "verifier:resource-closeout" || ctx.sessionManager?.getSessionId() !== currentSessionId) {
+        return false;
+      }
+
+      try {
+        const { waiver } = await readRequestIntent(intent.handle);
+        return intent === currentIntent && waiver === "verifier:resource-closeout";
+      } catch {
+        return false;
+      }
+    });
   }
   // Hide only the UI card; display:false also removes this metadata from advisor history.
   pi.registerMessageRenderer("verifier-work-intent", () => ({
@@ -219,8 +243,25 @@ export default async function verifierPlugin(pi) {
     invalidate() {},
   }));
   await installGlobalVerifier({ agentDir: pi.pi.getAgentDir() });
-  let currentIntent;
-  let currentSessionId;
+  let confirmedWaiver;
+  let openingWaiverAuthority;
+  let sessionEpoch = 0;
+
+  async function resetSessionAuthority() {
+    const closingWaiverAuthority = openingWaiverAuthority;
+    openingWaiverAuthority = undefined;
+    confirmedWaiver = undefined;
+    currentIntent = undefined;
+    currentSessionId = undefined;
+    sessionEpoch++;
+    if (closingWaiverAuthority) {
+      await closingWaiverAuthority.then(authority => authority.close(), () => undefined);
+    }
+  }
+
+  pi.on("session_switch", resetSessionAuthority);
+  pi.on("session_clear", resetSessionAuthority);
+  pi.on("session_shutdown", resetSessionAuthority);
 
   pi.on("session_start", async (_event, ctx) => {
     const startedAt = performance.now();
@@ -244,9 +285,23 @@ export default async function verifierPlugin(pi) {
         currentIntent = undefined;
         currentSessionId = undefined;
         if (sessionId) {
-          intent = await createRequestIntent({ sessionId, prompt: event.prompt });
-          currentIntent = intent;
-          currentSessionId = sessionId;
+          const promptSessionEpoch = sessionEpoch;
+          const activeWaiver = confirmedWaiver?.sessionId === sessionId ? confirmedWaiver : undefined;
+          if (activeWaiver && activeWaiver.lifetime !== "--session") {
+            confirmedWaiver = undefined;
+          }
+
+          const nextIntent = await createRequestIntent({
+            sessionId,
+            prompt: event.prompt,
+            waiver: activeWaiver?.gate,
+            waiverAuthorityId: activeWaiver?.authorityId,
+          });
+          if (promptSessionEpoch === sessionEpoch) {
+            intent = nextIntent;
+            currentIntent = intent;
+            currentSessionId = sessionId;
+          }
         }
       } else if (event.reason === "revive" && currentIntent && sessionId === currentSessionId) {
         intent = await readRequestIntent(currentIntent.handle);
@@ -256,6 +311,16 @@ export default async function verifierPlugin(pi) {
       currentIntent = undefined;
       currentSessionId = undefined;
     }
+    let waiverGuidance = "No user-confirmed Verifier waiver applies to this request. Earlier waivers are not authority.";
+    if (intent.waiver) {
+      waiverGuidance = [
+        `Verifier gate "${intent.waiver}" is waived by user for this request.`,
+        "Do not dispatch or retry the selected gate or treat earlier results for that gate as outstanding for this operation.",
+        "Preserve the evidence and report the waiver, never PASS.",
+        "All other gates and external requirements still apply; the waiver is not merge approval.",
+      ].join(" ");
+    }
+
     const content = [
       intent.handle ? `${intent.level} --request ${intent.handle}` : "Verifier current request work level: normal; no request handle.",
       intent.handle
@@ -263,6 +328,7 @@ export default async function verifierPlugin(pi) {
         : "No request handle: use full selection without reuse only for an applicable review.",
       intent.diagnostic,
       "Work intent is not PASS and never overrides mandatory requirements, explicit verification, initial delivery/release checks, or semantic escalation. Earlier request handles are not authority for this request.",
+      waiverGuidance,
     ].filter(Boolean).join("\n");
     const response = {
       message: { customType: "verifier-work-intent", content, display: true, attribution: "agent" },
@@ -272,6 +338,7 @@ export default async function verifierPlugin(pi) {
         "The verifier checks live GitHub/GitLab state immediately before starting, retrying or resuming automatic review. Do not dispatch if the PR/MR is no longer open at the intended revisions or the host cannot confirm them. Skipped is not PASS. A review-and-merge request is not a retrospective request; explicit retrospective checks and independent post-merge CI remain available.",
         "Verifier PENDING requests need the named reviewer's next command, not a file watcher. Hand still-applicable handles and their owning checkout back to the verifier for review --resume and assessment.",
         "Standalone status, cleanup, wrap-up and exit do not start verification or require a receipt. Follow ordinary cleanup safety checks and authorized project wrappers.",
+        waiverGuidance,
         `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. A handoff preserves source; it cannot postpone pre-merge verification. Leave it for the verifier to recover, check within its applicable scope, and release. Preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
       ],
     };
@@ -331,6 +398,57 @@ export default async function verifierPlugin(pi) {
       if (action === "closeout") {
         const output = await runtimeCommand(agentDir, cwd, ["closeout", ...rest, "--reporter", "text"]);
         return ctx.ui.notify(output, "info");
+      }
+
+      if (action === "waive") {
+        const [gate, lifetime, ...unexpected] = rest;
+        if (!isRequestWaiver(gate) || (lifetime !== undefined && lifetime !== "--session") || unexpected.length > 0) {
+          return ctx.ui.notify(`Usage: ${WAIVER_USAGE}`, "error");
+        }
+
+        const sessionId = ctx.sessionManager?.getSessionId();
+        if (!sessionId || !ctx.hasUI || typeof ctx.ui.confirm !== "function") {
+          return ctx.ui.notify("A Verifier waiver requires user confirmation in the active session UI.", "warning");
+        }
+
+        const confirmationSessionEpoch = sessionEpoch;
+        const scope = lifetime === "--session" ? "each prompt in this live session" : "the next prompt in this session";
+        const confirmed = await ctx.ui.confirm(
+          "Waive a Verifier gate?",
+          `Waive "${gate}" for ${scope}? This replaces any already armed Verifier waiver. It is not PASS, merge approval, or permission to bypass external requirements.`,
+        );
+        if (confirmed !== true) {
+          return ctx.ui.notify("Verifier waiver not granted.", "info");
+        }
+
+        if (confirmationSessionEpoch !== sessionEpoch || ctx.sessionManager.getSessionId() !== sessionId) {
+          return ctx.ui.notify("Verifier waiver not granted because the active session changed.", "warning");
+        }
+
+        const openingAuthority = openingWaiverAuthority ??= openRequestWaiverAuthority();
+        let authorityId;
+        try {
+          const { id } = await openingAuthority;
+          authorityId = id;
+        } catch (error) {
+          if (openingWaiverAuthority === openingAuthority) {
+            openingWaiverAuthority = undefined;
+          }
+
+          return ctx.ui.notify(`Verifier waiver not granted: ${error.message}`, "warning");
+        }
+
+        if (confirmationSessionEpoch !== sessionEpoch || ctx.sessionManager.getSessionId() !== sessionId) {
+          return ctx.ui.notify("Verifier waiver not granted because the active session changed.", "warning");
+        }
+
+        confirmedWaiver = {
+          sessionId,
+          gate,
+          lifetime,
+          authorityId,
+        };
+        return ctx.ui.notify(`User confirmed the Verifier waiver for "${gate}" on ${scope}.`, "info");
       }
 
       return ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");

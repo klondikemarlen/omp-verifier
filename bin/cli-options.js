@@ -8,7 +8,7 @@ export function addReportingOptions(command, { failuresOnly = false } = {}) {
     .default("json");
   command.addOption(reporter);
   if (failuresOnly) {
-    command.option("--failures-only", "omit successful final results; retain pending reviews");
+    command.option("--failures-only", "omit successful final results; retain pending reviews and waivers");
   }
   return command;
 }

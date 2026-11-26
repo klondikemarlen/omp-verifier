@@ -2,6 +2,7 @@ import { InvalidArgumentError } from "commander";
 
 import { addReportingOptions, parseLintBudget } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
+import { addRequestOption, resolveVerificationInvocation } from "#root/bin/request-invocation.js";
 import { readCloseoutHandoff } from "#root/omp-plugin/closeout-handoff.js";
 import {
   checkDeliveryHandoff,
@@ -12,6 +13,7 @@ import {
 import { prepareResourceCloseout, verifyResourceCloseout } from "#root/omp-plugin/resource-closeout.js";
 import { timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { generationCommand } from "#root/omp-plugin/runtime-generations.js";
+import { waivedVerificationResult } from "#root/omp-plugin/waived-verification-result.js";
 
 export function registerLifecycleCommands(program) {
   const generation = addReportingOptions(program.command("generation"))
@@ -46,9 +48,9 @@ export function registerLifecycleCommands(program) {
     .description("Recover the exact pinned delivery source without substituting another checkout")
     .action(recoverHandoff);
 
-  addReportingOptions(handoff.command("check <handoff-file>"), {
+  addRequestOption(addReportingOptions(handoff.command("check <handoff-file>"), {
     failuresOnly: true,
-  })
+  }))
     .description("Check the pinned delivery and retain it while assessments are outstanding")
     .option("--fresh", "discard saved work from an interrupted matching run")
     .option("--lint-budget-ms <milliseconds>", "shared project lint budget (1–600000)", parseLintBudget)
@@ -66,19 +68,19 @@ export function registerLifecycleCommands(program) {
   const closeout = program.command("closeout")
     .description("Declare owned and protected resources, then verify their final dispositions");
 
-  addReportingOptions(closeout.command("prepare <declaration.json>"))
+  addRequestOption(addReportingOptions(closeout.command("prepare <declaration.json>")))
     .description("Capture a resource declaration before authorized cleanup or retention; preparation is not PASS")
     .action(prepareCloseout);
 
-  addReportingOptions(closeout.command("verify <receipt.json>"), {
+  addRequestOption(addReportingOptions(closeout.command("verify <receipt.json>"), {
     failuresOnly: true,
-  })
+  }))
     .description("Check fresh resource observations against the prepared closeout receipt")
     .action(verifyCloseout);
 
-  addReportingOptions(closeout.command("review <handoff-id>"), {
+  addRequestOption(addReportingOptions(closeout.command("review <handoff-id>"), {
     failuresOnly: true,
-  })
+  }))
     .description("Independently recheck the exact receipt set declared by the primary tool")
     .action(reviewCloseout);
 }
@@ -133,6 +135,12 @@ async function recoverHandoff(handoffPath, options) {
 }
 
 async function checkHandoff(handoffPath, options) {
+  const { result, waiver } = await resolveVerificationInvocation(options.request, "verifier:delivery-handoff");
+  if (result) {
+    await writeResults([result], options);
+    return;
+  }
+
   const cwd = process.cwd();
   const results = await timeVerificationRun(cwd, "handoff check", async () => {
     try {
@@ -140,6 +148,7 @@ async function checkHandoff(handoffPath, options) {
         handoffPath,
         fresh: options.fresh,
         lintBudgetMs: options.lintBudgetMs,
+        waiver,
       });
     } catch (error) {
       return [handoffBlocker(error)];
@@ -190,6 +199,14 @@ function handoffBlocker(error) {
 }
 
 async function prepareCloseout(declarationPath, options) {
+  const { result: disposition } = await resolveVerificationInvocation(options.request, "verifier:resource-closeout", {
+    allowWholeRunWaiver: false,
+  });
+  if (disposition) {
+    await writeResults([disposition], options);
+    return;
+  }
+
   const cwd = process.cwd();
   const result = await prepareResourceCloseout({
     cwd,
@@ -205,6 +222,14 @@ async function prepareCloseout(declarationPath, options) {
 }
 
 async function verifyCloseout(receiptPath, options) {
+  const { result: disposition } = await resolveVerificationInvocation(options.request, "verifier:resource-closeout", {
+    allowWholeRunWaiver: false,
+  });
+  if (disposition) {
+    await writeResults([disposition], options);
+    return;
+  }
+
   const cwd = process.cwd();
   const result = await verifyResourceCloseout({
     cwd,
@@ -214,10 +239,23 @@ async function verifyCloseout(receiptPath, options) {
 }
 
 async function reviewCloseout(handoffId, options) {
+  const { result, waiver } = await resolveVerificationInvocation(options.request, "verifier:resource-closeout", {
+    allowWholeRunWaiver: false,
+  });
+  if (result) {
+    await writeResults([result], options);
+    return;
+  }
+
   let handoff;
   try {
     handoff = await readCloseoutHandoff(handoffId);
   } catch (error) {
+    if (waiver?.id === "verifier:closeout-handoff") {
+      await writeResults([waivedVerificationResult(waiver)], options);
+      return;
+    }
+
     await writeResults([{
       id: "verifier:closeout-handoff",
       status: "BLOCKED",

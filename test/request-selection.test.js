@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 
-import { createRequestIntent } from "#root/omp-plugin/request-intent.js";
+import { createRequestIntent, openRequestWaiverAuthority } from "#root/omp-plugin/request-intent.js";
 
 const REPOSITORY_ROOT = process.cwd();
 const CLI = join(REPOSITORY_ROOT, "bin/omp-verifier.js");
@@ -37,9 +37,24 @@ async function fixture(t) {
     encoding: "utf8",
   });
   const sessionId = randomUUID();
-  const intent = async prompt => {
-    const result = await createRequestIntent({ sessionId, prompt });
-    t.after(() => rm(dirname(result.path), { recursive: true, force: true }));
+  const intent = async (prompt, waiver) => {
+    let waiverAuthorityId;
+    if (waiver) {
+      const authority = await openRequestWaiverAuthority();
+      t.after(authority.close);
+      waiverAuthorityId = authority.id;
+    }
+
+    const result = await createRequestIntent({
+      sessionId,
+      prompt,
+      waiver,
+      waiverAuthorityId,
+    });
+    t.after(() => rm(dirname(result.path), {
+      recursive: true,
+      force: true,
+    }));
     return result;
   };
   return {
@@ -302,6 +317,123 @@ test("when the automatic lint budget is out of range or lacks --full, no checks 
     assert.equal(result.stdout, "");
     assert.match(result.stderr, /--lint-budget-ms/);
   }
+  await assert.rejects(readFile(join(project, "executed.txt")), {
+    code: "ENOENT",
+  });
+});
+
+test("when the current user waives the whole run, full automatic verification does not dispatch any check", async t => {
+  const { project, run, intent } = await fixture(t);
+  const request = await intent("/verifier waive verification", "verification");
+
+  const result = run("automatic", "source.js", "--request", request.handle, "--full", "--failures-only");
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    {
+      id: "verification",
+      status: "WAIVED",
+      summary: "Verification waived by user; no verdict was produced",
+      evidence: `User authorization in request ${request.requestId}.`,
+    },
+  ]);
+  await assert.rejects(readFile(join(project, "executed.txt")), {
+    code: "ENOENT",
+  });
+});
+
+test("when the user waives source verification, a separately requested closeout still runs", async t => {
+  const { project, run, intent } = await fixture(t);
+  const request = await intent("/verifier waive verification", "verification");
+
+  const result = run("automatic", "source.js", "--closeout", "unavailable.json", "--request", request.handle);
+
+  assert.equal(result.status, 1, result.stderr);
+  const outcomes = JSON.parse(result.stdout).map(({ id, status }) => [id, status]);
+  assert.deepEqual(outcomes, [
+    ["verification", "WAIVED"],
+    ["verifier:resource-closeout", "BLOCKED"],
+  ]);
+  await assert.rejects(readFile(join(project, "executed.txt")), {
+    code: "ENOENT",
+  });
+});
+
+test("when the user waives one automatic check, unwaived project requirements still run", async t => {
+  const { project, run, intent } = await fixture(t);
+  await writeFile(join(project, ".omp-verifier.json"), JSON.stringify({
+    requirements: [
+      {
+        id: "publisher:required",
+        path: "**/*.js",
+      },
+    ],
+  }));
+  const request = await intent("/verifier waive publisher:optional", "publisher:optional");
+
+  const result = run("automatic", "source.js", "--request", request.handle, "--full", "--failures-only");
+
+  assert.equal(result.status, 1, result.stderr);
+  const outcomes = JSON.parse(result.stdout).map(({ id, status }) => [id, status]);
+  assert.deepEqual(outcomes.sort(), [
+    ["publisher:optional", "WAIVED"],
+    ["publisher:required", "FAIL"],
+  ]);
+  assert.equal(await readFile(join(project, "executed.txt"), "utf8"), "required\n");
+});
+
+test("when the user waives closeout in a combined run, source checks still run", async t => {
+  const { project, run, intent } = await fixture(t);
+  const request = await intent("/verifier waive verifier:resource-closeout", "verifier:resource-closeout");
+
+  const result = run("automatic", "source.js", "--closeout", "unavailable.json", "--request", request.handle);
+
+  assert.equal(result.status, 1, result.stderr);
+  const outcomes = JSON.parse(result.stdout).map(({ id, status }) => [id, status]);
+  assert.deepEqual(outcomes, [
+    ["publisher:optional", "FAIL"],
+    ["verifier:resource-closeout", "WAIVED"],
+  ]);
+  assert.equal(await readFile(join(project, "executed.txt"), "utf8"), "optional\n");
+});
+
+test("when the user waives one manually selected check, other requested checks still run", async t => {
+  const { project, run, intent } = await fixture(t);
+  const request = await intent("/verifier waive publisher:optional", "publisher:optional");
+
+  const result = run("verify", "publisher:optional", "publisher:required", "--request", request.handle);
+
+  assert.equal(result.status, 1, result.stderr);
+  const outcomes = JSON.parse(result.stdout).map(({ id, status }) => [id, status]);
+  assert.deepEqual(outcomes, [
+    ["publisher:optional", "WAIVED"],
+    ["publisher:required", "FAIL"],
+  ]);
+  assert.equal(await readFile(join(project, "executed.txt"), "utf8"), "required\n");
+});
+
+test("when another prompt supersedes a one-prompt waiver, its old handle cannot waive the current work", async t => {
+  const { project, run, intent } = await fixture(t);
+  const previous = await intent("/verifier waive publisher:optional", "publisher:optional");
+  const current = await intent("Review an unrelated edit.");
+
+  const historical = run("verify", "publisher:optional", "--request", previous.handle);
+  const active = run("verify", "publisher:optional", "--request", current.handle);
+
+  assert.equal(historical.status, 0, historical.stderr);
+  assert.equal(JSON.parse(historical.stdout)[0].status, "SUPERSEDED");
+  assert.equal(active.status, 1, active.stderr);
+  assert.equal(JSON.parse(active.stdout)[0].status, "FAIL");
+  assert.equal(await readFile(join(project, "executed.txt"), "utf8"), "optional\n");
+});
+
+test("when an agent passes a waiver flag, the CLI rejects the grant instead of dispatching", async t => {
+  const { project, run } = await fixture(t);
+
+  const result = run("verify", "publisher:optional", "--waive", "publisher:optional");
+
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /unknown option '--waive'/);
   await assert.rejects(readFile(join(project, "executed.txt")), {
     code: "ENOENT",
   });
