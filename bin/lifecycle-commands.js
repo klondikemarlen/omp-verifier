@@ -1,6 +1,6 @@
 import { InvalidArgumentError } from "commander";
 
-import { addReportingOptions } from "#root/bin/cli-options.js";
+import { addReportingOptions, parseLintBudget } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { readCloseoutHandoff } from "#root/omp-plugin/closeout-handoff.js";
 import {
@@ -51,6 +51,7 @@ export function registerLifecycleCommands(program) {
   })
     .description("Check the pinned delivery and retain it while assessments are outstanding")
     .option("--fresh", "discard saved work from an interrupted matching run")
+    .option("--lint-budget-ms <milliseconds>", "shared project lint budget (1–600000)", parseLintBudget)
     .action(checkHandoff);
 
   addReportingOptions(handoff.command("release <handoff-file>"))
@@ -138,6 +139,7 @@ async function checkHandoff(handoffPath, options) {
       return await checkDeliveryHandoff({
         handoffPath,
         fresh: options.fresh,
+        lintBudgetMs: options.lintBudgetMs,
       });
     } catch (error) {
       return [handoffBlocker(error)];

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, cp, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,6 +18,7 @@ import {
 } from "#root/omp-plugin/delivery-handoff.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
+const REPOSITORY_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TIP_SOURCE = "export function helper(value) { return value + 1; }\n";
 const TIP_CALLER = 'import { helper } from "./helper.js";\nexport const result = helper(2);\n';
 const CHANGED_PATHS = ["src/caller.js", "src/helper.js", "src/new name.js", "src/old name.js", "src/removed.js"];
@@ -103,7 +104,62 @@ async function installProvider(fixture, verification) {
   return provider;
 }
 
-function runCli(fixture, cwd, expectedExit, ...args) {
+async function installIdentityProvider(fixture) {
+  const provider = await installProvider(fixture, {
+    id: "publisher:identity",
+    label: "Helper identity",
+    description: "Reviews that the helper returns its input unchanged.",
+    mode: "agentic",
+    contract: "./contract.json",
+    pathTriggers: ["src/helper.js"],
+  });
+  await writeFile(join(provider, "standard.md"), "The helper must return its input unchanged.\n");
+  await writeFile(join(provider, "contract.json"), JSON.stringify({
+    version: 1,
+    standardId: "publisher:identity",
+    source: "./standard.md",
+    gold: "The helper returns its input unchanged.",
+    requiredContext: ["changed-code"],
+    rubric: [
+      {
+        id: "identity",
+        question: "Does the helper return its input unchanged?",
+      },
+    ],
+  }));
+}
+
+async function registerDeliveryProviders(fixture, dependencies) {
+  await writeFile(join(fixture.root, "package.json"), JSON.stringify({
+    name: "omp-plugins",
+    dependencies,
+  }));
+}
+
+async function installProjectLint(fixture, hasLintViolation) {
+  await symlink(REPOSITORY_ROOT, join(fixture.packageDirectory, "omp-verifier"), "dir");
+  const bin = join(fixture.source, "node_modules", ".bin");
+  await mkdir(bin, {
+    recursive: true,
+  });
+  await symlink(join(REPOSITORY_ROOT, "node_modules", ".bin", "eslint"), join(bin, "eslint"));
+  await writeFile(join(fixture.source, "eslint.config.mjs"), `
+export default [{
+  rules: {
+    "no-unused-vars": "error",
+  },
+}];
+`);
+  if (hasLintViolation) {
+    await writeFile(join(fixture.source, "src/caller.js"), `${TIP_CALLER}const unused = true;\n`);
+  }
+
+  git(fixture.source, "add", "eslint.config.mjs", "src/caller.js");
+  git(fixture.source, "commit", "--quiet", "-m", "configure project lint");
+  fixture.tipCommit = git(fixture.source, "rev-parse", "HEAD");
+}
+
+function invokeCli(fixture, cwd, ...args) {
   const env = {
     ...process.env,
     PI_CODING_AGENT_DIR: join(fixture.root, "agent"),
@@ -119,6 +175,11 @@ function runCli(fixture, cwd, expectedExit, ...args) {
     timeout: 15_000,
   });
   assert.ifError(result.error);
+  return result;
+}
+
+function runCli(fixture, cwd, expectedExit, ...args) {
+  const result = invokeCli(fixture, cwd, ...args);
   assert.equal(result.status, expectedExit, `${args.join(" ")}\n${result.stderr || result.stdout}`);
   assert.equal(result.stderr, "");
   return result.stdout;
@@ -315,28 +376,7 @@ process.stdout.write(JSON.stringify({
 test("when a semantic assessment is pending, the handoff stays available until a full recheck observes its verdict", async t => {
   // Arrange
   const fixture = await deliveryFixture(t);
-  const provider = await installProvider(fixture, {
-    id: "publisher:identity",
-    label: "Helper identity",
-    description: "Reviews that the helper returns its input unchanged.",
-    mode: "agentic",
-    contract: "./contract.json",
-    pathTriggers: ["src/helper.js"],
-  });
-  await writeFile(join(provider, "standard.md"), "The helper must return its input unchanged.\n");
-  await writeFile(join(provider, "contract.json"), JSON.stringify({
-    version: 1,
-    standardId: "publisher:identity",
-    source: "./standard.md",
-    gold: "The helper returns its input unchanged.",
-    requiredContext: ["changed-code"],
-    rubric: [
-      {
-        id: "identity",
-        question: "Does the helper return its input unchanged?",
-      },
-    ],
-  }));
+  await installIdentityProvider(fixture);
   const handoff = await prepare(fixture);
   git(fixture.primary, "worktree", "remove", fixture.source);
   const { checkoutPath } = await recoverDeliveryHandoff({
@@ -415,6 +455,91 @@ test("when a semantic assessment is pending, the handoff stays available until a
     code: "ENOENT",
   });
   assert.equal(git(fixture.primary, "for-each-ref", "--format=%(refname)", pin(handoff)), "");
+});
+
+for (const expectedLintStatus of ["PASS", "FAIL"]) {
+  test(`when a pending handoff increases its lint budget, a fresh ${expectedLintStatus} supersedes only the timed-out lint result`, async t => {
+    // Arrange
+    const fixture = await deliveryFixture(t);
+    await installIdentityProvider(fixture);
+    await installProjectLint(fixture, expectedLintStatus === "FAIL");
+    const providers = {
+      publisher: "1.0.0",
+      "omp-verifier": "*",
+    };
+    await registerDeliveryProviders(fixture, providers);
+    const handoff = await prepare(fixture);
+    const check = ["handoff", "check", handoff.handoffPath, "--lint-budget-ms"];
+
+    // Act / Assert
+    const constrained = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "1"));
+    assert.equal(constrained.length, 2);
+    const timeout = constrained.find(result => result.id === "verifier:project-lint");
+    assert.equal(timeout.status, "BLOCKED");
+    assert.equal(timeout.lintBudgetExhaustedMs, 1);
+    assert.match(timeout.summary, /Shared project lint budget of 1 ms expired/);
+    assert.match(timeout.nextCheck, /handoff check.*--lint-budget-ms/);
+    const pending = constrained.find(result => result.id === "publisher:identity");
+    assert.equal(pending.status, "PENDING");
+    const constrainedRecord = JSON.parse(await readFile(handoff.handoffPath, "utf8")).verification;
+    assert.equal(constrainedRecord.status, "PENDING");
+    assert.deepEqual(constrainedRecord.blockers, [timeout]);
+
+    await registerDeliveryProviders(fixture, {
+      publisher: "1.0.0",
+    });
+    const unavailable = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "10000"));
+    assert.deepEqual(unavailable.find(result => result.id === "verifier:project-lint"), timeout);
+
+    await registerDeliveryProviders(fixture, providers);
+    const recoveredExit = expectedLintStatus === "FAIL" ? 1 : 0;
+    const recovered = JSON.parse(runCli(fixture, fixture.root, recoveredExit, ...check, "10000"));
+    assert.equal(recovered.length, 2);
+    const lint = recovered.find(result => result.id === "verifier:project-lint");
+    assert.equal(lint.status, expectedLintStatus);
+    assert.equal(lint.lintBudgetExhaustedMs, undefined);
+    assert.match(lint.evidence, new RegExp(`javascript \\(\\.\\): ${expectedLintStatus}`));
+    if (expectedLintStatus === "FAIL") {
+      assert.match(lint.evidence, /no-unused-vars/);
+    }
+
+    const continued = recovered.find(result => result.id === "publisher:identity");
+    assert.equal(continued.status, "PENDING");
+    assert.equal(continued.reviewRequest.requestId, pending.reviewRequest.requestId);
+    const recoveredRecord = JSON.parse(await readFile(handoff.handoffPath, "utf8")).verification;
+    assert.equal(recoveredRecord.status, "PENDING");
+    const expectedBlockers = expectedLintStatus === "FAIL" ? [lint] : [];
+    assert.deepEqual(recoveredRecord.blockers, expectedBlockers);
+    assert.match(assertCliReleaseBlocked(fixture, handoff), /pending assessments/);
+
+    if (expectedLintStatus === "PASS") {
+      const defaultBudget = JSON.parse(runCli(fixture, fixture.root, 0, "handoff", "check", handoff.handoffPath));
+      assert.equal(defaultBudget.find(result => result.id === "verifier:project-lint").status, "PASS");
+    } else {
+      await registerDeliveryProviders(fixture, {
+        publisher: "1.0.0",
+      });
+      const higherWithoutLint = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "20000"));
+      assert.deepEqual(higherWithoutLint.find(result => result.id === "verifier:project-lint"), lint);
+    }
+  });
+}
+
+test("when a handoff lint budget is invalid, the CLI leaves the handoff unchanged", async t => {
+  // Arrange
+  const fixture = await deliveryFixture(t);
+  const handoff = await prepare(fixture);
+  const preparedRecord = await readFile(handoff.handoffPath, "utf8");
+  const check = ["handoff", "check", handoff.handoffPath, "--lint-budget-ms"];
+
+  // Act / Assert
+  for (const budget of [[], ["0"], ["600001"], ["-1"], ["1.5"], ["invalid"]]) {
+    const result = invokeCli(fixture, fixture.root, ...check, ...budget);
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /--lint-budget-ms/);
+  }
+  assert.equal(await readFile(handoff.handoffPath, "utf8"), preparedRecord);
 });
 
 test("when a deleted path requires a missing provider, the check reports terminal BLOCKED before release", async t => {
