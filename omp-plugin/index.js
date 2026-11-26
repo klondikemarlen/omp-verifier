@@ -189,7 +189,20 @@ async function verifyCloseoutReceipt(agentDir, repositoryRoot, receiptPath) {
   return results[0];
 }
 
+function logStartupTiming(pi, phase, startedAt) {
+  // Diagnostics must not prevent startup or suppress the request's verifier instructions.
+  try {
+    pi.logger?.debug("verifier.startup-timing", {
+      phase,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  } catch {
+    // Host logging is best-effort.
+  }
+}
+
 export default async function verifierPlugin(pi) {
+  const loadStartedAt = performance.now();
   pi.setLabel("Verifier");
   registerAdvisorCheckWidget(pi);
   if (pi.registerTool) {
@@ -206,14 +219,17 @@ export default async function verifierPlugin(pi) {
   let currentSessionId;
 
   pi.on("session_start", async (_event, ctx) => {
+    const startedAt = performance.now();
     try {
       await installGlobalVerifier({ agentDir: ctx.agentDir || pi.pi.getAgentDir() });
     } catch (error) {
       ctx.ui.notify(`Verifier advisor setup failed: ${error.message}`, "warning");
     }
+    logStartupTiming(pi, "session_start", startedAt);
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    const startedAt = performance.now();
     const agentDir = ctx.agentDir || pi.pi.getAgentDir();
     const coordinatorPath = runtimePaths(agentDir).launcher;
     const COORDINATOR = `'${coordinatorPath.replaceAll("'", "'\"'\"'")}'`;
@@ -244,7 +260,7 @@ export default async function verifierPlugin(pi) {
       intent.diagnostic,
       "Work intent is not PASS and never overrides mandatory requirements, explicit verification, initial delivery/release checks, or semantic escalation. Earlier request handles are not authority for this request.",
     ].filter(Boolean).join("\n");
-    return {
+    const response = {
       message: { customType: "verifier-work-intent", content, display: true, attribution: "agent" },
       systemPrompt: [
         ...event.systemPrompt,
@@ -255,6 +271,8 @@ export default async function verifierPlugin(pi) {
         `Verifier delivery cleanup: before removing an edit-owning Git worktree with committed delivery changes awaiting final review, run node ${COORDINATOR} handoff prepare --base <actual-delivery-base> in its clean checkout. Preserve the returned handoffPath and source identity in the transcript before cleanup. Do not prepare an unrelated checkout or omit uncommitted changes; retain the original if preparation cannot complete. A handoff preserves source; it cannot postpone pre-merge verification. Leave it for the verifier to recover, check within its applicable scope, and release. Preparation, merge, and cleanup are not PASS. Missing runtime prerequisites remain BLOCKED. Only explicit user cancellation or waiver authorizes handoff cancel <handoffPath> --reason <reason>; cancellation is not verification.`,
       ],
     };
+    logStartupTiming(pi, "before_agent_start", startedAt);
+    return response;
   });
 
   pi.registerCommand("verifier", {
@@ -314,4 +332,5 @@ export default async function verifierPlugin(pi) {
       return ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
     },
   });
+  logStartupTiming(pi, "extension_load", loadStartedAt);
 }
