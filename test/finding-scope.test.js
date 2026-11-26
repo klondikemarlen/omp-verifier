@@ -208,7 +208,6 @@ test("when a changed export breaks an unchanged caller, its cited causal attribu
   // Arrange
   const f = await fixture(t);
   const initial = await f.prepare();
-  const prepared = await readSemanticEvaluation({ cwd: f.root, requestPath: initial.reviewRequest.path, callerContextPaths: ["src/caller.js"] });
   const findings = [{
     ...findingAt(CALLER, "The caller now exports NaN."),
     introducedBy: CHANGED.path,
@@ -217,10 +216,18 @@ test("when a changed export breaks an unchanged caller, its cited causal attribu
   }];
 
   // Act
+  const unseen = await evaluate(f, initial, failure(initial, findings, [CHANGED, CALLER]));
+  const prepared = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: initial.reviewRequest.path,
+    callerContextPaths: ["src/caller.js"],
+  });
   const accepted = await evaluate(f, prepared, failure(prepared, findings, [CHANGED, CALLER]));
   const report = formatVerificationResults([accepted]);
 
   // Assert
+  assert.equal(unseen.status, "BLOCKED");
+  assert.match(unseen.evidence, /citation src\/caller\.js:2 is not in the captured evidence/);
   assert.equal(accepted.status, "FAIL", accepted.evidence);
   assert.deepEqual(accepted.findings, findings);
   assert.match(report, /Finding: src\/caller.js:2: The caller now exports NaN/);

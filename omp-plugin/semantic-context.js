@@ -589,6 +589,7 @@ export async function captureSemanticContext({
   maxContextPaths,
   sourceRecovery,
   delivery,
+  requiredContext,
   legacyRequest = false,
   boundedBatch = false,
   continuationBundle = false,
@@ -599,6 +600,9 @@ export async function captureSemanticContext({
   if (typeof continuationBundle !== "boolean" || (continuationBundle && !boundedBatch)) {
     throw new TypeError("continuationBundle requires bounded continuation capture");
   }
+  // An omitted contract keeps the default eager discovery behavior.
+  const captureCallerSource = requiredContext?.includes("callers") ?? true;
+  const captureSiblingSource = requiredContext?.includes("siblings") ?? true;
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -976,18 +980,28 @@ export async function captureSemanticContext({
     return true;
   }
 
-  // Reserve one representative per changed boundary before broad filename-matched callers.
-  // Explicit source already admitted for that boundary satisfies the same requirement.
-  for (const inventory of siblingInventory) {
-    if (inventory.files.some(path => capturedOptionalPaths.has(path))) continue;
+  if (captureSiblingSource) {
+    // Reserve one representative per changed boundary before broad filename-matched callers.
+    // Explicit source already admitted for that boundary satisfies the same requirement.
+    for (const inventory of siblingInventory) {
+      if (inventory.files.some(path => capturedOptionalPaths.has(path))) continue;
 
-    for (const path of inventory.files) {
-      if (captureOptionalSource(path, siblings, "siblings")) break;
+      for (const path of inventory.files) {
+        if (captureOptionalSource(path, siblings, "siblings")) break;
+      }
     }
   }
+  if (captureCallerSource) {
+    for (const path of callerPaths) captureOptionalSource(path, callers, "callers");
+  }
+  if (captureSiblingSource) {
+    for (const path of siblingPaths) captureOptionalSource(path, siblings, "siblings");
+  }
 
-  for (const path of callerPaths) captureOptionalSource(path, callers, "callers");
-  for (const path of siblingPaths) captureOptionalSource(path, siblings, "siblings");
+  const uncapturedCallerPaths = [...callerPaths].filter(path => !capturedOptionalPaths.has(path));
+  const uncapturedSiblingSource = [...siblingPaths].some(path => !capturedOptionalPaths.has(path));
+  const deferredCallerPaths = captureCallerSource ? [] : uncapturedCallerPaths;
+  const hasDeferredSource = deferredCallerPaths.length > 0 || (!captureSiblingSource && uncapturedSiblingSource);
 
   let siblingEvidence = siblings;
   if (!siblings.length) {
@@ -1007,6 +1021,11 @@ export async function captureSemanticContext({
   if (!callers.length) {
     if ([...callerPaths].some(path => capturedOptionalPaths.has(path))) {
       callerEvidence = { status: "captured-elsewhere", explanation: "Filename-matched caller candidates are captured in sibling or targeted records; source relationships still require assessment." };
+    } else if (deferredCallerPaths.length) {
+      callerEvidence = {
+        status: "not-captured",
+        explanation: "Optional caller source is deferred; inspect callerRetrieval.deferredPaths and select material evidence before assessment.",
+      };
     } else if (callerPaths.size) {
       callerEvidence = { status: "not-captured", explanation: "Caller candidates were found but not admitted; inspect evidenceBudget.rejections and recover material source with review --context." };
     } else {
@@ -1041,6 +1060,9 @@ export async function captureSemanticContext({
       omittedFiles: Math.max(0, paths.length - selectedInventoryPaths.length),
       omittedPathExamples: orderedInventoryPaths.slice(MAX_INVENTORY_FILES, MAX_INVENTORY_FILES + 30),
       unreadable: inventoryRecords.filter(record => record.unreadable),
+      ...(deferredCallerPaths.length ? {
+        deferredPaths: deferredCallerPaths,
+      } : {}),
       recovery: "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
     },
     evidenceBudget: {
@@ -1058,10 +1080,11 @@ export async function captureSemanticContext({
       rejections: budget.rejections,
     },
     evidenceTruncated: {
-      callers: [...callerPaths].some(path => !capturedOptionalPaths.has(path)),
-      siblings: [...siblingPaths].some(path => ![...siblings, ...callers, ...targetedContext].some(record => record.path === path && typeof record.content === "string")),
+      callers: uncapturedCallerPaths.length > 0,
+      siblings: uncapturedSiblingSource,
     },
     notes: [
+      ...(hasDeferredSource ? ["Optional caller or sibling source is not included unless requested by the contract or explicitly selected. Use callerRetrieval.deferredPaths and siblingInventory to find material source; recover it with review --context or --caller-context before assessment."] : []),
       ...(budget.truncated ? ["Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
       ...(!sourceInventory.complete ? ["Source inventory is incomplete; callers or siblings may be omitted."] : []),
     ],
