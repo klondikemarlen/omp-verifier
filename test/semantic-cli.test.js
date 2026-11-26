@@ -231,6 +231,7 @@ test("when diagnostics cannot read a request, private paths and source-bearing e
 });
 
 test("when the user waives a pending semantic assessment, review leaves the saved evidence intact", async t => {
+  // Arrange
   const fixture = await semanticCliFixture(t);
   const before = await cacheSnapshot(fixture.cacheDirectory);
   const authority = await openRequestWaiverAuthority();
@@ -246,10 +247,12 @@ test("when the user waives a pending semantic assessment, review leaves the save
     force: true,
   }));
 
+  // Act
   const result = fixture.run([
     "review", fixture.request.path, "--resume", "--reporter", "text", "--request", intent.handle,
   ]);
 
+  // Assert
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /^WAIVED publisher:alignment\n\s*Verification waived by user/);
   assert.deepEqual(await cacheSnapshot(fixture.cacheDirectory), before);

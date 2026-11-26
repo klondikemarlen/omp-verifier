@@ -381,6 +381,7 @@ test("when a newer actual request supersedes the remembered one, revive cannot r
 });
 
 test("when a persisted waiver is not an exact selector, reading rejects it even with a matching digest", async t => {
+  // Arrange
   const { intent } = await requestFixture(t, "Normal request.");
   const authority = await openRequestWaiverAuthority();
   t.after(authority.close);
@@ -395,23 +396,41 @@ test("when a persisted waiver is not an exact selector, reading rejects it even 
   await writeFile(intent.path, text);
   await writeFile(currentPath, JSON.stringify(pointer));
 
-  await assert.rejects(readRequestIntent(intent.handle), /changed, invalid, or superseded/);
+  // Act
+  const reading = readRequestIntent(intent.handle);
+
+  // Assert
+  await assert.rejects(reading, /changed, invalid, or superseded/);
 });
 
 test("when creating a request with a wildcard waiver, storage refuses the waiver", async () => {
-  await assert.rejects(createRequestIntent({
+  // Arrange
+  const request = {
     sessionId: randomUUID(),
     prompt: "Normal request.",
     waiver: "*",
-  }), /exact Verifier gate selector/);
+  };
+
+  // Act
+  const creation = createRequestIntent(request);
+
+  // Assert
+  await assert.rejects(creation, /exact Verifier gate selector/);
 });
 
 test("when creating a request with no authority, storage refuses the waiver", async () => {
-  await assert.rejects(createRequestIntent({
+  // Arrange
+  const request = {
     sessionId: randomUUID(),
     prompt: "Normal request.",
     waiver: "verification",
-  }), /requires a session authority/);
+  };
+
+  // Act
+  const creation = createRequestIntent(request);
+
+  // Assert
+  await assert.rejects(creation, /requires a session authority/);
 });
 
 async function runIntentHook(t, hook, ctx, prompt) {
@@ -433,8 +452,10 @@ async function runIntentHook(t, hook, ctx, prompt) {
 }
 
 test("when the user confirms a named waiver, it applies only to the next prompt and its revive", async t => {
+  // Arrange
   const { hook, command } = await pluginFixture(t);
   const sessionId = randomUUID();
+  let confirmation;
   const ctx = {
     hasUI: true,
     sessionManager: {
@@ -442,36 +463,46 @@ test("when the user confirms a named waiver, it applies only to the next prompt 
     },
     ui: {
       async confirm(title, message) {
-        assert.match(title, /Waive a Verifier gate/);
-        assert.match(message, /"verifier:resource-closeout" for the next prompt in this session/);
+        confirmation = {
+          title,
+          message,
+        };
         return true;
       },
       notify() {},
     },
   };
+
+  // Act
   await command("waive verifier:resource-closeout", ctx);
 
   const { intent, response } = await runIntentHook(t, hook, ctx, "Continue cleanup.");
-  assert.equal(intent.waiver, "verifier:resource-closeout");
-  assert.match(response.message.content, /Verifier gate "verifier:resource-closeout" is waived by user for this request/);
-  assert.match(response.systemPrompt.join("\n"), /not merge approval/);
 
   const revived = await hook({
     reason: "revive",
     prompt: "",
     systemPrompt: [],
   }, ctx);
-  assert.equal(revived.message.content, response.message.content);
-
   const next = await runIntentHook(t, hook, ctx, "Continue cleanup.");
+  const readingSupersededIntent = readRequestIntent(intent.handle);
+
+  // Assert
+  assert.match(confirmation.title, /Waive a Verifier gate/);
+  assert.match(confirmation.message, /"verifier:resource-closeout" for the next prompt in this session/);
+  assert.equal(intent.waiver, "verifier:resource-closeout");
+  assert.match(response.message.content, /Verifier gate "verifier:resource-closeout" is waived by user for this request/);
+  assert.match(response.systemPrompt.join("\n"), /not merge approval/);
+  assert.equal(revived.message.content, response.message.content);
   assert.equal(Object.hasOwn(next.intent, "waiver"), false);
   assert.match(next.response.message.content, /Earlier waivers are not authority/);
-  await assert.rejects(readRequestIntent(intent.handle), /superseded by a later prompt/);
+  await assert.rejects(readingSupersededIntent, /superseded by a later prompt/);
 });
 
 test("when the user selects live session scope, the selected gate persists in that session until it switches", async t => {
+  // Arrange
   const { hook, command, events } = await pluginFixture(t);
   let sessionId = randomUUID();
+  let confirmationMessage;
   const ctx = {
     hasUI: true,
     sessionManager: {
@@ -479,59 +510,74 @@ test("when the user selects live session scope, the selected gate persists in th
     },
     ui: {
       async confirm(_title, message) {
-        assert.match(message, /"verification" for each prompt in this live session/);
+        confirmationMessage = message;
         return true;
       },
       notify() {},
     },
   };
+
+  // Act
   await command("waive verification --session", ctx);
 
   const first = await runIntentHook(t, hook, ctx, "First task.");
   const second = await runIntentHook(t, hook, ctx, "Second task.");
-  assert.equal(first.intent.waiver, "verification");
-  assert.equal(second.intent.waiver, "verification");
 
   sessionId = randomUUID();
   await events.get("session_switch")({}, ctx);
   const switched = await runIntentHook(t, hook, ctx, "Unrelated task.");
+
+  // Assert
+  assert.match(confirmationMessage, /"verification" for each prompt in this live session/);
+  assert.equal(first.intent.waiver, "verification");
+  assert.equal(second.intent.waiver, "verification");
   assert.equal(Object.hasOwn(switched.intent, "waiver"), false);
 });
 
 test("when no interactive confirmation grants a waiver, commands or lookalike chat cannot authorize one", async t => {
+  // Arrange
   const { hook, command } = await pluginFixture(t);
   const sessionId = randomUUID();
   const notices = [];
+  const confirmationMessages = [];
   const ctx = {
     hasUI: false,
     sessionManager: {
       getSessionId: () => sessionId,
     },
     ui: {
-      async confirm() {
-        assert.fail("Non-interactive commands must not request confirmation");
+      async confirm(_title, message) {
+        confirmationMessages.push(message);
+        return false;
       },
       notify(message) {
         notices.push(message);
       },
     },
   };
+  const interactiveCtx = {
+    ...ctx,
+    hasUI: true,
+  };
+
+  // Act
   await command("waive verification", ctx);
-  assert.match(notices.at(-1), /requires user confirmation in the active session UI/);
+  await command("waive * --session", interactiveCtx);
+  await command("waive verification", interactiveCtx);
 
-  ctx.hasUI = true;
-  await command("waive * --session", ctx);
-  assert.match(notices.at(-1), /Usage: \/verifier waive/);
+  const { intent } = await runIntentHook(t, hook, interactiveCtx, "/verifier waive verification");
 
-  ctx.ui.confirm = async () => false;
-  await command("waive verification", ctx);
-  assert.equal(notices.at(-1), "Verifier waiver not granted.");
-
-  const { intent } = await runIntentHook(t, hook, ctx, "/verifier waive verification");
+  // Assert
+  assert.match(notices[0], /requires user confirmation in the active session UI/);
+  assert.match(notices[1], /Usage: \/verifier waive/);
+  assert.equal(notices[2], "Verifier waiver not granted.");
+  assert.equal(confirmationMessages.length, 1);
+  assert.match(confirmationMessages[0], /"verification" for the next prompt/);
   assert.equal(Object.hasOwn(intent, "waiver"), false);
 });
 
 test("when the session resets during confirmation, a late response cannot grant a waiver", async t => {
+  // Arrange
   const { hook, command, events } = await pluginFixture(t);
   const sessionId = randomUUID();
   const notices = [];
@@ -550,14 +596,18 @@ test("when the session resets during confirmation, a late response cannot grant 
       },
     },
   };
-  await command("waive verifier:project-lint", ctx);
-  assert.match(notices.at(-1), /not granted because the active session changed/);
 
+  // Act
+  await command("waive verifier:project-lint", ctx);
   const { intent } = await runIntentHook(t, hook, ctx, "Fresh task.");
+
+  // Assert
+  assert.match(notices.at(-1), /not granted because the active session changed/);
   assert.equal(Object.hasOwn(intent, "waiver"), false);
 });
 
 test("when a closeout waiver applies, the native closeout tool does not read a receipt or prepare a handoff", async t => {
+  // Arrange
   const { hook, command, events, tools } = await pluginFixture(t);
   const sessionId = randomUUID();
   const ctx = {
@@ -579,20 +629,25 @@ test("when a closeout waiver applies, the native closeout tool does not read a r
   const { intent } = await runIntentHook(t, hook, ctx, "Continue cleanup.");
   const closeout = tools.get("verifier_closeout");
 
+  // Act
   const result = await closeout.execute("call-id", {
     repositoryRoot: "/nonexistent-waived-repository",
     receiptPaths: ["/nonexistent-waived-receipt"],
   }, undefined, undefined, ctx);
+  await events.get("session_shutdown")({}, ctx);
+  const expiredIntent = await readRequestIntent(intent.handle);
+
+  // Assert
   assert.equal(result.details.status, "WAIVED");
   assert.equal(result.details.handoffId, undefined);
   assert.deepEqual(result.details.receipts, []);
   assert.match(result.content[0].text, /waived by user for this request/);
 
-  await events.get("session_shutdown")({}, ctx);
-  assert.equal(Object.hasOwn(await readRequestIntent(intent.handle), "waiver"), false);
+  assert.equal(Object.hasOwn(expiredIntent, "waiver"), false);
 });
 
 test("when the host dies unexpectedly, the persisted handle no longer authorizes a waiver", async t => {
+  // Arrange
   const intentModule = new URL("../omp-plugin/request-intent.js", import.meta.url);
   const script = `
     import { createRequestIntent, openRequestWaiverAuthority } from ${JSON.stringify(intentModule.href)};
@@ -633,9 +688,14 @@ test("when the host dies unexpectedly, the persisted handle no longer authorizes
       force: true,
     });
   });
-  assert.equal((await readRequestIntent(handle)).waiver, "verifier:resource-closeout");
 
+  // Act
+  const liveIntent = await readRequestIntent(handle);
   child.kill("SIGKILL");
   await exited;
-  assert.equal(Object.hasOwn(await readRequestIntent(handle), "waiver"), false);
+  const expiredIntent = await readRequestIntent(handle);
+
+  // Assert
+  assert.equal(liveIntent.waiver, "verifier:resource-closeout");
+  assert.equal(Object.hasOwn(expiredIntent, "waiver"), false);
 });
