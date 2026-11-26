@@ -4,6 +4,7 @@ import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify, stripVTControlCharacters } from "node:util";
 
@@ -19,6 +20,11 @@ import {
 
 const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
+const MAX_LINT_STREAM_BYTES = 32_000;
+const LINT_OUTPUT_TRUNCATED = `Lint output truncated (${MAX_LINT_STREAM_BYTES * 2}-byte retention limit; ${MAX_LINT_STREAM_BYTES} bytes per stream)`;
+const MAX_LINT_COMMAND_DISPLAY = 320;
+const MAX_LINT_STREAM_EXCERPT = 600;
+const MAX_FINDING_DISPLAY = 360;
 const MAX_RESTART_EVIDENCE = MAX_EVIDENCE + 1;
 const MAX_RESTART_ARGUMENTS = 64;
 const lintProviderPath = fileURLToPath(new URL("./project-lint-check.mjs", import.meta.url));
@@ -536,9 +542,13 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
     }
   }
 
-  const headers = outcomes.map(result => `${lintGroupLabel(result, repositoryRoot)}: ${result.status} — ${result.summary}`);
-  const headerBytes = headers.join("\n").length;
-  if (headerBytes > MAX_EVIDENCE) {
+  const headers = outcomes.map(result => [
+    `${lintGroupLabel(result, repositoryRoot)}: ${result.status} — ${result.summary}`,
+    result.executionReason,
+    result.outputTruncated ? LINT_OUTPUT_TRUNCATED : undefined,
+  ].filter(Boolean).join("\n"));
+  const headerLength = headers.join("\n").length;
+  if (headerLength > MAX_EVIDENCE) {
     const evidence = `${outcomes.length} project/language outcomes cannot be represented within ${MAX_EVIDENCE} characters; no combined lint approval was issued.`;
     if (exhaustedBudgetMs !== undefined) {
       return {
@@ -554,7 +564,7 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
       evidence,
     };
   }
-  const perOutcome = Math.max(0, Math.floor((MAX_EVIDENCE - headerBytes - outcomes.length * 3) / outcomes.length));
+  const perOutcome = Math.max(0, Math.floor((MAX_EVIDENCE - headerLength - outcomes.length * 3) / outcomes.length));
   const evidence = outcomes.map((result, index) => {
     let detail = result.evidence ?? "";
     if (detail.length > perOutcome) {
@@ -578,10 +588,92 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
 
 class LintBudgetExceeded extends Error {}
 
-function executeLint(plan, env, timeout, cancellationSignal) {
+function captureLintStream(stream, tool, onError) {
+  // Always drain the pipe. This ring retains the latest bytes, while the
+  // line observer keeps an actual diagnostic even if more noise follows it.
+  const tail = Buffer.allocUnsafe(MAX_LINT_STREAM_BYTES);
+  let length = 0;
+  let offset = 0;
+  let truncated = false;
+  let finding;
+  let line = "";
+  const decoder = new StringDecoder("utf8");
+  const recognizeLines = ["eslint", "oxlint", "pyflakes"].includes(tool);
+
+  function observeLines(text, endOfStream = false) {
+    let start = 0;
+    while (!finding) {
+      const newline = text.indexOf("\n", start);
+      const end = newline < 0 ? text.length : newline;
+      if (line !== undefined && line.length + end - start <= MAX_LINT_STREAM_BYTES) {
+        line += text.slice(start, end);
+      } else {
+        line = undefined;
+      }
+      if (newline < 0 && !endOfStream) return;
+
+      if (line) {
+        const clean = stripVTControlCharacters(line);
+        const first = clean.trimStart()[0];
+        if (hasTextLintDiagnostic(tool, clean)
+          || ((first === "[" || first === "{") && hasLintDiagnostics(tool, clean))) {
+          finding = abbreviateLintText(clean.trim(), MAX_FINDING_DISPLAY);
+        }
+      }
+      line = "";
+      if (newline < 0) return;
+
+      start = newline + 1;
+    }
+  }
+
+  stream.on("data", chunk => {
+    truncated ||= length + chunk.length > MAX_LINT_STREAM_BYTES;
+    if (chunk.length >= MAX_LINT_STREAM_BYTES) {
+      chunk.copy(tail, 0, chunk.length - MAX_LINT_STREAM_BYTES);
+      offset = 0;
+      length = MAX_LINT_STREAM_BYTES;
+    } else {
+      const firstLength = Math.min(chunk.length, MAX_LINT_STREAM_BYTES - offset);
+      chunk.copy(tail, offset, 0, firstLength);
+      if (firstLength < chunk.length) {
+        chunk.copy(tail, 0, firstLength);
+      }
+      offset = (offset + chunk.length) % MAX_LINT_STREAM_BYTES;
+      length = Math.min(length + chunk.length, MAX_LINT_STREAM_BYTES);
+    }
+    if (recognizeLines && !finding) {
+      observeLines(decoder.write(chunk));
+    }
+  });
+  stream.once("error", onError);
+
+  return () => {
+    if (recognizeLines && !finding) {
+      observeLines(decoder.end(), true);
+    }
+    let retained = tail.subarray(0, length);
+    if (truncated && offset !== 0) {
+      retained = Buffer.concat([tail.subarray(offset), tail.subarray(0, offset)], length);
+    }
+    let start = 0;
+    if (truncated) {
+      // The first retained byte may be a UTF-8 continuation byte.
+      while (start < length && (retained[start] & 0xc0) === 0x80) start += 1;
+    }
+    const text = retained.toString("utf8", start);
+    return {
+      text,
+      finding,
+      truncated,
+    };
+  };
+}
+
+function executeLint(plan, env, deadline, cancellationSignal) {
   cancellationSignal?.throwIfAborted();
 
-  return new Promise((resolve, reject) => {
+  return new Promise(resolve => {
     const grouped = process.platform !== "win32";
     const child = spawn(plan.command[0], plan.command.slice(1), {
       cwd: plan.cwd,
@@ -590,9 +682,7 @@ function executeLint(plan, env, timeout, cancellationSignal) {
       stdio: ["ignore", "pipe", "pipe"],
     });
     let failure;
-    let stdout = "";
-    let stderr = "";
-    let bytes = 0;
+
     const stop = () => {
       if (!child.pid) return;
       try {
@@ -604,6 +694,10 @@ function executeLint(plan, env, timeout, cancellationSignal) {
     };
     const abort = () => {
       failure ??= cancellationSignal.reason;
+      stop();
+    };
+    const onError = error => {
+      failure ??= error;
       stop();
     };
     const isLintProvider = process.argv[1] === lintProviderPath;
@@ -630,41 +724,42 @@ function executeLint(plan, env, timeout, cancellationSignal) {
       process.on("SIGTERM", stopForSignal);
     }
 
-    const capture = (chunk, errorStream) => {
-      bytes += Buffer.byteLength(chunk);
-      if (bytes > 64_000) {
-        failure ??= new Error("Lint output exceeded the 64000-byte capture limit");
-        stop();
-      } else if (errorStream) stderr += chunk;
-      else stdout += chunk;
-    };
-    child.stdout.setEncoding("utf8").on("data", chunk => capture(chunk, false));
-    child.stderr.setEncoding("utf8").on("data", chunk => capture(chunk, true));
-    child.once("error", error => { failure ??= error; });
+    const finishStdout = captureLintStream(child.stdout, plan.tool, onError);
+    const finishStderr = captureLintStream(child.stderr, plan.tool, onError);
+    child.once("error", onError);
     const timer = setTimeout(() => {
       failure ??= new LintBudgetExceeded();
       stop();
-    }, timeout);
+    }, Math.max(0, deadline - Date.now()));
     child.once("close", (code, signal) => {
       stopObserving();
       clearTimeout(timer);
+      if (Date.now() >= deadline) {
+        failure ??= new LintBudgetExceeded();
+      }
       if (failure || code !== 0 || signal) {
         stop();
-        const error = failure ?? new Error(`Lint command exited with ${signal ?? code}`);
-        if (!failure) error.code = code;
-        error.stdout = stdout;
-        error.stderr = stderr;
-        reject(error);
-      } else resolve({ stdout, stderr });
+      }
+      resolve({
+        code,
+        signal,
+        failure,
+        streams: [finishStdout(), finishStderr()],
+      });
     });
   });
 }
 
-function hasEslintDiagnostics(output) {
-  // Explicit commands may fail before ESLint starts. Recognize findings, not exit 1 alone.
-  const text = stripVTControlCharacters(output);
-  if (/^\s+\d+:\d+\s+(?:error|warning)\s+\S.+$/m.test(text)) return true;
+function hasTextLintDiagnostic(tool, text) {
+  if (tool === "eslint" || tool === "oxlint") {
+    if (/^[ \t]+\d+:\d+[ \t]+(?:error|warning)[ \t]+\S.+$/m.test(text)) return true;
+  }
+  if (tool === "pyflakes") return /^[^\r\n]+\.pyi?:\d+:\d+: \S.+$/m.test(text);
+  return tool === "oxlint"
+    && /^[^\r\n]+:\d+:\d+: (?:warning|error) [\w/-]+(?:\([^)]+\))?: \S.+$/m.test(text);
+}
 
+function hasEslintReport(text) {
   try {
     const report = JSON.parse(text);
     const results = Array.isArray(report) ? report : report?.results;
@@ -678,12 +773,14 @@ function hasEslintDiagnostics(output) {
 }
 
 function hasLintDiagnostics(tool, output) {
-  if (tool === "eslint") return hasEslintDiagnostics(output);
   const text = stripVTControlCharacters(output);
-  if (tool === "pyflakes") return /^[^\r\n]+\.pyi?:\d+:\d+: \S.+$/m.test(text);
+  // A delegated command can fail before the linter starts. Exit 1 alone
+  // does not establish that it reported a violation.
+  if (hasTextLintDiagnostic(tool, text)) return true;
+  if (tool === "eslint") return hasEslintReport(text);
   if (tool !== "oxlint") return false;
-  if (hasEslintDiagnostics(text)) return true;
-  if (/^[^\r\n]+:\d+:\d+: (?:warning|error) [\w/-]+(?:\([^)]+\))?: \S.+$/m.test(text)) return true;
+  if (hasEslintReport(text)) return true;
+
   if (/^\s*[!×x⚠]\s+\S.+$/m.test(text)
     && /\[[^\]\r\n]+:\d+:\d+\]/.test(text)
     && /Found (?:[1-9]\d* warnings? and \d+ errors?|0 warnings? and [1-9]\d* errors?)\./.test(text)) return true;
@@ -695,6 +792,81 @@ function hasLintDiagnostics(tool, output) {
   } catch {
     return false;
   }
+}
+
+function abbreviateLintText(text, limit) {
+  if (text.length <= limit) return text;
+
+  return `${text.slice(0, limit - 3)}...`;
+}
+
+function displayArgument(argument, limit) {
+  const sample = abbreviateLintText(argument, limit);
+  return abbreviateLintText(JSON.stringify(sample).slice(1, -1), limit);
+}
+
+function lintCommandSummary(plan) {
+  let command = "";
+  let argumentsShown = 0;
+  for (const argument of plan.command) {
+    const separatorLength = argumentsShown ? 1 : 0;
+    if (command.length + argument.length + separatorLength > MAX_LINT_COMMAND_DISPLAY) break;
+
+    const display = displayArgument(argument, MAX_LINT_COMMAND_DISPLAY);
+    if (command.length + display.length + separatorLength > MAX_LINT_COMMAND_DISPLAY) break;
+
+    command += `${argumentsShown ? " " : ""}${display}`;
+    argumentsShown += 1;
+  }
+  // The display is a preview, never the argv passed to spawn.
+  if (argumentsShown === plan.command.length) {
+    return `Command: ${command}`;
+  }
+  const invocation = plan.command.slice(0, 2).map(argument => displayArgument(argument, 100)).join(" ");
+  const sample = plan.paths.slice(0, 2).map(path => displayArgument(path, 80)).join(", ");
+  return `Command: ${invocation} (${plan.paths.length} selected paths; sample: ${sample})`;
+}
+
+function lintExecutionReason({ code, signal, failure }) {
+  if (failure) return abbreviateLintText(String(failure.message), 240);
+  if (signal) return `Lint command terminated by ${signal}`;
+  if (code === null) return "Lint command ended without an exit status";
+  return `Lint command exited with code ${code}`;
+}
+
+function lintExecutionEvidence(plan, streams, { completedSuccessfully }) {
+  const outputTruncated = streams.some(stream => stream.truncated);
+  const output = streams.map(stream => stream.text).filter(Boolean).join("\n");
+  const findings = streams.map(stream => stream.finding).filter(Boolean);
+  let reportedFindings = findings.length > 0;
+  if (!reportedFindings && !completedSuccessfully) {
+    // These retained fragments may include complete JSON or multiline reports.
+    // Exclude a partial first line so a clipped fragment cannot count as a finding.
+    const completeText = streams.map(({ text, truncated }) => {
+      if (!truncated) return text;
+
+      const newline = text.indexOf("\n");
+      return newline < 0 ? "" : text.slice(newline + 1);
+    }).filter(Boolean);
+    reportedFindings = completeText.some(text => hasLintDiagnostics(plan.tool, text))
+      || (completeText.length > 1 && hasLintDiagnostics(plan.tool, completeText.join("\n")));
+  }
+  let evidence = output;
+  if (outputTruncated) {
+    const excerpts = streams.map(stream => stream.text.slice(-MAX_LINT_STREAM_EXCERPT));
+    evidence = [...findings, lintCommandSummary(plan), ...excerpts].filter(Boolean).join("\n");
+  } else if (!completedSuccessfully && output.length > MAX_LINT_STREAM_EXCERPT * 2) {
+    evidence = [...findings, lintCommandSummary(plan), output].filter(Boolean).join("\n");
+  } else if (!completedSuccessfully && !reportedFindings) {
+    evidence = [lintCommandSummary(plan), output].filter(Boolean).join("\n");
+  } else if (!completedSuccessfully || !output) {
+    evidence = [output, lintCommandSummary(plan)].filter(Boolean).join("\n");
+  }
+  return {
+    outputTruncated,
+    reportedFindings,
+    evidence: evidence.slice(0, MAX_RESTART_EVIDENCE),
+  };
 }
 
 async function restartFileIdentity(path) {
@@ -791,11 +963,12 @@ async function lintRestartKey(plan) {
   }
 }
 
-function passedLintGroup(group, evidence) {
+function passedLintGroup(group, evidence, outputTruncated) {
   return {
     ...group,
     status: "PASS",
     summary: "The existing non-fixing lint command exited 0",
+    outputTruncated,
     evidence,
   };
 }
@@ -853,7 +1026,7 @@ export async function verifyProjectLint({
           && previous.evidence.length <= MAX_RESTART_EVIDENCE
           && Date.now() < deadline) {
           outcomes.push({
-            ...passedLintGroup(group, previous.evidence),
+            ...passedLintGroup(group, previous.evidence, previous.outputTruncated === true),
             execution: "restored",
           });
           continue;
@@ -878,34 +1051,34 @@ export async function verifyProjectLint({
         continue;
       }
 
-      const { stdout, stderr } = await executeLint(plan, env, remaining, cancellationSignal);
+      const execution = await executeLint(plan, env, deadline, cancellationSignal);
       cancellationSignal?.throwIfAborted();
 
-      const evidence = [stdout, stderr].filter(Boolean).join("\n") || plan.command.join(" ");
-      outcomes.push(passedLintGroup(group, evidence));
-      if (restartKey && await lintRestartKey(plan) === restartKey) {
-        cancellationSignal?.throwIfAborted();
+      const { code, signal, failure, streams } = execution;
+      const completedSuccessfully = !failure && !signal && code === 0;
+      const { evidence, outputTruncated, reportedFindings } = lintExecutionEvidence(plan, streams, {
+        completedSuccessfully,
+      });
+      if (completedSuccessfully) {
+        outcomes.push(passedLintGroup(group, evidence, outputTruncated));
+        if (restartKey && await lintRestartKey(plan) === restartKey) {
+          cancellationSignal?.throwIfAborted();
 
-        // One character beyond the transport limit preserves its truncation marker on replay.
-        await restart.save(restartKey, {
-          status: "PASS",
-          evidence: evidence.slice(0, MAX_RESTART_EVIDENCE),
-        });
+          await restart.save(restartKey, {
+            status: "PASS",
+            evidence,
+            outputTruncated,
+          });
+        }
+        continue;
       }
-    } catch (error) {
-      cancellationSignal?.throwIfAborted();
 
-      const output = [error.stdout, error.stderr].filter(Boolean).join("\n");
-      if (error instanceof LintBudgetExceeded) {
+      if (failure instanceof LintBudgetExceeded) {
         budgetExhausted = true;
 
-        const reportedFindings = hasLintDiagnostics(plan.tool, output);
-        const command = plan.command.join(" ");
-        let evidence = [command, output].filter(Boolean).join("\n");
         let summary = `Lint command interrupted after exceeding the overall time budget (${budgetMs} ms)`;
         if (reportedFindings) {
           summary += `; ${plan.tool} reported findings before interruption`;
-          evidence = `${output}\n${command}`;
         }
         outcomes.push({
           ...group,
@@ -913,30 +1086,37 @@ export async function verifyProjectLint({
           execution: "interrupted",
           summary,
           evidence,
+          outputTruncated,
           reportedFindings,
         });
         continue;
       }
 
-      const unprovenFailure = plan.requiresDiagnostics && !hasLintDiagnostics(plan.tool, output);
-      const status = error.code === 1 && !unprovenFailure ? "FAIL" : "BLOCKED";
+      const completedWithExit = !failure && !signal && code !== null;
+      const unprovenFailure = completedWithExit && plan.requiresDiagnostics && !reportedFindings;
+      const status = completedWithExit && code === 1 && !unprovenFailure ? "FAIL" : "BLOCKED";
       const summary = status === "FAIL"
         ? `${plan.tool} reported lint violations`
         : unprovenFailure
           ? `The declared command failed without recognized ${plan.tool} diagnostics; lint execution is unverified`
           : `${plan.tool} could not complete`;
-      const command = plan.command.join(" ");
-      let evidence;
-      if (status === "FAIL") {
-        evidence = [output, command, error.message].filter(Boolean).join("\n");
-      } else {
-        evidence = [command, output, error.message].filter(Boolean).join("\n");
-      }
       outcomes.push({
         ...group,
         status,
         summary,
+        executionReason: lintExecutionReason(execution),
+        outputTruncated,
         evidence,
+      });
+    } catch (error) {
+      cancellationSignal?.throwIfAborted();
+
+      outcomes.push({
+        ...group,
+        status: "BLOCKED",
+        summary: `${plan.tool} could not complete`,
+        executionReason: abbreviateLintText(String(error.message), 240),
+        evidence: lintCommandSummary(plan),
       });
     }
   }

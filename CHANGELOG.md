@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.31.1 - 2026-11-26
+
+- Verbose lint commands can finish after the retained output limit is reached. Reports distinguish truncated evidence from an interrupted process and no longer list every input filename as evidence of failure.
+
 ## 1.31.0 - 2026-11-26
 
 - Users can waive a Verifier gate for one prompt or explicitly for the live session without converting missing or failed verification into a pass.

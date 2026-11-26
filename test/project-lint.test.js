@@ -429,6 +429,134 @@ test("when an append-path binding changes, it still checks the owning project's 
   assert.match(result.evidence, /unrelated\.js/);
 });
 
+async function bindVerboseLint(root, project, command) {
+  const wrapper = "tools/verbose-lint-wrapper.mjs";
+  await writeProjectFile(root, wrapper, `
+import { spawnSync } from "node:child_process";
+import { appendFileSync } from "node:fs";
+
+const argv = process.argv.slice(2);
+const [command, ...args] = argv;
+appendFileSync("lint-argv.jsonl", JSON.stringify(argv) + "\\n");
+
+for (const [stream, label] of [[process.stdout, "stdout"], [process.stderr, "stderr"]]) {
+  const echo = label + " wrapper argv: " + argv.join(" ") + "\\n";
+  const noise = echo + (label + " wrapper chatter\\n").repeat(4_000);
+  await new Promise(resolve => stream.write(noise, resolve));
+}
+
+const lint = spawnSync(command, args, {
+  stdio: "inherit",
+});
+if (lint.signal) {
+  process.kill(process.pid, lint.signal);
+}
+process.exitCode = lint.status ?? 2;
+`);
+  await bindLint(project, "javascript", [process.execPath, join(root, wrapper), ...command], {
+    appendPaths: true,
+  });
+}
+
+test("when a verbose wrapper forwards lint paths, changed-file lint passes and expanded lint retains a late real finding", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  const project = join(root, "web");
+  const eslintCommand = ["node_modules/.bin/eslint", "--no-fix", "--max-warnings", "0", "--"];
+  const generatedPaths = Array.from({
+    length: 40,
+  }, (_, index) => `src/generated/expanded-${index}-${"path".repeat(30)}.js`);
+  const violatingPath = "src/z finding.js";
+  const expectedExpandedPaths = [
+    "./-selected.js",
+    "eslint.config.mjs",
+    "src/selected file.js",
+    ...generatedPaths,
+    violatingPath,
+  ];
+  await writeProjectFile(project, "eslint.config.mjs", `
+export default [{
+  files: ["**/*.js", "**/*.mjs"],
+  rules: {
+    "no-unused-vars": "error",
+  },
+}];
+`);
+  for (const path of ["-selected.js", "src/selected file.js", ...generatedPaths]) {
+    await writeProjectFile(project, path, "export const selected = true;\n");
+  }
+  await writeProjectFile(project, violatingPath, "const lateUnused = true;\n");
+  await installProjectEslint(project);
+  await bindVerboseLint(root, project, eslintCommand);
+
+  // Act
+  const selected = await verifyProjectLint({
+    cwd: root,
+    changedPaths: ["web/src/selected file.js", "web/-selected.js"],
+  });
+  const expanded = await verifyProjectLint({
+    cwd: root,
+    changedPaths: ["web/.omp-verifier.json"],
+  });
+
+  // Assert
+  assert.equal(selected.status, "PASS", selected.evidence);
+  assert.match(selected.evidence, /exited 0/);
+  assert.match(selected.evidence, /output truncated.*64000-byte retention limit/);
+  assert.ok(selected.evidence.length <= 3_900);
+
+  assert.equal(expanded.status, "FAIL", expanded.evidence);
+  assert.match(expanded.evidence, /z finding\.js/);
+  assert.match(expanded.evidence, /1:7\s+error\s+.*lateUnused.*no-unused-vars/);
+  assert.match(expanded.evidence, /output truncated.*64000-byte retention limit/);
+  assert.match(expanded.evidence, /Command: [^\n]*verbose-lint-wrapper\.mjs[^\n]*selected paths; sample:/);
+  assert.ok(expanded.evidence.includes(`${expectedExpandedPaths.length} selected paths; sample:`));
+  assert.ok(expanded.evidence.length <= 3_900);
+
+  const argvLog = await readFile(join(project, "lint-argv.jsonl"), "utf8");
+  const invocations = argvLog.trimEnd().split("\n").map(line => JSON.parse(line));
+  assert.equal(invocations.length, 2);
+  const [selectedArgv, expandedArgv] = invocations;
+  assert.deepEqual(selectedArgv, [...eslintCommand, "src/selected file.js", "./-selected.js"]);
+  assert.deepEqual(expandedArgv.slice(0, eslintCommand.length), eslintCommand);
+  assert.deepEqual(expandedArgv.slice(eslintCommand.length).sort(), expectedExpandedPaths.sort());
+});
+
+for (const termination of [
+  {
+    description: "exits 1 without a recognizable finding",
+    script: "process.exitCode = 1;\n",
+    evidence: /Lint command exited with code 1/,
+  },
+  {
+    description: "is killed by SIGTERM",
+    script: 'process.kill(process.pid, "SIGTERM");\n',
+    evidence: /Lint command terminated by SIGTERM/,
+  },
+]) {
+  test(`when a noisy lint invocation ${termination.description}, the completion cause comes before clipped output`, async t => {
+    // Arrange
+    const root = await projectFixture(t);
+    await writeProjectFile(root, "source.js", "export const selected = true;\n");
+    await writeProjectFile(root, "terminate-lint.mjs", termination.script);
+    await bindVerboseLint(root, root, [process.execPath, "terminate-lint.mjs"]);
+
+    // Act
+    const result = await verifyProjectLint({
+      cwd: root,
+      changedPaths: ["source.js"],
+    });
+
+    // Assert
+    assert.equal(result.status, "BLOCKED", result.evidence);
+    const [, cause, truncation] = result.evidence.split("\n");
+    assert.match(cause, termination.evidence);
+    assert.match(truncation, /output truncated.*64000-byte retention limit/);
+    assert.doesNotMatch(result.evidence, /overall time budget|reported lint violations/);
+    assert.ok(result.evidence.length <= 3_900);
+  });
+}
+
 test("when a selected binding path escapes the checkout, verification blocks rather than invoking the wrapper", async t => {
   // Arrange
   const root = await projectFixture(t);
@@ -687,10 +815,17 @@ import { spawnSync } from "node:child_process";
 import { setTimeout } from "node:timers/promises";
 
 const [command, ...args] = process.argv.slice(2);
+const isInterruptedProject = args.at(-1).startsWith("web/");
+if (isInterruptedProject) {
+  const noise = "web wrapper chatter\\n".repeat(4_000);
+  await new Promise(resolve => process.stdout.write(noise, resolve));
+  await new Promise(resolve => process.stderr.write(noise, resolve));
+}
+
 const lint = spawnSync(command, args, {
   stdio: "inherit",
 });
-if (args.at(-1).startsWith("web/")) await setTimeout(6_000);
+if (isInterruptedProject) await setTimeout(6_000);
 process.exitCode = lint.status ?? 2;
 `);
   await bindLint(root, "javascript", [process.execPath, "lint-wrapper.mjs", "node_modules/.bin/eslint", "--no-fix", "--"], {
@@ -717,6 +852,8 @@ process.exitCode = lint.status ?? 2;
   assert.ok(!lint.summary.includes(root));
   assert.match(lint.evidence, /javascript \(api\): FAIL[^\n]*\n[\s\S]*apiUnused/);
   assert.match(lint.evidence, /javascript \(web\): BLOCKED[^\n]*eslint reported findings before interruption[\s\S]*webUnused/);
+  assert.match(lint.evidence, /javascript \(web\): BLOCKED[^\n]*overall time budget/);
+  assert.match(lint.evidence, /output truncated.*64000-byte retention limit/);
   assert.doesNotMatch(lint.evidence, /workerUnused/);
   assert.match(lint.nextCheck, /Resolve the reported lint violations.*lint --budget-ms/);
 });
