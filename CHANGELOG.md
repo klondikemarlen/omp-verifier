@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.30.7 - 2026-11-25
+
+- Verifier reports its own prompt and session startup time in OMP's local debug log, separately from verification runs.
+
 ## 1.30.6 - 2026-11-25
 
 - A delivery handoff can use the same bounded lint budget as full PR verification. The advisor rechecks PR state before reporting a source blocker, so a result that arrives after merge stays historical.

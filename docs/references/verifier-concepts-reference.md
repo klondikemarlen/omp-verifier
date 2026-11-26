@@ -237,6 +237,16 @@ Changed Git-visible source, delivery base, selected scope, runtime or options in
 
 `/verifier timings` and `omp-verifier timings [--reporter text|json]` show recent `verify`, `automatic`, `lint`, and `handoff check` runs, newest first, for the invocation's working directory. Read history from the same directory, even when a handoff selected a different checkout. Compare like runs and check IDs: different inputs, generations or outcomes can explain a timing change. A slow sample or a change from PASS to FAIL is not itself proof of flakiness.
 
+For a slow prompt or session start, inspect the affected OMP process's local debug log rather than adding up check durations:
+
+```sh
+jq -c 'select(.message == "verifier.startup-timing" or .message == "Agent start prepared" or .message == "ui.loop-blocked") | {timestamp, pid, message, phase, durationMs, attempts, hooksMs, blockedMs, cause}' "$log"
+```
+
+Set `log` to the process's file under `~/.omp/logs/`. Each `verifier.startup-timing` record measures one Verifier callback: `extension_load`, `session_start`, or `before_agent_start`. Read `durationMs` on the `before_agent_start` record to see how long Verifier spent on that prompt. Elapsed time includes waiting; it is not CPU use or keystroke latency.
+
+Compare records for one prompt in one PID. For example, in a controlled OMP 19.2.1 run, Verifier reported **56 ms** for `before_agent_start`, a second extension's deliberately delayed prompt hook reported **750 ms**, and the next `Agent start prepared` record showed `attempts: 1, hooksMs: 808`. Attributing all 808 ms to Verifier would misdiagnose that delay. For an editor freeze, inspect the host's `ui.loop-blocked` sample instead. Missing debug records (including from an older running process) do not mean zero time.
+
 `automatic --progress` writes observed check transitions to stderr, including when Bash captures output without a PTY. Without the flag, progress is enabled only if stdout and stderr are both terminals. Elapsed times are measured at transitions, not updated by a heartbeat. Progress never changes reporter stdout or exit status.
 
 During an interactive advisor Bash call, the editor widget reads the existing timing snapshots for that automatic invocation. An opaque correlation key distinguishes overlapping calls; the widget does not display the command, transcript, diagnostics, or source. It reports observations, not verdicts. A missing display does not stop verification, and a returned check does not establish completion of a pending semantic review.
