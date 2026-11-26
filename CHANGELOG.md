@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.32.2 - 2026-11-26
+
+- Documented how maintainers prioritize hard blockers and review latency, and when repeated defects warrant a design change.
+
 ## 1.32.1 - 2026-11-26
 
 - Automatic PR reviews no longer send live caller and sibling source by default when the check does not request it. Reviewers can still retrieve material dependencies before assessing the change.
