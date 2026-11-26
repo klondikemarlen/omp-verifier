@@ -56,8 +56,15 @@ function resultFromOutput(check, output) {
     if (!STATUSES.has(result.status)) throw new Error("status must be PASS, FAIL, BLOCKED, or N/A");
     const evidence = result.evidence === undefined ? undefined : validString(result.evidence, "evidence", false);
     const nextCheck = result.nextCheck === undefined ? undefined : validString(result.nextCheck, "nextCheck", false);
+    const installedProjectLint = (result.lintBudgetExhaustedMs !== undefined || result.lintVerdicts !== undefined) &&
+      isInstalledProjectLint(check, resolve(defaultPackageDirectory()));
+    let lintVerdicts;
+    if (installedProjectLint && result.status !== "PASS" &&
+      typeof result.lintVerdicts === "string" && result.lintVerdicts.length <= MAX_FIELD_LENGTH) {
+      lintVerdicts = result.lintVerdicts;
+    }
     let lintBudgetExhaustedMs;
-    if (result.lintBudgetExhaustedMs !== undefined && isInstalledProjectLint(check, resolve(defaultPackageDirectory()))) {
+    if (result.lintBudgetExhaustedMs !== undefined && installedProjectLint) {
       validateProjectLintBudget(result.lintBudgetExhaustedMs);
       lintBudgetExhaustedMs = result.lintBudgetExhaustedMs;
     }
@@ -71,6 +78,9 @@ function resultFromOutput(check, output) {
       } : {}),
       ...(nextCheck ? {
         nextCheck,
+      } : {}),
+      ...(lintVerdicts ? {
+        lintVerdicts,
       } : {}),
       ...(lintBudgetExhaustedMs !== undefined ? {
         lintBudgetExhaustedMs,

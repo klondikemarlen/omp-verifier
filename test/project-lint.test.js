@@ -383,8 +383,36 @@ for (const format of ["stylish", "json", "json-with-metadata"]) {
     // Assert
     assert.equal(result.status, "FAIL");
     assert.match(result.evidence, /no-unused-vars/);
+    assert.match(result.lintVerdicts, /FAIL — ESLint reported violations · javascript \(api\)/);
+    assert.match(result.lintVerdicts, /Finding: api\/src\/selected file\.js:1:7 · no-unused-vars/);
+    assert.match(result.lintVerdicts, /Message: 'unused' is assigned a value but never used/);
+    assert.match(result.lintVerdicts, /Next: fix the reported violations/);
   });
 }
+
+test("when a lint diagnostic lacks an unambiguous file header, the verdict does not invent a citation", async t => {
+  // Arrange
+  const root = await projectFixture(t);
+  await writeProjectFile(root, "source.js", "export const source = true;\n");
+  await writeProjectFile(root, "lint-wrapper.mjs", `
+console.log("selected files: source.js");
+console.log("  1:7  error  A reported problem  no-unused-vars");
+process.exitCode = 1;
+`);
+  await bindLint(root, "javascript", [process.execPath, "lint-wrapper.mjs"]);
+
+  // Act
+  const result = await verifyProjectLint({
+    cwd: root,
+    changedPaths: ["source.js"],
+  });
+
+  // Assert
+  assert.equal(result.status, "FAIL");
+  assert.match(result.lintVerdicts, /Finding details: consult the retained lint output/);
+  assert.doesNotMatch(result.lintVerdicts, /source\.js|no-unused-vars/);
+  assert.ok(result.evidence.includes("selected files: source.js\n  1:7  error  A reported problem  no-unused-vars"));
+});
 
 test("when a binding appends selected JavaScript paths, real ESLint scopes to intact nested-cwd arguments", async t => {
   // Arrange
@@ -505,11 +533,14 @@ export default [{
   assert.match(selected.evidence, /output truncated.*64000-byte retention limit/);
   assert.ok(selected.evidence.length <= 3_900);
 
+  assert.equal(selected.lintVerdicts, undefined);
   assert.equal(expanded.status, "FAIL", expanded.evidence);
   assert.match(expanded.evidence, /z finding\.js/);
   assert.match(expanded.evidence, /1:7\s+error\s+.*lateUnused.*no-unused-vars/);
   assert.match(expanded.evidence, /output truncated.*64000-byte retention limit/);
   assert.match(expanded.evidence, /Command: [^\n]*verbose-lint-wrapper\.mjs[^\n]*selected paths; sample:/);
+  assert.match(expanded.evidence, /Inputs \(not findings\):\nCommand:/);
+  assert.match(expanded.lintVerdicts, /Finding: web\/src\/z finding\.js:1:7 · no-unused-vars/);
   assert.ok(expanded.evidence.includes(`${expectedExpandedPaths.length} selected paths; sample:`));
   assert.ok(expanded.evidence.length <= 3_900);
 
@@ -553,6 +584,11 @@ for (const termination of [
     assert.match(cause, termination.evidence);
     assert.match(truncation, /output truncated.*64000-byte retention limit/);
     assert.doesNotMatch(result.evidence, /overall time budget|reported lint violations/);
+    assert.match(result.lintVerdicts, /BLOCKED — lint did not complete · javascript \(\.\)/);
+    assert.match(result.lintVerdicts, termination.evidence);
+    assert.match(result.lintVerdicts, /No source violation established/);
+    assert.match(result.lintVerdicts, /Next: resolve the execution problem/);
+    assert.doesNotMatch(result.lintVerdicts, /source\.js|Command:|wrapper chatter/);
     assert.ok(result.evidence.length <= 3_900);
   });
 }
@@ -850,6 +886,10 @@ process.exitCode = lint.status ?? 2;
   assert.match(lint.summary, /Finished FAIL \(lint violations\): javascript \(api\)/);
   assert.match(lint.summary, /Findings reported before interruption: javascript \(web\)/);
   assert.ok(!lint.summary.includes(root));
+  assert.match(lint.lintVerdicts, /FAIL — ESLint reported violations · javascript \(api\)/);
+  assert.match(lint.lintVerdicts, /BLOCKED — lint did not complete · javascript \(web\)/);
+  assert.match(lint.lintVerdicts, /Partial diagnostics do not establish a completed lint verdict/);
+  assert.match(lint.lintVerdicts, /BLOCKED — lint did not complete · javascript \(worker\)/);
   assert.match(lint.evidence, /javascript \(api\): FAIL[^\n]*\n[\s\S]*apiUnused/);
   assert.match(lint.evidence, /javascript \(web\): BLOCKED[^\n]*eslint reported findings before interruption[\s\S]*webUnused/);
   assert.match(lint.evidence, /javascript \(web\): BLOCKED[^\n]*overall time budget/);

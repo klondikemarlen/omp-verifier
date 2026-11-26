@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify, stripVTControlCharacters } from "node:util";
 
 import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
+import { lintVerdictRows } from "#root/omp-plugin/lint-presentation.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import {
@@ -521,6 +522,22 @@ function lintTimeoutSummary(outcomes, repositoryRoot, budgetMs) {
   return summary.join("; ");
 }
 
+function lintVerdictSummary(outcomes, repositoryRoot, exhaustedBudgetMs) {
+  const rows = [];
+  const canIncreaseBudget = exhaustedBudgetMs < MAX_PROJECT_LINT_BUDGET_MS;
+  for (const status of ["FAIL", "BLOCKED"]) {
+    for (const outcome of outcomes) {
+      if (outcome.status !== status) continue;
+
+      const label = lintGroupLabel(outcome, repositoryRoot);
+      rows.push(...lintVerdictRows(outcome, label, {
+        canIncreaseBudget,
+      }));
+    }
+  }
+  return rows.join("\n");
+}
+
 function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
   const applicable = outcomes.filter(result => result.status !== "N/A");
   if (applicable.length === 0) return { status: "N/A", summary: "No supported changed source requires linting under the detected project configuration" };
@@ -576,10 +593,17 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
     }
     return `${headers[index]}${detail ? `\n${detail}` : ""}`;
   }).join("\n");
+  let lintVerdicts;
+  if (status !== "PASS") {
+    lintVerdicts = lintVerdictSummary(applicable, repositoryRoot, exhaustedBudgetMs);
+  }
   return {
     status,
     summary,
     evidence,
+    ...(lintVerdicts && lintVerdicts.length <= MAX_EVIDENCE ? {
+      lintVerdicts,
+    } : {}),
     ...(status === "PASS" ? {} : {
       nextCheck,
     }),
@@ -596,6 +620,8 @@ function captureLintStream(stream, tool, onError) {
   let offset = 0;
   let truncated = false;
   let finding;
+  let eslintPath;
+  let eslintDiagnostic;
   let line = "";
   const decoder = new StringDecoder("utf8");
   const recognizeLines = ["eslint", "oxlint", "pyflakes"].includes(tool);
@@ -618,7 +644,13 @@ function captureLintStream(stream, tool, onError) {
         if (hasTextLintDiagnostic(tool, clean)
           || ((first === "[" || first === "{") && hasLintDiagnostics(tool, clean))) {
           finding = abbreviateLintText(clean.trim(), MAX_FINDING_DISPLAY);
+          if (tool === "eslint") {
+            eslintDiagnostic = stylishEslintDiagnostic(eslintPath, clean) ?? jsonEslintDiagnostic(clean);
+          }
         }
+        eslintPath = tool === "eslint" && isAbsolute(clean) ? clean : undefined;
+      } else {
+        eslintPath = undefined;
       }
       line = "";
       if (newline < 0) return;
@@ -665,6 +697,7 @@ function captureLintStream(stream, tool, onError) {
     return {
       text,
       finding,
+      eslintDiagnostic,
       truncated,
     };
   };
@@ -759,17 +792,86 @@ function hasTextLintDiagnostic(tool, text) {
     && /^[^\r\n]+:\d+:\d+: (?:warning|error) [\w/-]+(?:\([^)]+\))?: \S.+$/m.test(text);
 }
 
-function hasEslintReport(text) {
+function stylishEslintDiagnostic(path, line) {
+  if (!path) return;
+
+  // ESLint stylish prints an absolute file header followed by aligned diagnostic columns.
+  const match = /^[ \t]+([1-9]\d*):([1-9]\d*)[ \t]{2,}(?:error|warning)[ \t]{2,}(\S.*?)[ \t]{2,}([\w@./-]+)[ \t]*$/.exec(line);
+  if (!match) return;
+
+  const [, sourceLine, column, message, rule] = match;
+  return {
+    path,
+    sourceLine,
+    column,
+    message,
+    rule,
+  };
+}
+
+function parseEslintReport(text) {
+  const first = text.trimStart()[0];
+  if (first !== "[" && first !== "{") return;
+
   try {
     const report = JSON.parse(text);
     const results = Array.isArray(report) ? report : report?.results;
-    return Array.isArray(results) && results.some(result =>
-      typeof result.filePath === "string" && Array.isArray(result.messages) &&
-      result.messages.some(message => (message.severity === 1 || message.severity === 2) &&
-        typeof message.message === "string" && message.message.length > 0));
+    if (Array.isArray(results)) return results;
   } catch {
-    return false;
+    // Mixed or clipped tool output is not a complete JSON report.
   }
+}
+
+function jsonEslintDiagnostic(text) {
+  const results = parseEslintReport(text);
+  for (const result of results ?? []) {
+    const path = result?.filePath;
+    if (typeof path !== "string" || !isAbsolute(path) || !Array.isArray(result.messages)) continue;
+
+    for (const diagnostic of result.messages) {
+      if (!isEslintMessage(diagnostic) || !Number.isSafeInteger(diagnostic.line) || diagnostic.line < 1) continue;
+
+      return {
+        path,
+        sourceLine: diagnostic.line,
+        column: Number.isSafeInteger(diagnostic.column) && diagnostic.column > 0 ? diagnostic.column : undefined,
+        message: diagnostic.message,
+        rule: typeof diagnostic.ruleId === "string" ? diagnostic.ruleId : undefined,
+      };
+    }
+  }
+}
+
+function isEslintMessage(message) {
+  return (message?.severity === 1 || message?.severity === 2) &&
+    typeof message.message === "string" && message.message.length > 0;
+}
+
+function eslintDiagnosticForDisplay(streams, repositoryRoot) {
+  for (const stream of streams) {
+    const diagnostic = stream.eslintDiagnostic ?? jsonEslintDiagnostic(stripVTControlCharacters(stream.text));
+    if (!diagnostic) continue;
+
+    const { path, sourceLine, column, message, rule } = diagnostic;
+    const relativePath = relative(repositoryRoot, path);
+    const displayPath = relativePath.startsWith("../") ? path : relativePath;
+    let location = `${displayPath}:${sourceLine}`;
+    if (column) {
+      location += `:${column}`;
+    }
+    return {
+      location,
+      message: abbreviateLintText(message, MAX_FINDING_DISPLAY),
+      rule,
+    };
+  }
+}
+
+function hasEslintReport(text) {
+  const results = parseEslintReport(text);
+  return results?.some(result =>
+    typeof result?.filePath === "string" && Array.isArray(result.messages) && result.messages.some(isEslintMessage),
+  ) ?? false;
 }
 
 function hasLintDiagnostics(tool, output) {
@@ -820,11 +922,11 @@ function lintCommandSummary(plan) {
   }
   // The display is a preview, never the argv passed to spawn.
   if (argumentsShown === plan.command.length) {
-    return `Command: ${command}`;
+    return `Inputs (not findings):\nCommand: ${command}`;
   }
   const invocation = plan.command.slice(0, 2).map(argument => displayArgument(argument, 100)).join(" ");
   const sample = plan.paths.slice(0, 2).map(path => displayArgument(path, 80)).join(", ");
-  return `Command: ${invocation} (${plan.paths.length} selected paths; sample: ${sample})`;
+  return `Inputs (not findings):\nCommand: ${invocation} (${plan.paths.length} selected paths; sample: ${sample})`;
 }
 
 function lintExecutionReason({ code, signal, failure }) {
@@ -854,13 +956,23 @@ function lintExecutionEvidence(plan, streams, { completedSuccessfully }) {
   let evidence = output;
   if (outputTruncated) {
     const excerpts = streams.map(stream => stream.text.slice(-MAX_LINT_STREAM_EXCERPT));
-    evidence = [...findings, lintCommandSummary(plan), ...excerpts].filter(Boolean).join("\n");
-  } else if (!completedSuccessfully && output.length > MAX_LINT_STREAM_EXCERPT * 2) {
-    evidence = [...findings, lintCommandSummary(plan), output].filter(Boolean).join("\n");
-  } else if (!completedSuccessfully && !reportedFindings) {
-    evidence = [lintCommandSummary(plan), output].filter(Boolean).join("\n");
-  } else if (!completedSuccessfully || !output) {
-    evidence = [output, lintCommandSummary(plan)].filter(Boolean).join("\n");
+    evidence = [
+      findings.length > 0 && "Retained diagnostic lines:",
+      ...findings,
+      lintCommandSummary(plan),
+      "Retained lint output:",
+      ...excerpts,
+    ].filter(Boolean).join("\n");
+  } else if (!completedSuccessfully) {
+    const retainedFindings = output.length > MAX_LINT_STREAM_EXCERPT * 2 ? findings : [];
+    evidence = [
+      retainedFindings.length > 0 && "Retained diagnostic lines:",
+      ...retainedFindings,
+      lintCommandSummary(plan),
+      output && `Retained lint output:\n${output}`,
+    ].filter(Boolean).join("\n");
+  } else if (!output) {
+    evidence = lintCommandSummary(plan);
   }
   return {
     outputTruncated,
@@ -1006,6 +1118,7 @@ export async function verifyProjectLint({
     const group = {
       language: plan.language,
       root: plan.root,
+      tool: plan.tool,
       wholeProjectTrigger: plan.wholeProjectTrigger,
     };
     if (budgetExhausted || Date.now() >= deadline) {
@@ -1100,11 +1213,17 @@ export async function verifyProjectLint({
         : unprovenFailure
           ? `The declared command failed without recognized ${plan.tool} diagnostics; lint execution is unverified`
           : `${plan.tool} could not complete`;
+      let diagnostic;
+      if (status === "FAIL" && plan.tool === "eslint") {
+        diagnostic = eslintDiagnosticForDisplay(streams, discovery.repositoryRoot);
+      }
       outcomes.push({
         ...group,
         status,
         summary,
         executionReason: lintExecutionReason(execution),
+        diagnostic,
+        diagnosticsObserved: reportedFindings,
         outputTruncated,
         evidence,
       });
