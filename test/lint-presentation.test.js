@@ -63,11 +63,15 @@ function verifierNote(note) {
   });
 }
 
-test("projects only grouped lint verdicts and preserves exact retained evidence for native expansion", () => {
+test("when a lint note has grouped verdicts, expansion preserves the original evidence", () => {
+  // Arrange
   const note = verifierNote(reportedLint);
   const block = advisorBlock([note]);
+
+  // Act
   const { compact } = presentLintAdvisor(block);
 
+  // Assert
   assert.deepEqual(compact, {
     label: "Verifier lint · blocker · Ctrl+O for retained evidence",
     rows: ["Scope: changed paths; selected files; checkout /checkout", ...lintVerdictRows],
@@ -77,7 +81,8 @@ test("projects only grouped lint verdicts and preserves exact retained evidence 
   assert.ok(note.note.endsWith(`  Retained execution evidence:\n${retainedEvidence}`));
 });
 
-test("defers unrelated, mixed, and unframed advisor results to the native card", () => {
+test("when a card cannot be compacted without losing context, the native renderer keeps it", () => {
+  // Arrange
   const lintNote = verifierNote(reportedLint);
   const otherNote = {
     advisor: "other-advisor",
@@ -95,9 +100,15 @@ test("defers unrelated, mixed, and unframed advisor results to the native card",
   const malformedProjection = reportedLint.replace("Next: fix the reported violations", "unexpected argv dump");
   const legacyNote = verifierNote("BLOCKED verifier:project-lint\n  Command exited with code 1.");
 
-  assert.equal(presentLintAdvisor(advisorBlock([otherNote])), undefined);
-  assert.equal(presentLintAdvisor(advisorBlock([lintNote, otherNote])), undefined);
-  assert.equal(presentLintAdvisor(advisorBlock([verifierNote(mixedChecks)])), undefined);
-  assert.equal(presentLintAdvisor(advisorBlock([verifierNote(malformedProjection)])), undefined);
-  assert.equal(presentLintAdvisor(advisorBlock([legacyNote])), undefined);
+  // Act
+  const projections = [
+    [otherNote],
+    [lintNote, otherNote],
+    [verifierNote(mixedChecks)],
+    [verifierNote(malformedProjection)],
+    [legacyNote],
+  ].map(notes => presentLintAdvisor(advisorBlock(notes)));
+
+  // Assert
+  assert.deepEqual(projections, Array(5).fill(undefined));
 });
