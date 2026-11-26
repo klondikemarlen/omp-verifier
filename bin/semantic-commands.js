@@ -4,6 +4,7 @@ import { Option } from "commander";
 import { addReportingOptions, parseWholeNumber } from "#root/bin/cli-options.js";
 import { writeJson, writeResults } from "#root/bin/cli-output.js";
 import { addRequestOption, resolveVerificationInvocation } from "#root/bin/request-invocation.js";
+import { resumeCheckpoint } from "#root/omp-plugin/checkpoint-handoff.js";
 import { validateContextPathLimit } from "#root/omp-plugin/semantic-context.js";
 import {
   completeSemanticEvaluation,
@@ -36,6 +37,16 @@ export function registerSemanticCommands(program) {
     failuresOnly: true,
   }));
   evaluate.action(evaluateRequest);
+
+  const handoff = program.command("resume-checkpoint")
+    .description("Hand a checkpointed request to a fresh native verifier in its owning checkout")
+    .argument("<request-file>", "Current checkpointed semantic request file")
+    .option("--pull-request <url>", "Intended GitHub PR or GitLab MR URL for a delivery review")
+    .option("--target-branch <name>", "Expected target branch of that PR or MR");
+  addRequestOption(addReportingOptions(handoff, {
+    failuresOnly: true,
+  }));
+  handoff.action(resumeCheckpointRequest);
 
   const diagnostics = program.command("diagnostics")
     .description("Read privacy-safe semantic request diagnostics")
@@ -121,6 +132,22 @@ async function evaluateRequest(requestPath, options) {
   await writeResults([result], {
     reporter: options.reporter,
     failuresOnly: options.failuresOnly,
+  });
+}
+
+async function resumeCheckpointRequest(requestPath, options) {
+  const invocation = await resolveVerificationInvocation(options.request);
+  const result = invocation.result ?? await resumeCheckpoint({
+    cwd: process.cwd(),
+    requestPath,
+    pullRequest: options.pullRequest,
+    targetBranch: options.targetBranch,
+    waiver: invocation.waiver,
+  });
+  await writeResults([result], {
+    reporter: options.reporter,
+    failuresOnly: options.failuresOnly,
+    inlineReviewPage: false,
   });
 }
 

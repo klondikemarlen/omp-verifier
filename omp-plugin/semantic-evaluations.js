@@ -471,6 +471,25 @@ async function loadRequestForOperation({ cwd, requestPath }) {
   return { repositoryRoot, cacheDirectory, absoluteRequestPath, checkId, requestId };
 }
 
+export async function readCheckpointHandoffTarget({ cwd, requestPath }) {
+  const target = await loadRequestForOperation({
+    cwd,
+    requestPath,
+  });
+  const { stored, currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
+  if (!stored.payload.continuation || !Object.keys(currentState.batchAssessments ?? {}).length) {
+    throw new Error("A fresh reviewer handoff requires an accepted batch checkpoint on the current continuation");
+  }
+
+  return {
+    requestId: target.requestId,
+    requestPath: target.absoluteRequestPath,
+    repositoryRoot: target.repositoryRoot,
+    delivery: stored.payload.scope.automatic?.delivery,
+    leasePath: join(target.cacheDirectory, "locks", `${checkCacheKey(target.checkId)}.fresh-reviewer`),
+  };
+}
+
 async function validateFreshness({ checkId, repositoryRoot, stored }) {
   const { payload, runtime } = stored;
   const delivery = payload.scope.automatic?.delivery;

@@ -276,6 +276,15 @@ export default async function verifierPlugin(pi) {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
+    if (process.env.OMP_VERIFIER_FRESH_REVIEWER) {
+      return {
+        systemPrompt: [
+          ...event.systemPrompt,
+          "This is a checkpoint handoff. The primary must not use tools or assess source. Yield to the configured verifier; only it may inspect and evaluate the existing request. No new capture, waiver, edits or delivery are authorized here.",
+        ],
+      };
+    }
+
     const startedAt = performance.now();
     const agentDir = ctx.agentDir || pi.pi.getAgentDir();
     const coordinatorPath = runtimePaths(agentDir).launcher;
