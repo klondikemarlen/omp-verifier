@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { resumeCheckpoint } from "#root/omp-plugin/checkpoint-handoff.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import {
   completeSemanticEvaluation,
@@ -115,6 +116,54 @@ async function finalize(fixture, review, overrides = {}) {
     assessment: { ...assessmentFor(review), ...overrides },
   });
 }
+
+test("when a fresh session exits without assessing the aggregate, the checkpoint remains pending", async t => {
+  // Arrange
+  const fixture = await createFixture({
+    count: 1,
+    bytes: 200,
+  });
+  t.after(() => rm(fixture.root, {
+    recursive: true,
+    force: true,
+  }));
+  const { path: requestPath, requestId } = fixture.continued.reviewRequest;
+  await completeBatches(fixture);
+
+  // Act
+  const result = await resumeCheckpoint({
+    cwd: fixture.root,
+    requestPath,
+  }, async () => {});
+
+  // Assert
+  assert.equal(result.status, "PENDING");
+  assert.equal(result.reviewRequest.requestId, requestId);
+  assert.equal(result.reviewRequest.continuation.phase, "aggregate");
+  assert.equal(result.reviewRequest.continuation.batches[0].assessment.status, "PASS");
+});
+
+test("when a handoff is attempted before a checkpoint, dispatch is refused", async t => {
+  // Arrange
+  const fixture = await createFixture({
+    count: 1,
+    bytes: 200,
+  });
+  t.after(() => rm(fixture.root, {
+    recursive: true,
+    force: true,
+  }));
+  const requestPath = fixture.continued.reviewRequest.path;
+
+  // Act
+  const handoff = resumeCheckpoint({
+    cwd: fixture.root,
+    requestPath,
+  }, () => assert.fail("Dispatched before the first checkpoint"));
+
+  // Assert
+  await assert.rejects(handoff, /requires an accepted batch checkpoint/);
+});
 
 test("when required source exceeds the aggregate tier, complete checkpoints permit one whole-scope assessment", async () => {
   // Arrange
