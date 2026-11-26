@@ -240,10 +240,12 @@ Changed Git-visible source, delivery base, selected scope, runtime or options in
 For a slow prompt or session start, inspect the affected OMP process's local debug log rather than adding up check durations:
 
 ```sh
-jq -c 'select(.message == "verifier.startup-timing" or .message == "Agent start prepared" or .message == "ui.loop-blocked") | {timestamp, pid, message, phase, durationMs, hooksMs, blockedMs, cause}' "$log"
+jq -c 'select(.message == "verifier.startup-timing" or .message == "Agent start prepared" or .message == "ui.loop-blocked") | {timestamp, pid, message, phase, durationMs, attempts, hooksMs, blockedMs, cause}' "$log"
 ```
 
-Set `log` to the process's file under `~/.omp/logs/`. Verifier records elapsed milliseconds for `extension_load`, `session_start`, and `before_agent_start` when each returns. Compare the prompt hook with the host's `hooksMs` for the same PID and prompt, not with unrelated concurrent runs. Elapsed time includes waiting; it is not CPU use or keystroke latency. For an editor freeze, the host's `ui.loop-blocked` stack sample is better evidence than a check happening at the same time. Missing debug records (including from an older running process) do not mean zero time.
+Set `log` to the process's file under `~/.omp/logs/`. Each `verifier.startup-timing` record measures one Verifier callback: `extension_load`, `session_start`, or `before_agent_start`. Read `durationMs` on the `before_agent_start` record to see how long Verifier spent on that prompt. Elapsed time includes waiting; it is not CPU use or keystroke latency.
+
+Compare records for one prompt in one PID. For example, in a controlled OMP 19.2.1 run, Verifier reported **56 ms** for `before_agent_start`, a second extension's deliberately delayed prompt hook reported **750 ms**, and the next `Agent start prepared` record showed `attempts: 1, hooksMs: 808`. Attributing all 808 ms to Verifier would misdiagnose that delay. For an editor freeze, inspect the host's `ui.loop-blocked` sample instead. Missing debug records (including from an older running process) do not mean zero time.
 
 `automatic --progress` writes observed check transitions to stderr, including when Bash captures output without a PTY. Without the flag, progress is enabled only if stdout and stderr are both terminals. Elapsed times are measured at transitions, not updated by a heartbeat. Progress never changes reporter stdout or exit status.
 
