@@ -237,6 +237,14 @@ Changed Git-visible source, delivery base, selected scope, runtime or options in
 
 `/verifier timings` and `omp-verifier timings [--reporter text|json]` show recent `verify`, `automatic`, `lint`, and `handoff check` runs, newest first, for the invocation's working directory. Read history from the same directory, even when a handoff selected a different checkout. Compare like runs and check IDs: different inputs, generations or outcomes can explain a timing change. A slow sample or a change from PASS to FAIL is not itself proof of flakiness.
 
+For a slow prompt or session start, inspect the affected OMP process's local debug log rather than adding up check durations:
+
+```sh
+jq -c 'select(.message == "verifier.startup-timing" or .message == "Agent start prepared" or .message == "ui.loop-blocked") | {timestamp, pid, message, phase, durationMs, hooksMs, blockedMs, cause}' "$log"
+```
+
+Set `log` to the process's file under `~/.omp/logs/`. Verifier records elapsed milliseconds for `extension_load`, `session_start`, and `before_agent_start` when each returns. Compare the prompt hook with the host's `hooksMs` for the same PID and prompt, not with unrelated concurrent runs. Elapsed time includes waiting; it is not CPU use or keystroke latency. For an editor freeze, the host's `ui.loop-blocked` stack sample is better evidence than a check happening at the same time. Missing debug records (including from an older running process) do not mean zero time.
+
 `automatic --progress` writes observed check transitions to stderr, including when Bash captures output without a PTY. Without the flag, progress is enabled only if stdout and stderr are both terminals. Elapsed times are measured at transitions, not updated by a heartbeat. Progress never changes reporter stdout or exit status.
 
 During an interactive advisor Bash call, the editor widget reads the existing timing snapshots for that automatic invocation. An opaque correlation key distinguishes overlapping calls; the widget does not display the command, transcript, diagnostics, or source. It reports observations, not verdicts. A missing display does not stop verification, and a returned check does not establish completion of a pending semantic review.
