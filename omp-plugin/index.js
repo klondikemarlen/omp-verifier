@@ -192,9 +192,12 @@ async function verifyCloseoutReceipt(agentDir, repositoryRoot, receiptPath) {
 function logStartupTiming(pi, phase, startedAt) {
   // Diagnostics must not prevent startup or suppress the request's verifier instructions.
   try {
-    pi.logger?.debug("verifier.startup-timing", {
+    const logger = pi.logger;
+    if (!logger) return;
+    const durationMs = Math.round(performance.now() - startedAt);
+    logger.debug("verifier.startup-timing", {
       phase,
-      durationMs: Math.round(performance.now() - startedAt),
+      durationMs,
     });
   } catch {
     // Host logging is best-effort.
