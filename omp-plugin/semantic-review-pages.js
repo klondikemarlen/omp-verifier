@@ -11,6 +11,8 @@ const MAX_UNWRAPPED_PAGE_BYTES = MAX_FORMATTED_PAGE_BYTES - WRAPPING_OVERHEAD_BY
 const DISPLAY_WRAP_NOTE = "Display wraps at 600 UTF-8 bytes. Join backslash-newline continuations without adding a newline; original source line keys are unchanged.";
 const NUMERIC_HEADER_ALLOWANCE = 128;
 const REVIEW_PAGE_INSTRUCTION = "You are the verifier: execute the next command with bash yourself. A standalone advise call ends this review; never use it for continuation or PENDING progress. Inspect every page, then assess the whole scope once and observe the accepted final result.";
+const REVIEW_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const SOURCE_HASH_PATTERN = /^[0-9a-f]{64}$/;
 
 const REVIEW_RESULT_ORDER = ["id", "status", "summary", "evidence", "reviewRequest"];
 const REVIEW_REQUEST_ORDER = [
@@ -59,6 +61,18 @@ function orderedObject(value, preferredKeys) {
   return Object.fromEntries(orderedKeys.map(key => [key, value[key]]));
 }
 
+function sourceInventoryFileForReview(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return record;
+
+  if (typeof record.path === "string"
+    && Number.isSafeInteger(record.size) && record.size >= 0
+    && typeof record.sha256 === "string" && SOURCE_HASH_PATTERN.test(record.sha256)
+    && Object.keys(record).length === 3) {
+    return record.path;
+  }
+  return record;
+}
+
 function orderedReviewResult(result) {
   if (!result || typeof result !== "object" || !result.reviewRequest) return result;
 
@@ -66,7 +80,11 @@ function orderedReviewResult(result) {
   if (reviewRequest.context) {
     const context = orderedObject(reviewRequest.context, REVIEW_CONTEXT_ORDER);
     if (context.sourceInventory) {
-      context.sourceInventory = orderedObject(context.sourceInventory, SOURCE_INVENTORY_ORDER);
+      const sourceInventory = orderedObject(context.sourceInventory, SOURCE_INVENTORY_ORDER);
+      if (Array.isArray(sourceInventory.files)) {
+        sourceInventory.files = sourceInventory.files.map(sourceInventoryFileForReview);
+      }
+      context.sourceInventory = sourceInventory;
     }
     reviewRequest.context = context;
   }
@@ -102,13 +120,22 @@ function quoteShellArgument(value) {
   return `'${value.replaceAll("'", "'\"'\"'")}'`;
 }
 
-export function resumeReviewCommand(path) {
-  return `node ${quoteShellArgument(COORDINATOR_PATH)} review ${quoteShellArgument(path)} --resume --reporter text`;
+export function shortReviewRequestId({ requestId }) {
+  if (process.env.OMP_VERIFIER_REQUEST_ID_ARGUMENT === "1"
+    && typeof requestId === "string" && requestId.length === 36
+    && REVIEW_REQUEST_ID_PATTERN.test(requestId)) {
+    return requestId;
+  }
+  return undefined;
 }
 
-function nextReviewCommand(path, nextPageIndex, batchIndex) {
+export function resumeReviewCommand(requestArgument) {
+  return `node ${quoteShellArgument(COORDINATOR_PATH)} review ${quoteShellArgument(requestArgument)} --resume --reporter text`;
+}
+
+function nextReviewCommand(requestArgument, nextPageIndex, batchIndex) {
   const coordinator = `node ${quoteShellArgument(COORDINATOR_PATH)}`;
-  const request = quoteShellArgument(path);
+  const request = quoteShellArgument(requestArgument);
   if (nextPageIndex === null) {
     return `${coordinator} evaluate ${request} --assessment - --reporter text --failures-only`;
   }
@@ -117,29 +144,29 @@ function nextReviewCommand(path, nextPageIndex, batchIndex) {
   return `${coordinator} review ${request} --reporter text${batchOption} --page ${nextPageIndex}`;
 }
 
-function reviewContinuation(path, nextPageIndex, phase, batchIndex) {
+function reviewContinuation(requestArgument, nextPageIndex, phase, batchIndex) {
   if (nextPageIndex === null) {
     if (phase === "batch") {
       return [
         `Next action: Submit a batch checkpoint with batchIndex: ${batchIndex}, nonempty crossBatchNotes (at most 4000 characters), and the usual assessment fields, within 8000 serialized UTF-8 bytes. This leaves the whole obligation PENDING; inspect the returned next batch or aggregate ledger.`,
-        `Next command: ${nextReviewCommand(path, null)}`,
+        `Next command: ${nextReviewCommand(requestArgument, null)}`,
       ].join("\n");
     }
     if (phase === "aggregate") {
       return [
         "Next action: Assess the whole original scope and cross-batch interactions using every checkpoint. Submit the usual assessment fields and coveredBatches with every exact batch index; omit batchIndex. Reinspect material source with review --batch N as needed. Do not finish before observing the accepted final result.",
-        `Next command: ${nextReviewCommand(path, null)}`,
+        `Next command: ${nextReviewCommand(requestArgument, null)}`,
       ].join("\n");
     }
     return [
       "Next action: Assess the complete scope using this request ID, then submit literal assessment JSON on stdin. Do not finish before observing the accepted final result.",
-      `Next command: ${nextReviewCommand(path, null)}`,
+      `Next command: ${nextReviewCommand(requestArgument, null)}`,
     ].join("\n");
   }
 
   return [
     "Next action: Read the next page now; do not report unread pages as a blocker or finish the review.",
-    `Next command: ${nextReviewCommand(path, nextPageIndex, batchIndex)}`,
+    `Next command: ${nextReviewCommand(requestArgument, nextPageIndex, batchIndex)}`,
   ].join("\n");
 }
 
@@ -247,6 +274,7 @@ export function paginateSemanticReview(result) {
     compact: true,
   });
   const buffer = Buffer.from(serialized, "utf8");
+  // Reserve space for full-path output so either command form keeps the same page receipt identity.
   const capacity = contentCapacity(path, requestId, phase, batchIndex);
   const offsets = pageOffsets(buffer, capacity);
   const count = offsets.length;
@@ -313,10 +341,12 @@ export function formatSemanticReviewPage(page, { resumed = false } = {}) {
     nextPage = String(nextPageIndex);
   }
 
+  const shortRequestId = shortReviewRequestId(page);
+  const requestArgument = shortRequestId ?? page.path;
   const output = wrapDisplayLines([
     "Semantic review page",
     "Review state: PENDING",
-    `Request path: ${page.path}`,
+    ...(shortRequestId ? [] : [`Request path: ${page.path}`]),
     `Request ID: ${page.requestId}`,
     ...(page.continuationPhase ? [`Continuation phase: ${page.continuationPhase}`] : []),
     ...(page.batchIndex === undefined ? [] : [`Batch index: ${page.batchIndex} (zero-based)`]),
@@ -326,7 +356,7 @@ export function formatSemanticReviewPage(page, { resumed = false } = {}) {
     "JSON fragment:",
     page.content,
     `Next page index: ${nextPage}`,
-    reviewContinuation(page.path, nextPageIndex, page.continuationPhase, page.batchIndex),
+    reviewContinuation(requestArgument, nextPageIndex, page.continuationPhase, page.batchIndex),
     reviewPageInstruction(page.continuationPhase, resumed),
   ].join("\n"));
 

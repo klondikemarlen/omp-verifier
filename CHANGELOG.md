@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.37.0 - 2026-11-27
+
+- Continue an installed review by its request ID instead of copying a private cache path. Each action still targets one exact request in its owning checkout.
+- Review pages list successfully inspected inventory files by path. Their sizes and hashes remain available in the full JSON export and still participate in freshness checks.
+
 ## 1.36.3 - 2026-11-27
 
 - When no state exists for the check named in a review handle, the verifier directs the reviewer back to the exact handle instead of claiming that the review was superseded.

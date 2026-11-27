@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -408,6 +408,10 @@ test("when a review handle is shortened between pages, retrying the exact footer
     ["review", shortenedFilename, "--reporter", "text", "--page", "1"],
     ["evaluate", shortenedFilename, "--assessment", "{}"],
     ["diagnostics", shortenedFilename],
+    ["diagnostics", requestId.slice(0, 12)],
+    ["diagnostics", `A${requestId.slice(1)}`],
+    ["diagnostics", `${requestId}\n`],
+    ["diagnostics", `${requestId[0] === "0" ? "1" : "0"}${requestId.slice(1)}`],
   ];
   const failures = await Promise.allSettled(invalidCommands.map(args => current.cli(args)));
 
@@ -485,6 +489,92 @@ test("when the generation for a complete request is missing, the launcher report
   assert.match(failure.stderr, /^BLOCKED verifier:generation$/m);
 });
 
+test("when a retained generation's checkout cache is a symlink, it is ignored during UUID lookup", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const [prepared] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { path, requestId } = prepared.reviewRequest;
+  const checkoutCache = dirname(dirname(path));
+  const candidate = await current.replacement();
+  await activateGeneration(candidate.id, {
+    agentDir: current.agentDir,
+  });
+  const replacementReviews = join(current.paths.root, "reviews", candidate.id);
+  await mkdir(replacementReviews, {
+    recursive: true,
+  });
+  await symlink(checkoutCache, join(replacementReviews, basename(checkoutCache)));
+
+  // Act
+  const diagnostics = JSON.parse(await current.cli(["diagnostics", requestId]));
+
+  // Assert
+  assert.equal(diagnostics.status, "PENDING");
+  assert.equal(diagnostics.currentId, requestId);
+});
+
+test("when two retained generations contain the exact request UUID, the launcher rejects ambiguity", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const [original] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const candidate = await current.replacement();
+  await activateGeneration(candidate.id, {
+    agentDir: current.agentDir,
+  });
+  const [replacement] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { path, requestId } = original.reviewRequest;
+  await copyFile(path, join(dirname(replacement.reviewRequest.path), basename(path)));
+
+  // Act / Assert
+  await assert.rejects(current.cli(["diagnostics", requestId]), {
+    code: 2,
+    stderr: /Ambiguous review request UUID in this checkout/,
+    stdout: "",
+  });
+});
+
+test("when another checkout uses a valid request ID, the launcher does not open the original review", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const otherProject = join(current.root, "other-project");
+  execFileSync("git", ["init", "-q", otherProject]);
+  const [prepared] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const { requestId } = prepared.reviewRequest;
+
+  // Act / Assert
+  await assert.rejects(execute(process.execPath, [current.paths.launcher, "diagnostics", requestId], {
+    cwd: otherProject,
+    timeout: 30_000,
+  }), {
+    code: 2,
+    stderr: /No exact review request UUID found in this checkout/,
+    stdout: "",
+  });
+});
+
+test("when a fresh reviewer is bound to a request, it must keep using the handed-off path", async context => {
+  // Arrange
+  const current = await fixture(context);
+  const [original] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const [replacement] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
+  const environment = {
+    OMP_VERIFIER_FRESH_REVIEWER: replacement.reviewRequest.path,
+    OMP_VERIFIER_REQUEST_ID_ARGUMENT: "1",
+  };
+
+  // Act / Assert
+  await assert.rejects(current.cli(["review", replacement.reviewRequest.requestId], environment), {
+    code: 2,
+    stderr: /Invalid review request path or UUID/,
+  });
+  await assert.rejects(current.cli(["review", original.reviewRequest.path], environment), {
+    code: 2,
+    stderr: /Fresh reviewer may only inspect or evaluate its handed-off request/,
+  });
+  const page = await current.cli(["review", replacement.reviewRequest.path, "--reporter", "text"], environment);
+  assert.ok(page.match(/^Next command: (.+)$/m)?.[1].includes(replacement.reviewRequest.path));
+});
+
 test("when an opted-in provider is reinstalled during semantic review, evaluation and reporting retain the original standard", async context => {
   // Arrange
   const current = await fixture(context, {
@@ -494,11 +584,18 @@ test("when an opted-in provider is reinstalled during semantic review, evaluatio
   const request = prepared[0].reviewRequest;
   const candidate = await current.replacement();
   await activateGeneration(candidate.id, { agentDir: current.agentDir });
+  const [active] = JSON.parse(await current.cli(["verify", "probe:semantic"]));
   await rm(join(current.root, "plugins"), { recursive: true });
-  const page = await current.cli(["review", request.path, "--reporter", "text"]);
+  const reviewSubdirectory = await execute(process.execPath, [
+    current.paths.launcher, "review", request.requestId, "--reporter", "text",
+  ], {
+    cwd: join(current.project, "src"),
+    timeout: 30_000,
+  });
+  const page = reviewSubdirectory.stdout;
   const pageCount = Number(page.match(/Page index: 0 of (\d+)/)[1]);
   for (let index = 1; index < pageCount; index++) {
-    await current.cli(["review", request.path, "--reporter", "text", "--page", String(index)]);
+    await current.cli(["review", request.requestId, "--reporter", "text", "--page", String(index)]);
   }
   const assessment = {
     requestId: request.requestId,
@@ -515,11 +612,17 @@ test("when an opted-in provider is reinstalled during semantic review, evaluatio
   };
 
   // Act
-  const result = JSON.parse(await current.cli(["evaluate", request.path, "--assessment", JSON.stringify(assessment)]))[0];
+  const result = JSON.parse(await current.cli(["evaluate", request.requestId, "--assessment", JSON.stringify(assessment)]))[0];
   const reported = JSON.parse(await current.cli(["review", request.path]))[0];
+  const activeDiagnostics = JSON.parse(await current.cli(["diagnostics", active.reviewRequest.requestId]));
 
   // Assert
   assert.equal(result.status, "PASS");
+  const nextCommand = page.match(/^Next command: (.+)$/m)?.[1];
+  assert.ok(nextCommand?.includes(request.requestId));
+  assert.ok(!nextCommand.includes(request.path));
+  assert.equal(activeDiagnostics.status, "PENDING");
+  assert.equal(activeDiagnostics.currentId, active.reviewRequest.requestId);
   assert.equal(result.generation.id, current.initial.id);
   assert.equal(reported.status, "PASS");
 });
