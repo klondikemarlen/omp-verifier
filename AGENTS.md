@@ -34,10 +34,10 @@ Verifier output must be evidence-first:
 
 Current scope:
 
-- `/verifier` and `/verifier status` report global and project advisor rosters.
+- `/verifier` and `/verifier status` report setup, not live activity. `--details` includes advisor names, the active generation, and file paths.
 - `/verifier checks` and `/verifier verify` expose explicit manifest checks.
 - The installed `verifier:project-lint` manifest discovers and executes existing lint tooling for JavaScript/TypeScript, Ruby, Go, Python, and Shell; it does not provision tools.
-- `/verifier uninstall` removes only the marked verifier advisor block.
+- `/verifier uninstall` removes only the marked verifier advisor block and unchanged generated guidance; it does not uninstall the package.
 - Plugin load preserves or restores OMP's stock `default` advisor, then inserts `verifier` second with `bash`.
 - Plugin load refreshes `<agent-dir>/verifier/WATCHDOG.md` with the coordinator path derived from the installed package.
 - Automatic source checks apply to current PR/MR changes, not routine housekeeping. Resource verification is opt-in. `PASS`, `SUPPRESSED`, and no results stay silent; `FAIL` and `BLOCKED` use standard blocker advice.

@@ -109,15 +109,15 @@ async function writeGuidanceFile(path, agentDir) {
 async function removeGuidanceFile(path, agentDir) {
   const current = await readText(path);
   if (current === null) {
-    return `already absent verifier guidance ${path}`;
+    return `Guidance: Already absent — ${path}`;
   }
 
   if (current !== await shippedGuidance(agentDir)) {
-    return `kept customized verifier guidance ${path}`;
+    return `Guidance: Kept the customized file — ${path}`;
   }
 
   await unlink(path);
-  return `removed verifier guidance ${path}`;
+  return `Guidance: Removed the managed file — ${path}`;
 }
 
 async function writeWatchdogFile(path, guidancePath) {
@@ -139,16 +139,16 @@ function removeVerifierAdvisor(content) {
 async function removeWatchdogFile(path) {
   const current = await readText(path);
   if (current === null) {
-    return `already absent ${path}`;
+    return `Global roster: Already absent — ${path}`;
   }
 
   const next = removeVerifierAdvisor(current);
   if (next === null) {
-    return `kept setup without verifier advisor ${path}`;
+    return `Global roster: No managed verifier advisor to remove — ${path}`;
   }
 
   await writeFile(path, next, { flag: "w" });
-  return `removed verifier advisor ${path}`;
+  return `Global roster: Removed the managed verifier advisor — ${path}`;
 }
 
 export async function installGlobalVerifier(ctx) {
@@ -163,7 +163,10 @@ export async function installGlobalVerifier(ctx) {
 }
 
 export async function uninstallGlobalVerifier(ctx) {
-  if (process.env.OMP_VERIFIER_UPGRADE === "1") return ["retained active verifier during package replacement"];
+  if (process.env.OMP_VERIFIER_UPGRADE === "1") {
+    return ["Setup: Retained the active verifier during package replacement."];
+  }
+
   const agentDir = resolveAgentDir(ctx);
   return [
     await removeWatchdogFile(join(agentDir, ROSTER_FILE)),
@@ -175,8 +178,7 @@ function advisorNames(content) {
   return [...content.matchAll(/^ {2}- name: (.+)$/gm)].map(([, name]) => name);
 }
 
-
-export async function buildGlobalVerifierStatus(cwd, ctx) {
+export async function collectGlobalVerifierStatus(cwd, ctx) {
   const agentDir = resolveAgentDir(ctx);
   const globalPath = join(agentDir, ROSTER_FILE);
   const projectPath = join(cwd, ROSTER_FILE);
@@ -186,18 +188,19 @@ export async function buildGlobalVerifierStatus(cwd, ctx) {
     readText(globalPath),
     readText(projectPath),
     readText(guidancePath),
-    activeGeneration(paths.root),
+    activeGeneration(paths.root).then(
+      value => ({ value }),
+      error => ({ error: error.message }),
+    ),
   ]);
-  const names = global === null ? [] : advisorNames(global);
-  const version = generation.identity.packages.find(provider => provider.package === "omp-verifier")?.version;
 
-  return [
-    "Verifier status:",
-    `plugin version: ${version}`,
-    `generation: ${generation.id} (${generation.identity.digest})`,
-    `global roster: ${global === null ? "absent" : names.join(", ") || "no advisors"} — ${globalPath}`,
-    `project roster: ${project === null ? "absent" : advisorNames(project).join(", ") || "no advisors"} — ${projectPath}`,
-    `guidance: ${guidance === null ? "absent" : "installed"} — ${guidancePath}`,
-    "runtime state: run /advisor status",
-  ].join("\n");
+  return {
+    globalPath,
+    globalNames: global === null ? null : advisorNames(global),
+    projectPath,
+    projectNames: project === null ? null : advisorNames(project),
+    guidancePath,
+    isGuidanceInstalled: guidance !== null,
+    generation,
+  };
 }
