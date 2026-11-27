@@ -1,5 +1,5 @@
 import { LINT_EVIDENCE, LINT_VERDICTS } from "#root/omp-plugin/lint-presentation.js";
-import { resumeReviewCommand } from "#root/omp-plugin/semantic-review-pages.js";
+import { resumeReviewCommand, shortReviewRequestId } from "#root/omp-plugin/semantic-review-pages.js";
 
 function indented(value) {
   const lines = [];
@@ -60,8 +60,12 @@ function formatVerificationResult(result) {
   }
 
   if (result.reviewRequest) {
-    lines.push(`  Review request: ${result.reviewRequest.path}`);
-    lines.push(`  Reviewer action: ${resumeReviewCommand(result.reviewRequest.path)}`);
+    let requestArgument = result.reviewRequest.path;
+    if (result.status === "PENDING") {
+      requestArgument = shortReviewRequestId(result.reviewRequest) ?? requestArgument;
+    }
+    lines.push(`  Review request: ${requestArgument}`);
+    lines.push(`  Reviewer action: ${resumeReviewCommand(requestArgument)}`);
   }
 
   if (result.lintVerdicts && result.evidence) {
