@@ -2,6 +2,7 @@
 import { resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 
+import { registerFindingsReportCommands } from "#root/bin/findings-report-commands.js";
 import { registerLifecycleCommands } from "#root/bin/lifecycle-commands.js";
 import { registerSemanticCommands } from "#root/bin/semantic-commands.js";
 import { registerVerificationCommands } from "#root/bin/verification-commands.js";
@@ -16,6 +17,7 @@ const program = new Command()
 registerVerificationCommands(program);
 registerSemanticCommands(program);
 registerLifecycleCommands(program);
+registerFindingsReportCommands(program);
 
 // The fresh session owns an existing review, not another coordinator run.
 program.hook("preAction", (_program, command) => {

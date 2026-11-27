@@ -1,3 +1,4 @@
+import { retainFindingsResults } from "#root/omp-plugin/findings-report.js";
 import { formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import { recordSemanticReviewPage } from "#root/omp-plugin/semantic-evaluations.js";
 import {
@@ -68,6 +69,23 @@ export async function writeResults(results, {
         page: reviewPage,
       });
     }
+    if (process.env.OMP_VERIFIER_RETAIN_FINDINGS === "1") {
+      await retainFindingsForAdvice(reported);
+    }
   }
   process.exitCode = hasFailures ? 1 : 0;
+}
+
+async function retainFindingsForAdvice(results) {
+  let captures;
+  try {
+    captures = await retainFindingsResults(results);
+  } catch {
+    process.stderr.write("Verifier findings capture unavailable in this OMP profile; use the original results above.\n");
+    return;
+  }
+
+  for (const { id, checkId } of captures) {
+    process.stderr.write(`Verifier findings capture ${id} (${checkId})\n`);
+  }
 }
