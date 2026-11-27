@@ -154,11 +154,17 @@ function formatFindingsSummary(groups) {
   let findingCount = 0;
   let opaqueCount = 0;
   for (const { checks, locations } of groups) {
-    checkCount += checks.length;
+    const checkIds = new Set();
+    const unattributedFailures = new Set();
     for (const location of locations) findingCount += location.findings.length;
     for (const { result } of checks) {
-      if (result.status === "FAIL" && !result.findings?.length) opaqueCount++;
+      checkIds.add(result.id);
+      if (result.status === "FAIL" && !result.findings?.length) {
+        unattributedFailures.add(result.id);
+      }
     }
+    checkCount += checkIds.size;
+    opaqueCount += unattributedFailures.size;
   }
 
   const checkLabel = checkCount === 1 ? "check" : "checks";

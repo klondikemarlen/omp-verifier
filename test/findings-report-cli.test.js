@@ -241,3 +241,30 @@ test("when findings storage is not private, check output remains available but r
   assert.match(checked.stderr, /findings capture unavailable/);
   assert.equal(JSON.parse(checked.stdout).find(result => result.id === "publisher:alignment").status, "FAIL");
 });
+
+test("when one unavailable check has two diagnostics, the note counts one check", async t => {
+  // Arrange
+  const { run, root } = await reportFixture(t);
+  const manifest = join(root, "plugins", "node_modules", "publisher", "package.json");
+  await writeFile(manifest, JSON.stringify({
+    name: "publisher",
+    version: "1.0.0",
+    omp: {
+      extensions: ["./index.js"],
+      verifications: [{
+        id: "publisher:alignment",
+        label: "Alignment",
+        description: "Check with an invalid entry",
+        entry: "invalid.mjs",
+      }],
+    },
+  }));
+  const verification = run(["verify", "publisher:alignment"]);
+  const captures = Array.from(verification.stderr.matchAll(/Verifier findings capture ([0-9a-f]{64})/g), match => match[1]);
+
+  // Act
+  const report = composeReport(run, [{ captures }]);
+
+  // Assert
+  assert.match(report.stdout, /^Verifier · 1 check · 0 attributed findings\n[\s\S]*Invalid plugin verification manifest[\s\S]*Verification check is not installed/);
+});
