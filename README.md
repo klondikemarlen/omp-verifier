@@ -59,7 +59,7 @@ The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt
 
 A Verifier findings note groups the completed check results by PR or MR and affected location. The native Advisor's note/blocker count is separate from the Verifier's count of checks and attributed findings. Each judgment stays linked to its check; a provider that emits only prose is shown as a check-level result, not as a guessed measurement or source location.
 
-Copy the note's `Details:` command to see the retained check blocks and provenance. Agents can use the same command with `--reporter json` (the default) to get the exact report without scraping the note. Use the complete report ID from the note:
+The note is a preview. Before quoting evidence or repairing a finding, open the report with the installed coordinator and the note's full 64-character lowercase hexadecimal report ID. Use the stored check result, not a quotation copied into the note. For delivery findings, match the checkout and current PR/MR target, base and head. If the report is unavailable or does not match, obtain current check evidence instead. Reading a report does not rerun verification.
 
 ```sh
 node "<agent-dir>/verifier/omp-verifier.mjs" report show <report-id> --reporter text
