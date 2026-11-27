@@ -53,7 +53,21 @@ advisors:
 
 The plugin copies its active generation's guidance to `<agent-dir>/verifier/WATCHDOG.md` on setup. It substitutes the shell-quoted persistent launcher at `<agent-dir>/verifier/omp-verifier.mjs`, outside the replaceable plugin package. The roster imports that generated file. Extension registration awaits reconciliation before the first advisor import; session start also reconciles the active profile. Put custom requirements in project `WATCHDOG.yml`, not this generated file.
 
-The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It runs applicable checks and stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it requests the coordinator's failure-only text reporter and passes that readable output unchanged to native `advise` with severity `blocker`; `advise` is delivery transport, not permission to add recommendations, progress notes, or broader review. The UI still labels that native channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission. Historical OMP 18.8.9 QA delivered a no-action `nit` despite a prior stricter silence prompt; see [Advisor Silence: Plugin Policy and QA](docs/references/verifier-concepts-reference.md#advisor-silence-plugin-policy-and-qa).
+The empty `default` entry uses OMP's stock advisor behavior. The verifier prompt specializes its model as a check selector/executor, not a reviewer. It stays silent for `PASS`, `SUPPRESSED`, or no results. For `FAIL` and `BLOCKED`, it sends a result-first [findings note](#read-the-results-behind-an-advisor-note) through the existing native `advise` channel with severity `blocker`. OMP labels that channel “Advisor.” Result-only output and silence are prompt contracts, not runtime-enforced admission.
+
+## Read the results behind an advisor note
+
+A Verifier findings note groups the completed check results by PR or MR and affected location. The native Advisor's note/blocker count is separate from the Verifier's count of checks and attributed findings. Each judgment stays linked to its check; a provider that emits only prose is shown as a check-level result, not as a guessed measurement or source location.
+
+Copy the note's `Details:` command to see the retained check blocks and provenance. Agents can use the same command with `--reporter json` (the default) to get the exact report without scraping the note. Use the complete report ID from the note:
+
+```sh
+node "<agent-dir>/verifier/omp-verifier.mjs" report show <report-id> --reporter text
+node "<agent-dir>/verifier/omp-verifier.mjs" report show <report-id> --reporter json
+node "<agent-dir>/verifier/omp-verifier.mjs" report show <report-id> --evidence 1
+```
+
+`--evidence` writes one check's literal retained evidence, with no added whitespace. Its one-based check number is shown in the text detail view. Retrieval reads the same OMP profile's owner-only report, does not run any check or require the original checkout, and does not certify current code. If the report is missing or has changed, retrieval fails rather than falling back to a recent check. The existing Ctrl+O path for older lint-only notes remains available where OMP supports it; a compact findings note links to the exact report regardless of that setting.
 
 ## Preview advisor cards
 
@@ -119,7 +133,7 @@ Use `/verifier status --usage` to see how often each menu option was invoked acr
 
 Verifier includes `verifier:project-lint`, a bounded catalog for JavaScript/TypeScript (ESLint or Oxlint), Ruby (RuboCop), Go (golangci-lint), Python (Ruff or explicitly selected Pyflakes), and Shell (ShellCheck). It discovers existing project tooling before running it; missing or unsupported tooling is `BLOCKED`, actual lint violations are `FAIL`, and successful applicable commands are `PASS`. It never installs tools or creates lint configuration. See [project lint discovery and wrappers](docs/references/verifier-concepts-reference.md#project-lint-catalog) for supported signals, scope, and wrapper declarations.
 
-To see a compact lint verdict in the primary terminal, enable OMP’s `extensionRenderers.transcriptPresenters` setting (off by default in OMP 19.2.1). On a supported verifier lint note, Ctrl+O shows the original advisor card with its retained evidence; press Ctrl+O again to return to the summary. Toggling does not rerun lint or recover discarded output. With presenters disabled, OMP shows its ordinary advisor card.
+For lint-only notes, enable OMP’s `extensionRenderers.transcriptPresenters` setting (off by default in OMP 19.2.1) to use Ctrl+O. It switches between the compact lint verdict and the original card with its retained evidence, without rerunning lint or recovering discarded output. Combined findings notes do not depend on transcript presenters.
 
 For current PR or MR changes, the advisor passes `--base <actual-base>` to `automatic`. This includes earlier commits in the proposed change; stacked PRs use their immediate parent. Matching `pathTriggers` and applicable project `requirements` select installed checks. Only final `FAIL` and `BLOCKED` results reach the primary. Direct CLI callers can still select explicit paths without a base or request a full working-tree check with `automatic --worktree`.
 
@@ -148,6 +162,7 @@ omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
 omp-verifier diagnostics <request-file> [--reporter json|text]
+omp-verifier report show <report-id> [--reporter json|text] [--evidence <check-number>]
 omp-verifier closeout prepare <declaration.json>
 omp-verifier closeout verify <receipt.json> [--reporter json|text] [--failures-only]
 omp-verifier closeout review <handoff-id> [--reporter json|text] [--failures-only]
@@ -284,7 +299,7 @@ For advisor-correction releases, use a disposable declared failing check or supp
 1. Record installed OMP, Verifier, and provider versions. Check `/advisor status` for an enabled, resolved `verifier` model; `[no model]` or a current runtime error blocks that model's correction claim. Freeze synthetic inputs and provider artifacts before the live cycle.
 2. Wait for actual RPC readiness or the terminal's initialized editor, not just a version banner or elapsed delay. Answer terminal queries, including cursor-position requests, when using a raw PTY. Confirm successful prompt admission; a primary still processing cannot accept an ordinary new prompt.
 3. Save named-verifier transcript and primary/event baselines for this scenario. Trigger the intended changed paths using the packed or remotely installed coordinator and confirm those paths were actually selected. For committed code, use the provider's supported comparison-base input; a no-applicable-work PASS is not inspected-code evidence.
-4. Correlate the current check, scope, semantic request identity when applicable, final coordinator result, and completed named-advisor review. A settled primary RPC prompt, an earlier private final, or an unrelated result cannot prove this review. Observe `<advisory advisor="verifier" severity="blocker">` and compare its note with current `--reporter text --failures-only` output; preserve status, check ID, summary, evidence, and next check without extra commentary.
+4. Correlate the current checks, scope, any semantic request identity, and completed named-advisor review with the primary's `<advisory advisor="verifier" severity="blocker">`. For combined findings, observe the actual primary terminal with expansion off, then copy that exact note's report ID and compare `report show` JSON and literal `--evidence` output with both original coordinator results. Compare the delivered note with the stored `note` field separately; retrieval does not establish exact native relay. Exercise conflicting check evidence, remediation followed by a fresh PASS, and silence when no result is reportable.
 5. Observe actual primary remediation, then request a fresh independently triggered assessment of the corrected scope, including deletions. Require a current evaluated-code PASS, not the old result or a planned check. Before submitting another ordinary RPC prompt, also confirm the primary's previous prompt has settled.
 6. For `PASS`, `SUPPRESSED`, and no results, require the current named review to complete without delivered verifier advice. Preserve earlier completed scenarios when a later continuation fails; retain each error in its actual scenario window. A current error without a completed current result remains FAIL/BLOCKED.
 7. Record any explicitly authorized task-local model override separately from normal-selector coverage; leave default models, provider configuration, credentials, and fallback chains unchanged. Setup/version assertions, startup-only timeouts, and incomplete terminal protocol support are harness failures, not coding-standard verdicts or evidence of a general provider outage.

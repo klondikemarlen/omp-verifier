@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.0 - 2026-11-27
+
+- Verifier blocker notes group current check results by PR or MR and affected location. Open the exact retained report from the note for full provenance, structured results, and literal diagnostic evidence without rerunning verification.
+
 ## 1.35.0 - 2026-11-27
 
 - `/verifier status --usage` reports local invocation counts across projects, separating the bare command from explicit `status` without adding a menu entry.
