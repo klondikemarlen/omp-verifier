@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.34.0 - 2026-11-27
+
+- `/verifier status` keeps a compact setup report in the conversation. It distinguishes missing setup from an optional project roster and points to `/advisor status` for live activity. Use `--details` for full generation identifiers and paths.
+- Slash commands lead with the result and show what to do next; the CLI's machine-readable reporters and verification meanings are unchanged.
+
 ## 1.33.0 - 2026-11-26
 
 - A verifier nearing its context limit can hand an accepted checkpoint to a fresh native reviewer without restarting the review or asking the operator to continue.
