@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
+import { tryClaimRequestLease } from "#root/omp-plugin/file-lease.js";
 import { runFreshReviewer } from "#root/omp-plugin/fresh-reviewer-process.js";
 import { confirmFreshReviewerTarget } from "#root/omp-plugin/fresh-reviewer-target.js";
 import { readCheckpointHandoffTarget, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
@@ -21,11 +21,18 @@ export async function resumeCheckpoint({ cwd, requestPath, pullRequest, targetBr
     requestPath: target.requestPath,
     waiver,
   });
-  // Keep the dispatch exclusive without blocking the child's review/evaluate operations.
-  const release = await claimOperationLock(target.leasePath, 0, "A fresh reviewer already owns this checkpoint handoff");
+  const lease = await tryClaimRequestLease(target.requestPath);
+  if (!lease) {
+    throw new Error("Another assessment or fresh reviewer already owns this checkpoint");
+  }
+
   try {
     const reviewTarget = await confirmTarget();
     const current = await readCurrent();
+    if (!current.reviewRequest && current.evaluation?.requestId === target.requestId && !current.evaluation.supersededBy) {
+      throw new Error("The request was assessed before the fresh reviewer could start");
+    }
+
     if (current.reviewRequest?.requestId !== target.requestId) {
       return current;
     }
@@ -42,6 +49,6 @@ export async function resumeCheckpoint({ cwd, requestPath, pullRequest, targetBr
     await confirmTarget();
     return await readCurrent();
   } finally {
-    await release();
+    await lease.close();
   }
 }

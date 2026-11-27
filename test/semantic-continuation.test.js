@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { resumeCheckpoint } from "#root/omp-plugin/checkpoint-handoff.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
@@ -141,6 +142,47 @@ test("when a fresh session exits without assessing the aggregate, the checkpoint
   assert.equal(result.reviewRequest.requestId, requestId);
   assert.equal(result.reviewRequest.continuation.phase, "aggregate");
   assert.equal(result.reviewRequest.continuation.batches[0].assessment.status, "PASS");
+});
+
+test("when the origin also assesses during a handoff, only the fresh reviewer's verdict is accepted", async t => {
+  // Arrange
+  const fixture = await createFixture({
+    count: 1,
+    bytes: 200,
+  });
+  t.after(() => rm(fixture.root, {
+    recursive: true,
+    force: true,
+  }));
+  const aggregate = await completeBatches(fixture);
+  const requestPath = aggregate.reviewRequest.path;
+  const cli = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
+  let originatingResult;
+
+  // Act
+  const result = await resumeCheckpoint({
+    cwd: fixture.root,
+    requestPath,
+  }, async () => {
+    originatingResult = await finalize(fixture, aggregate);
+    const assessment = {
+      ...assessmentFor(aggregate),
+      summary: "Fresh review confirms the nonnegative values.",
+    };
+    execFileSync(process.execPath, [cli, "evaluate", requestPath, "--assessment", "-"], {
+      cwd: fixture.root,
+      env: {
+        ...process.env,
+        OMP_VERIFIER_FRESH_REVIEWER: requestPath,
+      },
+      input: JSON.stringify(assessment),
+    });
+  });
+
+  // Assert
+  assert.equal(originatingResult.status, "PENDING");
+  assert.equal(result.status, "PASS");
+  assert.equal(result.summary, "Fresh review confirms the nonnegative values.");
 });
 
 test("when a handoff is attempted before a checkpoint, dispatch is refused", async t => {
