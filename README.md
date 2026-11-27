@@ -104,10 +104,14 @@ Each requirement names its trigger, check id, quality standard, executable narro
 ```text
 /verifier
 /verifier status
+/verifier status --details
+/verifier status --usage
 /verifier checks
 /verifier verify
 /verifier verify <check-id...>
 /verifier timings
+/verifier demo
+/verifier generation
 /verifier generation prepare
 /verifier generation activate <generation-id>
 /verifier generation status
@@ -116,7 +120,14 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier closeout verify <receipt.json>
 /verifier closeout review <handoff-id>
 /verifier uninstall
+/verifier waive <verification|namespace:name> [--session]
 ```
+
+`/verifier` and `/verifier status` show a setup snapshot: the version loaded by this OMP process, whether the verifier is configured globally, whether advisor guidance is installed, and whether the project has its own roster. No project roster is required. If global setup is missing, start a fresh OMP session to restore managed files. Use `/advisor status` to check live activity; a setup snapshot does not say whether the verifier is running.
+
+Use `/verifier status --details` for advisor names, full generation identifiers, and configuration paths. The setup report stays in the conversation on supported OMP hosts without starting a model turn. Its text carries the same facts if the custom frame is unavailable. The loaded plugin and selected coordinator generation can have different versions; use the details view to compare them.
+
+Use `/verifier status --usage` to see how often each menu option was invoked across projects in your current OMP profile. The report separates bare `/verifier` from explicit `status` and shows when observation began. See [command usage](docs/references/verifier-concepts-reference.md#command-usage) for what counts and what stays private.
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Deterministic results are `PASS`, `FAIL`, or `BLOCKED`. A supported semantic result includes `reviewRequest` and has status `PENDING` whether the assessment is ready or awaits recoverable context; it is not a final verdict. The verifier advisor must complete the semantic assessment before delivering any final `FAIL`/`BLOCKED`.
 
@@ -138,7 +149,7 @@ Before removing a clean committed delivery worktree whose final review is still 
 
 Routine cleanup does not require a Verifier receipt. Use the project's normal safety checks for ownership, unmerged work, unique data, and active consumers. If resource verification is explicitly requested, use the separate [resource closeout check](docs/references/verifier-concepts-reference.md#resource-closeout). Skipping that check is not a PASS or permission to delete.
 
-The installed Verifier package supplies its own lint manifest; additional plugins may supply other checks. In an isolated package directory with no compatible manifests, `checks` reports `none installed` and `verify` reports `BLOCKED`. Installed but inapplicable checks return no selected results. An applicable requirement whose provider is absent returns BLOCKED instead. Advisor setup and cleanup remain independent of the check surface.
+The installed Verifier package supplies its own lint manifest; additional plugins may supply other checks. In an isolated package directory with no compatible manifests, `/verifier checks` reports that no usable checks were found and `/verifier verify` reports `BLOCKED`. Installed but inapplicable checks return no selected results; that is not a verdict. An applicable requirement whose provider is absent returns `BLOCKED` instead. Advisor setup and cleanup remain independent of the check surface.
 
 The `bash`-only advisor can discover and run named checks using the packaged CLI:
 
@@ -266,9 +277,7 @@ Use `.omp-verifier.json` at the Git root or beneath the affected subtree. Its `p
 
 A requirement names a check ID and bounded path. It selects that check for matching current changes even without a manifest trigger; a missing required provider is observable `BLOCKED`. A valid bounded suppression may cover an installed or explicitly required ID, including an absent required provider; its reason remains visible as `SUPPRESSED`, never PASS. Suppressions require a non-empty reason; `expires` is optional, but invalid/expired entries and undeclared unknown IDs are `BLOCKED`. Paths are relative to the configuration file. A missing `.omp-verifier.json` has no effect.
 
-`/verifier uninstall` removes only the marked verifier block. It leaves `default` and independent advisors such as `learner` in place.
-
-Use `/advisor status` for OMP runtime state.
+`/verifier uninstall` removes the marked verifier block and unchanged generated guidance. It does not uninstall the package or change project configuration; `default` and independent advisors such as `learner` stay in place.
 
 ## Development and release
 
