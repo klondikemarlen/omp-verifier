@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.2 - 2026-11-27
+
+- The primary now receives instructions to open the retained check result before quoting evidence or acting on a Verifier findings note.
+
 ## 1.36.1 - 2026-11-27
 
 - Clarified who continues a release while checks are pending: the primary coordinates ordinary review, the named verifier assesses it, and a printed handle is not proof that review started.
