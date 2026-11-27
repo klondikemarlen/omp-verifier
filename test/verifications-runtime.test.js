@@ -50,6 +50,72 @@ test("when OMP is the host executable, closeout reports the coordinator's receip
   assert.match(message, /outside private closeout storage/);
 });
 
+test("a prepared slash closeout report retains the receipt path and does not imply PASS", async context => {
+  // Arrange
+  const agentDir = await mkdtemp(join(tmpdir(), "verifier-closeout-prepared-"));
+  const storageRoot = join(agentDir, "tmp");
+  await mkdir(storageRoot);
+  const originalTmpDir = process.env.TMPDIR;
+  process.env.TMPDIR = storageRoot;
+  context.after(async () => {
+    if (originalTmpDir === undefined) {
+      delete process.env.TMPDIR;
+    } else {
+      process.env.TMPDIR = originalTmpDir;
+    }
+    await rm(agentDir, { recursive: true, force: true });
+  });
+  const repositoryRoot = join(agentDir, "repo");
+  execFileSync("git", ["init", "--quiet", repositoryRoot]);
+  const path = join(repositoryRoot, "protected.txt");
+  await writeFile(path, "Keep this file.\n");
+  await writeFile(join(repositoryRoot, "declaration.json"), JSON.stringify({
+    version: 1,
+    taskId: "retain-configuration",
+    repositoryRoot,
+    authorization: "Inspect the isolated test fixture.",
+    resources: [{
+      id: "protected-file",
+      kind: "path",
+      path,
+      disposition: "retained",
+      ownership: "protected",
+      ownershipEvidence: "Created by this test.",
+      reason: "Keep the protected configuration.",
+    }],
+  }));
+  let verifier;
+  await verifierPlugin({
+    pi: {
+      getAgentDir: () => agentDir,
+    },
+    registerCommand(_name, command) {
+      verifier = command;
+    },
+    on() {},
+    setLabel() {},
+    registerMessageRenderer() {},
+  });
+  let message;
+  const ctx = {
+    cwd: repositoryRoot,
+    ui: {
+      notify(text) {
+        message = text;
+      },
+    },
+  };
+
+  // Act
+  await verifier.handler("closeout prepare declaration.json", ctx);
+
+  // Assert
+  assert.match(message, /^Closeout receipt prepared; this is not PASS\./);
+  const receipt = message.match(/^Receipt: (.+)$/m)?.[1];
+  assert.ok(receipt?.startsWith(`${storageRoot}/`));
+  assert.ok(message.includes(`/verifier closeout verify ${receipt}`));
+});
+
 test("when OMP has a non-Node executable, runs verification checks with Node", async () => {
   // Arrange
   const checkDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-runtime-"));
