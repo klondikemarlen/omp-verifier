@@ -31,6 +31,7 @@ const REVIEW_CONTEXT_ORDER = [
   "changedPaths",
   "changedCodeCoverage",
   "callerRetrieval",
+  "deferredGuidance",
   "evidenceBudget",
   "evidenceTruncated",
   "notes",

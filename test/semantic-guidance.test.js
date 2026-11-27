@@ -10,6 +10,7 @@ import {
   prepareSemanticEvaluation,
   readSemanticEvaluation,
 } from "#root/omp-plugin/semantic-evaluations.js";
+import { paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
 const CALLER_SOURCE = 'import { helper } from "./helper.js";\nexport const result = helper(1);\n';
@@ -23,6 +24,7 @@ function oversizedHelperSource() {
 async function createSemanticFixture({
   helperSource = "export const helper = value => value;\n",
   requiredContext = ["changed-code", "callers", "siblings", "project-guidance"],
+  projectFiles = {},
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-guidance-"));
   const packagePath = join(root, "plugins", "publisher");
@@ -55,6 +57,11 @@ async function createSemanticFixture({
       }],
     },
   }));
+
+  for (const [path, content] of Object.entries(projectFiles)) {
+    await writeFile(join(root, path), content);
+  }
+
   execFileSync("git", ["init", "--quiet"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["-c", "user.name=Verifier Tests", "-c", "user.email=test@example.com", "commit", "--quiet", "-m", "baseline"], { cwd: root });
@@ -87,6 +94,110 @@ function sourceRangeSelectors(path, lineCount) {
   }
   return selectors;
 }
+
+test("when a guide is deferred, reviewers can find it but must recover its source before citing it", async () => {
+  // Arrange
+  const guideSource = [
+    "# Publishing reference",
+    "",
+    "## Ownership examples",
+    "Published events record their owning domain.",
+    "The manual also covers distribution schedules.",
+  ].join("\n");
+  const nestedPolicy = "Publisher code must preserve the domain owner.\n";
+  const fixture = await createSemanticFixture({
+    projectFiles: {
+      ".omp-verifier.json": JSON.stringify({ review: { referenceGuides: ["README.md"] } }),
+      "README.md": guideSource,
+      "src/README.md": nestedPolicy,
+    },
+  });
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const citation = citationFor("README.md", guideSource, 4);
+
+    // Act
+    const prepared = await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths: ["src/helper.js"] });
+    const view = paginateSemanticReview(prepared);
+    const pageContent = Array.from({ length: view.count }, (_, index) => view.page(index).content).join("");
+    const [reviewed] = JSON.parse(pageContent);
+    const assessment = passAssessment(prepared.reviewRequest.requestId);
+    assessment.citations.push(citation);
+    const withoutSource = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      assessment,
+    });
+
+    // Assert
+    const { context } = reviewed.reviewRequest;
+    const guide = context.deferredGuidance.guides.find(record => record.path === "README.md");
+    assert.ok(guide.headings.some(({ line, heading }) => line === 3 && heading.includes("Ownership examples")));
+    assert.match(context.deferredGuidance.recovery, /review --context/);
+    assert.match(context.deferredGuidance.recovery, /#Lstart-Lend/);
+    assert.ok(!context.projectGuidance.some(record => record.path === "README.md"));
+    assert.ok(!pageContent.includes(citation.quote));
+    assert.ok(!context.guidanceRequirements.some(record => record.path === "README.md"));
+    assert.equal(context.projectGuidance.find(record => record.path === "src/README.md").content[1], nestedPolicy.trimEnd());
+    assert.equal(context.projectGuidance.find(record => record.path === "AGENTS.md").content[1],
+      "Keep meaningful policy ownership at module boundaries.");
+    assert.deepEqual(reviewed.reviewRequest.missingContext, []);
+    assert.equal(withoutSource.status, "BLOCKED");
+    assert.match(withoutSource.evidence, /citation README\.md:4 is not in the captured evidence/);
+
+    // Act
+    const recovered = await readSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: prepared.reviewRequest.path,
+      contextPaths: ["README.md#L3-L4"],
+    });
+    const recoveredView = paginateSemanticReview(recovered);
+    const recoveredPageContent = Array.from({ length: recoveredView.count }, (_, index) =>
+      recoveredView.page(index).content).join("");
+    const [recoveredReview] = JSON.parse(recoveredPageContent);
+    const completed = await completeSemanticEvaluation({
+      cwd: fixture.root,
+      requestPath: recovered.reviewRequest.path,
+      assessment: { ...assessment, requestId: recovered.reviewRequest.requestId },
+    });
+
+    // Assert
+    const excerpt = recoveredReview.reviewRequest.context.targetedContext.find(record => record.path === "README.md");
+    assert.equal(excerpt.content[4], citation.quote);
+    assert.ok(!recoveredPageContent.includes("The manual also covers distribution schedules."));
+    assert.deepEqual(recoveredReview.reviewRequest.scope.changedPaths, ["src/helper.js"]);
+    assert.equal(completed.status, "PASS", completed.evidence);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("when a reference declaration is malformed, project guidance remains binding", async () => {
+  // Arrange
+  const guideSource = "Follow the boundary ownership requirements in this manual.\n";
+  const fixture = await createSemanticFixture({
+    projectFiles: {
+      ".omp-verifier.json": JSON.stringify({ review: { referenceGuides: ["README.md", 42] } }),
+      "README.md": guideSource,
+    },
+  });
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+
+    // Act
+    const prepared = await prepareSemanticEvaluation({ check, cwd: fixture.root, changedPaths: ["src/helper.js"] });
+
+    // Assert
+    const { context } = prepared.reviewRequest;
+    assert.equal(context.projectGuidance.find(record => record.path === "README.md").content, guideSource);
+    assert.ok(context.guidanceRequirements.some(record =>
+      record.path === "README.md" && record.requiredBy.includes("src/helper.js")));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
 
 test("when changed source and material guidance are recovered, unrelated caller candidates do not expand required guidance", async () => {
   // Arrange
@@ -143,10 +254,15 @@ test("when changed source and material guidance are recovered, unrelated caller 
   }
 });
 
-test("when a changed guide is fully recovered, its admitted source satisfies required project guidance", async () => {
+test("when a changed declared guide is fully recovered, its admitted source satisfies required project guidance", async () => {
   // Arrange
   const guidance = `${"Preserve boundary ownership and inspect current source evidence. ".repeat(4)}\n`.repeat(100);
-  const fixture = await createSemanticFixture();
+  const fixture = await createSemanticFixture({
+    projectFiles: {
+      ".omp-verifier.json": JSON.stringify({ review: { referenceGuides: ["WATCHDOG.md"] } }),
+      "WATCHDOG.md": "Prior guidance for policy ownership.\n",
+    },
+  });
 
   try {
     await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
@@ -182,7 +298,13 @@ test("when a changed guide is fully recovered, its admitted source satisfies req
 test("when only part of a changed guide is admitted, a guidance-only contract cannot approve it", async () => {
   // Arrange
   const guidance = `${"Preserve boundary ownership and inspect current source evidence. ".repeat(4)}\n`.repeat(100);
-  const fixture = await createSemanticFixture({ requiredContext: ["project-guidance"] });
+  const fixture = await createSemanticFixture({
+    requiredContext: ["project-guidance"],
+    projectFiles: {
+      ".omp-verifier.json": JSON.stringify({ review: { referenceGuides: ["WATCHDOG.md"] } }),
+      "WATCHDOG.md": "Prior guidance for policy ownership.\n",
+    },
+  });
 
   try {
     await writeFile(join(fixture.root, "WATCHDOG.md"), guidance);
