@@ -520,6 +520,8 @@ After all checkpoints, assess the whole original scope and cross-batch interacti
 
 When the verifier's history is too large to finish safely, `resume-checkpoint <current-request-file>` starts a fresh native OMP session in the owning checkout. The configured named verifier receives the current handle, not the old conversation. This requires at least one accepted batch checkpoint. For delivery-backed requests, `--pull-request <url> --target-branch <branch>` identifies the intended GitHub PR or GitLab MR; the host must confirm the open target and exact revisions. The coordinator checks eligibility again before returning the result. An unavailable host, exit without assessment, changed evidence or superseded request cannot become a current PASS.
 
+While that command owns the request, an assessment from the originating session returns `PENDING` without consuming the checkpoint. The fresh reviewer can assess the request; ordinary assessment becomes available again when the command releases it.
+
 This is an explicit handoff, not automatic detection of provider overflow. Starting a fresh session incurs model usage. There is no background job, automatic retry or model fallback in the coordinator. A reviewer can also resume manually with `review <current-request-file> --resume --reporter text`. In either path do not repeat `--continue`: it discards the accepted checkpoints. A fresh reviewer can reopen original source pages; completed delivery receipts alone are not evidence that it has inspected them.
 
 
