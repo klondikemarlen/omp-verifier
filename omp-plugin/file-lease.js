@@ -23,6 +23,22 @@ export async function acquireFileLease(handle, waitMs = 0) {
   return true;
 }
 
+// The saved request is immutable. Lock its inode without leaving another marker to clean up.
+export async function tryClaimRequestLease(requestPath) {
+  const handle = await open(requestPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    if (await acquireFileLease(handle)) {
+      return handle;
+    }
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+
+  await handle.close();
+  return null;
+}
+
 // Older coordinators use an exclusive-create marker at path. Claim that same
 // name without stealing a legacy lock. Only our own inode can be reclaimed.
 export async function claimOperationLock(path, waitMs, busyMessage) {

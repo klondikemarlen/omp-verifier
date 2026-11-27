@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolve } from "node:path";
 import { Command, CommanderError } from "commander";
 
 import { registerLifecycleCommands } from "#root/bin/lifecycle-commands.js";
@@ -15,6 +16,21 @@ const program = new Command()
 registerVerificationCommands(program);
 registerSemanticCommands(program);
 registerLifecycleCommands(program);
+
+// The fresh session owns an existing review, not another coordinator run.
+program.hook("preAction", (_program, command) => {
+  const boundRequest = process.env.OMP_VERIFIER_FRESH_REVIEWER;
+  if (!boundRequest) return;
+
+  const options = command.opts();
+  if (!["review", "evaluate", "diagnostics"].includes(command.name())
+    || resolve(command.args[0] ?? "") !== boundRequest
+    || options.continue || options.request || options.maxContextPaths !== undefined
+    || options.context?.length || options.callerContext?.length || options.externalContext?.length
+    || options.removeContext?.length) {
+    throw new Error("Fresh reviewer may only inspect or evaluate its handed-off request; return to the owning session for renewal");
+  }
+});
 
 try {
   await program.parseAsync();

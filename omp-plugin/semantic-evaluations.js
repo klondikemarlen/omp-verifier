@@ -8,29 +8,19 @@ import { isDeepStrictEqual, promisify } from "node:util";
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
-import {
-  deliveryFindingEligibility,
-  deliveryFindingMode,
-  validateFindings,
-  verificationScope,
-} from "#root/omp-plugin/finding-scope.js";
+import { deliveryFindingEligibility, deliveryFindingMode } from "#root/omp-plugin/finding-scope.js";
+import { finalAssessmentResult, isSemanticVerdict, normalizeSemanticAssessment, validSemanticText } from "#root/omp-plugin/semantic-assessment.js";
 import {
   captureSemanticContext,
   semanticContextMissing,
   validateContextPathLimit,
-  validateSemanticCitations,
   validateSourceByteLimit,
 } from "#root/omp-plugin/semantic-context.js";
 import { captureSemanticContinuation, validateSemanticContinuation } from "#root/omp-plugin/semantic-continuation.js";
-import {
-  continuationAssessmentPayload,
-  continuationBatch,
-  continuationReviewPayload,
-  validateContinuationAssessment,
-} from "#root/omp-plugin/semantic-continuation-review.js";
+import { continuationBatch, continuationReviewPayload } from "#root/omp-plugin/semantic-continuation-review.js";
 import { buildSemanticReviewPage, paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";
 import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
-import { claimOperationLock } from "#root/omp-plugin/file-lease.js";
+import { claimOperationLock, tryClaimRequestLease } from "#root/omp-plugin/file-lease.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import { waivedVerificationResult } from "#root/omp-plugin/waived-verification-result.js";
 
@@ -39,8 +29,6 @@ const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
   || resolve(tmpdir(), `omp-verifier-semantic-${process.getuid?.() ?? "user"}`);
 const GENERATION = process.env.OMP_VERIFIER_GENERATION
   ? JSON.parse(process.env.OMP_VERIFIER_GENERATION) : undefined;
-const STATUSES = new Set(["PASS", "FAIL", "BLOCKED"]);
-const MAX_ASSESSMENT_LENGTH = 4_000;
 const LOCK_WAIT_MS = 15_000;
 const SELECTION_REASONS = new Set([
   "automatic-normal",
@@ -64,14 +52,6 @@ function hash(value) {
 
 function blocked(id, summary, evidence) {
   return { id, status: "BLOCKED", summary, ...(evidence ? { evidence } : {}) };
-}
-
-function validText(value, name, { optional = false, maxLength = MAX_ASSESSMENT_LENGTH } = {}) {
-  if (optional && value === undefined) return undefined;
-  if (typeof value !== "string" || (!optional && !value.trim()) || value.length > maxLength) {
-    throw new Error(`${name} must be a ${optional ? "string" : "non-empty string"} no longer than ${maxLength} characters`);
-  }
-  return value;
 }
 
 function projectCacheDirectory(repositoryRoot) {
@@ -292,8 +272,8 @@ async function currentDefinition(check) {
     contractReference: entry.contract,
   });
   return {
-    label: validText(entry.label, "label"),
-    description: validText(entry.description, "description"),
+    label: validSemanticText(entry.label, "label"),
+    description: validSemanticText(entry.description, "description"),
     manifestHash: hash(manifestContents),
     contract,
   };
@@ -471,6 +451,24 @@ async function loadRequestForOperation({ cwd, requestPath }) {
   return { repositoryRoot, cacheDirectory, absoluteRequestPath, checkId, requestId };
 }
 
+export async function readCheckpointHandoffTarget({ cwd, requestPath }) {
+  const target = await loadRequestForOperation({
+    cwd,
+    requestPath,
+  });
+  const { stored, currentState } = await readStoredRequest(target.cacheDirectory, target.checkId, target.requestId);
+  if (!stored.payload.continuation || !Object.keys(currentState.batchAssessments ?? {}).length) {
+    throw new Error("A fresh reviewer handoff requires an accepted batch checkpoint on the current continuation");
+  }
+
+  return {
+    requestId: target.requestId,
+    requestPath: target.absoluteRequestPath,
+    repositoryRoot: target.repositoryRoot,
+    delivery: stored.payload.scope.automatic?.delivery,
+  };
+}
+
 async function validateFreshness({ checkId, repositoryRoot, stored }) {
   const { payload, runtime } = stored;
   const delivery = payload.scope.automatic?.delivery;
@@ -625,7 +623,7 @@ async function reconcileRequest(target) {
   if (isCurrent) {
     const result = currentState.finalResult;
     if (result?.id !== target.checkId || result.evaluation?.requestId !== target.requestId
-      || !STATUSES.has(result.status)) {
+      || !isSemanticVerdict(result.status)) {
       throw new Error("completed semantic request has no retained final result; prepare fresh verification");
     }
     return { result };
@@ -682,7 +680,7 @@ async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPa
     const { payload, runtime } = stored;
     const result = state.finalResult;
     if (state.consumed && (result?.id !== check.id || result.evaluation?.mode !== "agentic"
-      || result.evaluation.requestId !== state.requestId || !STATUSES.has(result.status))) return undefined;
+      || result.evaluation.requestId !== state.requestId || !isSemanticVerdict(result.status))) return undefined;
 
     const selectedPaths = [...new Set(changedPaths)].sort();
     if (payload.scope.repositoryRoot !== repositoryRoot
@@ -1077,71 +1075,6 @@ function missingReviewPages(presentation) {
   return missing;
 }
 
-function normalizedAssessment(assessment, payload, { checkpoint = false } = {}) {
-  if (!assessment || typeof assessment !== "object" || Array.isArray(assessment)) {
-    throw new Error("assessment must be an object");
-  }
-  if (assessment.requestId !== payload.requestId) throw new Error("assessment requestId does not match the current request");
-  if (!STATUSES.has(assessment.status)) throw new Error("assessment status must be PASS, FAIL, or BLOCKED");
-  const summary = validText(assessment.summary, "summary");
-  const rationale = validText(assessment.rationale, "rationale");
-  const nextCheck = validText(assessment.nextCheck, "nextCheck", { optional: true });
-  const citations = assessment.citations === undefined ? [] : assessment.citations;
-  if (!Array.isArray(citations)) throw new Error("citations must be an array");
-  if (citations.length > 20) throw new Error("citations must not exceed 20 evidence locations");
-  if (assessment.status === "PASS" || assessment.status === "FAIL") {
-    if (payload.missingContext.length) throw new Error(`required context is unavailable: ${payload.missingContext.join("; ")}`);
-    const validatedCitations = validateSemanticCitations(citations, payload.context);
-    if (!checkpoint && !validatedCitations.some(citation => payload.scope.changedPaths.includes(citation.path))) {
-      throw new Error("PASS and FAIL citations must include a path in the current changed scope");
-    }
-    if (!checkpoint && payload.context.callerContextPaths.length
-      && !validatedCitations.some(citation => payload.context.callerContextPaths.includes(citation.path))) {
-      throw new Error("PASS and FAIL assessments using explicit caller context must cite its captured caller or runtime source");
-    }
-    const findings = validateFindings(assessment, payload.scope, validatedCitations);
-    return {
-      status: assessment.status,
-      summary,
-      rationale,
-      nextCheck,
-      citations: validatedCitations,
-      findings,
-    };
-  }
-  const validatedCitations = citations.length ? validateSemanticCitations(citations, payload.context) : [];
-  validateFindings(assessment, payload.scope, validatedCitations);
-  return {
-    status: assessment.status,
-    summary,
-    rationale,
-    nextCheck,
-    citations: validatedCitations,
-  };
-}
-
-function resultFromAssessment(payload, assessment) {
-  const citationEvidence = assessment.citations.map(citation =>
-    `${citation.path}:${citation.line}${citation.state === "deleted" ? " (deleted)" : ""}: ${JSON.stringify(citation.quote)}`,
-  );
-  const scope = verificationScope(payload.scope.repositoryRoot, payload.scope.changedPaths, payload.scope.automatic?.delivery, "semantic-findings");
-  return {
-    id: payload.check.id,
-    status: assessment.status,
-    summary: assessment.summary,
-    evidence: [assessment.rationale, ...citationEvidence].join("\n"),
-    scope,
-    ...(assessment.findings?.length ? { findings: assessment.findings } : {}),
-    ...(assessment.nextCheck ? { nextCheck: assessment.nextCheck } : {}),
-    standard: {
-      id: payload.standard.id,
-      source: payload.standard.source,
-      gold: payload.standard.gold,
-    },
-    evaluation: { mode: "agentic", requestId: payload.requestId },
-  };
-}
-
 export async function completeSemanticEvaluation({ cwd, requestPath, assessment, waiver }) {
   let target;
   try {
@@ -1158,10 +1091,23 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
     return waivedVerificationResult(waiver);
   }
 
+  let assessmentLease;
   try {
     return await withCheckLock(target.cacheDirectory, target.checkId, async () => {
       const { result: reconciled, stored, currentState } = await reconcileRequest(target);
       if (reconciled) return reconciled;
+      if (stored.payload.continuation && process.env.OMP_VERIFIER_FRESH_REVIEWER !== target.absoluteRequestPath) {
+        assessmentLease = await tryClaimRequestLease(target.absoluteRequestPath);
+        if (!assessmentLease) {
+          return {
+            id: target.checkId,
+            status: "PENDING",
+            summary: "A fresh reviewer owns this checkpoint; this assessment was not applied",
+            nextCheck: "Wait for the existing handoff command to return before resuming this review.",
+          };
+        }
+      }
+
       const batchIndex = assessment?.batchIndex;
       const presentation = batchIndex === undefined
         ? currentState.pagePresentation
@@ -1201,11 +1147,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
 
       let result;
       try {
-        validateContinuationAssessment(assessment, stored.payload, currentState);
-        const assessmentPayload = continuationAssessmentPayload(stored.payload, batchIndex);
-        result = normalizedAssessment(assessment, assessmentPayload, {
-          checkpoint: batchIndex !== undefined,
-        });
+        result = normalizeSemanticAssessment(assessment, stored.payload, currentState);
       } catch (error) {
         const invalid = blocked(target.checkId, "Semantic assessment is invalid", error.message);
         return {
@@ -1229,27 +1171,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
         await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify(nextState));
         return pending;
       }
-      const finalResult = resultFromAssessment(stored.payload, result);
-      if (stored.payload.continuation) {
-        const batches = stored.payload.continuation.batches.map((batch, index) => ({
-          index,
-          contextFingerprint: batch.context.fingerprint,
-          status: currentState.batchAssessments?.[index]?.status ?? "PENDING",
-        }));
-        finalResult.evaluation.continuation = { fingerprint: stored.payload.continuation.fingerprint, batches };
-        for (const batch of batches) {
-          if (batch.status !== "FAIL" && batch.status !== "BLOCKED") continue;
-          const checkpoint = resultFromAssessment(stored.payload, currentState.batchAssessments[batch.index]);
-          for (const finding of checkpoint.findings ?? []) {
-            finalResult.findings ??= [];
-            if (!finalResult.findings.some(existing => isDeepStrictEqual(existing, finding))) {
-              finalResult.findings.push(finding);
-            }
-          }
-          finalResult.evidence += `\nBatch ${batch.index} ${checkpoint.status}: ${checkpoint.summary}\n${checkpoint.evidence}`;
-          if (checkpoint.nextCheck) finalResult.evidence += `\nNext check: ${checkpoint.nextCheck}`;
-        }
-      }
+      const finalResult = finalAssessmentResult(stored.payload, result, currentState);
       await atomicWrite(statePath(target.cacheDirectory, target.checkId), JSON.stringify({
         ...currentState,
         consumed: true,
@@ -1259,5 +1181,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
     });
   } catch (error) {
     return requestBlock(target.checkId, error.message);
+  } finally {
+    await assessmentLease?.close();
   }
 }

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.33.0 - 2026-11-26
+
+- A verifier nearing its context limit can hand an accepted checkpoint to a fresh native reviewer without restarting the review or asking the operator to continue.
+
 ## 1.32.2 - 2026-11-26
 
 - Documented how maintainers prioritize hard blockers and review latency, and when repeated defects warrant a design change.

@@ -157,6 +157,28 @@ test("when review inputs conflict or flags are irrelevant, request state does no
   }
 });
 
+test("when a fresh reviewer attempts to renew its checkpoint, the original request remains current", async t => {
+  // Arrange
+  const fixture = await semanticCliFixture(t);
+  const before = await cacheSnapshot(fixture.cacheDirectory);
+
+  // Act
+  const result = spawnSync(process.execPath, [cliPath, "review", fixture.request.path, "--continue"], {
+    cwd: fixture.root,
+    env: {
+      ...process.env,
+      OMP_VERIFIER_FRESH_REVIEWER: fixture.request.path,
+      OMP_VERIFIER_SEMANTIC_CACHE: fixture.cacheDirectory,
+    },
+    encoding: "utf8",
+  });
+
+  // Assert
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /handed-off request/);
+  assert.deepEqual(await cacheSnapshot(fixture.cacheDirectory), before);
+});
+
 test("when context options repeat, both selectors and citation coordinates survive review", async t => {
   // Arrange
   const fixture = await semanticCliFixture(t);

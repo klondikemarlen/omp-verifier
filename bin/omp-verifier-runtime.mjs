@@ -132,7 +132,7 @@ class InvalidReviewRequestPath extends Error {
 }
 
 function requestedGeneration(root, args) {
-  if (!["review", "evaluate", "diagnostics"].includes(args[0])) {
+  if (!["review", "evaluate", "diagnostics", "resume-checkpoint"].includes(args[0])) {
     return undefined;
   }
   for (const argument of args) {
