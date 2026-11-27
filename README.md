@@ -253,6 +253,14 @@ The provider supplies the versioned standard/source, quality standard, required 
 
 The advisor assesses the complete current scope against the provider's supplied rubric. Recoverable evidence gaps remain pending work; source size or an incomplete excerpt is not a quality verdict. A fresh assessment is required after correction.
 
+If every semantic check is reading the same project manual, you can mark it as reference material in the repository-root `.omp-verifier.json`:
+
+```json
+{ "review": { "referenceGuides": ["README.md", "WATCHDOG.md"] } }
+```
+
+List exact paths to manuals reviewers should consult as needed, not instructions that govern every change. Reviewers can retrieve material sections with `review --context`; changes to the manual itself remain in scope. Projects without this setting need no migration.
+
 See the [semantic protocol reference](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for complete-source recovery, owning guidance, evidence limits, supersession, and source/citation validation. Native blocker delivery supports correction but is not a hard [completion gate](docs/references/verifier-concepts-reference.md#completion-boundary).
 
 

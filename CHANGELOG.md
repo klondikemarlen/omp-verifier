@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.38.0 - 2026-11-27
+
+- Semantic reviews can retrieve relevant passages from project-declared reference manuals instead of reading each unchanged manual in full for every check. Changed guides and governing instructions remain part of the review.
+
 ## 1.37.0 - 2026-11-27
 
 - Continue an installed review by its request ID instead of copying a private cache path. Each action still targets one exact request in its owning checkout.
