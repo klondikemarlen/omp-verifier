@@ -1,5 +1,5 @@
 import { formatRunTimings, formatVerificationResults } from "#root/omp-plugin/reporters.js";
-import packageManifest from "#root/package.json" with { type: "json" };
+import packageManifest from "../package.json" with { type: "json" };
 
 export function formatVerifierStatus(status, { details = false } = {}) {
   const { globalNames, projectNames, isGuidanceInstalled, generation } = status;
