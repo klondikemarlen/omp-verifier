@@ -95,7 +95,7 @@ function sourceRangeSelectors(path, lineCount) {
   return selectors;
 }
 
-test("an unchanged declared guide is discoverable without supplying source until its range is recovered", async () => {
+test("when a guide is deferred, reviewers can find it but must recover its source before citing it", async () => {
   // Arrange
   const guideSource = [
     "# Publishing reference",
@@ -173,7 +173,7 @@ test("an unchanged declared guide is discoverable without supplying source until
   }
 });
 
-test("a malformed reference declaration preserves the existing guidance contract", async () => {
+test("when a reference declaration is malformed, project guidance remains binding", async () => {
   // Arrange
   const guideSource = "Follow the boundary ownership requirements in this manual.\n";
   const fixture = await createSemanticFixture({
