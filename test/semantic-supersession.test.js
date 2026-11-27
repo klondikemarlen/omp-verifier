@@ -81,8 +81,11 @@ test("when only the check name in a review handle is wrong, the exact handle sti
     const wrongPath = join(dirname(path), `${encodedMissingCheck}.${requestId}.json`);
     const options = { cwd: fixture.root, encoding: "utf8" };
 
-    // Act and assert
+    // Act
     const wrongReview = spawnSync(process.execPath, [CLI, "review", wrongPath], options);
+    const exactReview = spawnSync(process.execPath, [CLI, "review", path], options);
+
+    // Assert
     assert.equal(wrongReview.status, 1, wrongReview.stderr);
     const [blocked] = JSON.parse(wrongReview.stdout);
     assert.equal(blocked.id, missingCheckId);
@@ -92,7 +95,6 @@ test("when only the check name in a review handle is wrong, the exact handle sti
     assert.doesNotMatch(wrongReview.stdout, /supersed|prepare fresh/i);
     assert.equal(blocked.reviewRequest, undefined);
 
-    const exactReview = spawnSync(process.execPath, [CLI, "review", path], options);
     assert.equal(exactReview.status, 0, exactReview.stderr);
     const [current] = JSON.parse(exactReview.stdout);
     assert.equal(current.status, "PENDING");
