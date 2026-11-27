@@ -1,17 +1,24 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, opendir, readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, dirname, extname, isAbsolute, relative, resolve } from "node:path";
+import { lstat, opendir, readdir, realpath } from "node:fs/promises";
+import { basename, dirname, extname, resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { deferredProjectGuidance } from "#root/omp-plugin/deferred-project-guidance.js";
 import { pinnedExternalSource, readExternalText } from "#root/omp-plugin/external-context.js";
-import { readSourceRange } from "#root/omp-plugin/source-range.js";
+import {
+  deletedProjectSource,
+  insideRoot,
+  MAX_FILE_EVIDENCE_BYTES,
+  MAX_INVENTORY_FILE_BYTES,
+  normalizedProjectPath,
+  readProjectText,
+  ROOT_REVIEW_CONFIG,
+} from "#root/omp-plugin/semantic-project-source.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_INVENTORY_FILES = 1_200;
 const MAX_INVENTORY_READ_BYTES = 8_000_000;
-const MAX_FILE_EVIDENCE_BYTES = 16_000;
-const MAX_INVENTORY_FILE_BYTES = 256_000;
 const MAX_TARGETED_RANGE_BYTES = 8_000_000;
 const MAX_TOTAL_EVIDENCE_BYTES = 256_000;
 const MAX_EVIDENCE_FILES = 40;
@@ -29,7 +36,7 @@ const SKIPPED_DIRECTORIES = new Set([
   ".git", "node_modules", "vendor", "dist", "build", "coverage", "target", ".next", ".cache", ".turbo",
 ]);
 const PROJECT_GUIDANCE_NAMES = new Set([
-  ".omp-verifier.json", "AGENTS.md", "CLAUDE.md", "WATCHDOG.md", "WATCHDOG.yml", "WATCHDOG.yaml", "CONTRIBUTING.md",
+  ROOT_REVIEW_CONFIG, "AGENTS.md", "CLAUDE.md", "WATCHDOG.md", "WATCHDOG.yml", "WATCHDOG.yaml", "CONTRIBUTING.md",
   "README.md", "copilot-instructions.md",
 ]);
 
@@ -109,23 +116,6 @@ function admitSourceChunks(records, chunks, budget) {
     admittedRanges.push(chunks.ranges[index]);
   }
   return { lineCount: chunks.lineCount, ...lineCoverage(admittedRanges, chunks.lineCount) };
-}
-
-function normalizedProjectPath(value, name) {
-  if (typeof value !== "string" || !value.trim()) throw new Error(`${name} must be a non-empty project-relative path`);
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
-    throw new Error(`${name} is external evidence, not a project file; use review --external-context with a commit-pinned raw GitHub or local Git URL. Project-path capture never fetches URLs.`);
-  }
-  const path = value.replaceAll("\\", "/").replace(/^\.\//, "");
-  if (!path || path === "." || isAbsolute(path) || path.startsWith("//") || /^[a-zA-Z]:/.test(path) || path.split("/").includes("..")) {
-    throw new Error(`${name} must stay inside the project`);
-  }
-  return path;
-}
-
-function insideRoot(root, filePath) {
-  const pathFromRoot = relative(root, filePath);
-  return !pathFromRoot.startsWith("..") && !isAbsolute(pathFromRoot);
 }
 
 function sourceFile(path) {
@@ -340,46 +330,6 @@ function contextRange(value) {
   return { path: match[1], startLine, endLine };
 }
 
-async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, range, maxRangeBytes = MAX_INVENTORY_FILE_BYTES) {
-  const absolutePath = resolve(root, path);
-  if (!insideRoot(root, absolutePath)) return { error: "path resolves outside the project" };
-  let fileRealPath;
-  try {
-    fileRealPath = await realpath(absolutePath);
-  } catch (error) {
-    if (error?.code === "ENOENT") return { missing: true };
-    return { error: error.message };
-  }
-  if (!insideRoot(root, fileRealPath)) return { error: "path resolves outside the project" };
-
-  let fileStat;
-  try {
-    fileStat = await stat(fileRealPath);
-  } catch (error) {
-    return { error: error.message };
-  }
-  if (!fileStat.isFile()) return { error: "path is not a regular file" };
-
-  if (range) return readSourceRange(fileRealPath, range, maxRangeBytes);
-  if (fileStat.size > maxBytes) {
-    return {
-      error: `file exceeds the ${maxBytes}-byte context limit`,
-      sizeLimitExceeded: true,
-      ...(fileStat.size <= MAX_INVENTORY_FILE_BYTES ? { rangeRecovery: true } : {}),
-    };
-  }
-
-  let contents;
-  try {
-    contents = await readFile(fileRealPath);
-  } catch (error) {
-    return { error: error.message };
-  }
-  if (contents.includes(0)) return { error: "file is not text" };
-
-  return { content: contents.toString("utf8"), sha256: sha256(contents), size: contents.byteLength };
-}
-
 function recordFor(path, result, source) {
   return {
     path,
@@ -453,57 +403,6 @@ function lineCoverage(ranges, lineCount) {
   return { coveredRanges, omittedRanges, complete: omittedRanges.length === 0 };
 }
 
-async function gitSource(root, reference, maxSourceBytes, env) {
-  try {
-    const { stdout } = await execFileAsync("git", ["-C", root, "show", "--no-ext-diff", "--no-textconv", reference], {
-      env,
-      encoding: "buffer",
-      maxBuffer: maxSourceBytes,
-      timeout: 5_000,
-    });
-    if (stdout.byteLength > maxSourceBytes) return { oversized: true };
-    if (stdout.includes(0)) return undefined;
-
-    return { content: stdout.toString("utf8"), reference };
-  } catch (error) {
-    if (error?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER") return { oversized: true };
-    return undefined;
-  }
-}
-
-async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversized = true, delivery } = {}) {
-  if (delivery?.deletedPaths?.includes(path)) {
-    const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
-    const env = {
-      ...inherited,
-      GIT_TERMINAL_PROMPT: "0",
-      GIT_NO_REPLACE_OBJECTS: "1",
-    };
-    return gitSource(root, `${delivery.mergeBaseCommit}:${path}`, maxSourceBytes, env);
-  }
-  for (const reference of [`:${path}`, `HEAD:${path}`]) {
-    const source = await gitSource(root, reference, maxSourceBytes);
-    if (source === undefined) continue;
-    if (source.oversized && !identifyOversized) continue;
-    return source;
-  }
-
-  try {
-    const { stdout } = await execFileAsync("git", [
-      "-C", root, "log", "--first-parent", "--diff-merges=first-parent",
-      "--format=%H", "--no-patch", "--no-renames", "--diff-filter=D", "-1", "HEAD", "--", `:(literal)${path}`,
-    ], { maxBuffer: 128, timeout: 5_000 });
-    const deletionCommit = stdout.trim();
-    if (!/^[a-f0-9]{40,64}$/.test(deletionCommit)) return undefined;
-
-    const source = await gitSource(root, `${deletionCommit}^:${path}`, maxSourceBytes);
-    return source?.oversized && !identifyOversized ? undefined : source;
-  } catch {
-    // Absent history, including shallow boundaries, cannot authenticate prior source.
-    return undefined;
-  }
-}
-
 function isGuidancePath(path) {
   const fileName = basename(path);
   return PROJECT_GUIDANCE_NAMES.has(fileName)
@@ -561,6 +460,7 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
     callerContextPaths: context.callerContextPaths,
   };
   if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
+  if (context.deferredGuidance) fingerprint.deferredGuidance = context.deferredGuidance;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;
   if (context.evidenceBudget.maxContextPaths !== undefined) {
     fingerprint.maxContextPaths = context.evidenceBudget.maxContextPaths;
@@ -669,10 +569,27 @@ export async function captureSemanticContext({
       continue;
     }
     inventoryReadBytes += result.size;
-    availableText.set(path, result.content);
+    if (result.referenceSelectionEligible || codeFile(path)) availableText.set(path, result.content);
   }
 
-  const requiredEvidencePaths = new Set([...normalizedChangedPaths, ...normalizedContextPaths, ...guidancePaths, ...externalSelectors.map(source => source.url)]);
+  const referenceGuideConfig = availableText.get(ROOT_REVIEW_CONFIG);
+  let deferredGuides;
+  if (!legacyRequest && referenceGuideConfig !== undefined) {
+    deferredGuides = deferredProjectGuidance({
+      config: referenceGuideConfig,
+      guidancePaths,
+      changedPaths: [...normalizedChangedPaths, ...(delivery?.changedPaths ?? []), ...(delivery?.deletedPaths ?? [])],
+      selectedPaths: normalizedContextPaths,
+      availableText,
+    });
+  }
+  const bindingGuidancePaths = guidancePaths.filter(path => !deferredGuides?.has(path));
+  const requiredEvidencePaths = new Set([
+    ...normalizedChangedPaths,
+    ...normalizedContextPaths,
+    ...bindingGuidancePaths,
+    ...externalSelectors.map(source => source.url),
+  ]);
   const largeScope = requiredEvidencePaths.size > MAX_EVIDENCE_FILES;
   let maxFiles = largeScope ? MAX_LARGE_SCOPE_EVIDENCE_FILES : MAX_EVIDENCE_FILES;
   let maxBytes = largeScope ? MAX_LARGE_SCOPE_EVIDENCE_BYTES : MAX_TOTAL_EVIDENCE_BYTES;
@@ -889,7 +806,7 @@ export async function captureSemanticContext({
 
   const projectGuidance = [];
   // Authenticated deletions remain changed-source evidence, never live instructions.
-  const guidanceRequirements = guidancePaths
+  const guidanceRequirements = bindingGuidancePaths
     .filter(path => !changedCode.some(record => record.path === path && record.state === "deleted"))
     .map(path => ({
       path,
@@ -1039,6 +956,13 @@ export async function captureSemanticContext({
     ...(inventoryWasTruncated ? { omittedFiles: paths.length - selectedInventoryPaths.length } : {}),
     ...(inventoryReadTruncated ? { note: "Some source inventory content could not be inspected within retrieval limits." } : {}),
   };
+  let guidanceEvidence = projectGuidance;
+  if (!projectGuidance.length && !deferredGuides) {
+    guidanceEvidence = {
+      status: "none-found",
+      explanation: "No recognized project guidance files were found in the inspected inventory.",
+    };
+  }
   const context = {
     changedPaths: normalizedChangedPaths,
     ...(recovery ? { sourceRecovery: recovery } : {}),
@@ -1047,7 +971,13 @@ export async function captureSemanticContext({
     callers: callerEvidence,
     siblings: siblingEvidence,
     siblingInventory,
-    projectGuidance: projectGuidance.length ? projectGuidance : { status: "none-found", explanation: "No recognized project guidance files were found in the inspected inventory." },
+    projectGuidance: guidanceEvidence,
+    ...(deferredGuides ? {
+      deferredGuidance: {
+        guides: [...deferredGuides.values()],
+        recovery: "These unchanged reference guides were not captured as evidence. If material, retrieve the original lines with review --context '<path#Lstart-Lend>' before assessment; do not infer from headings or treat the absent body as evidence for PASS.",
+      },
+    } : {}),
     guidanceRequirements,
     targetedContext: targetedContext.length ? targetedContext : [],
     ...(externalContext.length ? { externalContext } : {}),

@@ -48,6 +48,9 @@ export function continuationReviewPayload(payload, state, batchIndex) {
   const context = batch?.context ?? {
     changedPaths: payload.scope.changedPaths,
     fingerprint: payload.continuation.fingerprint,
+    ...(payload.context.deferredGuidance ? {
+      deferredGuidance: payload.context.deferredGuidance,
+    } : {}),
     notes: ["Source remains in the saved batches. Reinspect material cross-batch evidence with review --batch N; checkpoint summaries are not independent whole-scope verdicts."],
   };
   return {
