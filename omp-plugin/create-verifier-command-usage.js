@@ -54,22 +54,23 @@ export function createVerifierCommandUsage(commandNames) {
     },
 
     async report(agentDir, { invocationRecorded }) {
+      const title = "Verifier command usage";
       let snapshot;
       try {
         const directory = await usageDirectory(agentDir);
         snapshot = await readCounts(join(directory, "counts.json"), countKeys);
       } catch {
-        return "Verifier command usage\nLocal usage counts are unavailable.";
+        return { title, lines: ["Local usage counts are unavailable."] };
       }
 
-      const lines = ["Verifier command usage"];
+      const lines = [];
       if (!snapshot) {
         if (invocationRecorded === false) {
           lines.push("Local usage counts are unavailable; this invocation could not be recorded.");
         } else {
           lines.push("Observation has not begun; no interactive invocations have been recorded.");
         }
-        return lines.join("\n");
+        return { title, lines };
       }
 
       const startedAt = new Date(snapshot.startedAt).toISOString();
@@ -86,7 +87,7 @@ export function createVerifierCommandUsage(commandNames) {
       if (invocationRecorded === false) {
         lines.push("This invocation could not be recorded.");
       }
-      return lines.join("\n");
+      return { title, lines };
     },
   };
 }

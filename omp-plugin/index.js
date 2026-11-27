@@ -34,9 +34,10 @@ import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.j
 import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
 const WAIVER_USAGE = "/verifier waive <verification|namespace:name> [--session]";
-const COMMAND_USAGE = "/verifier [status [--usage]|checks|verify [id...]|timings|closeout prepare|verify <file>|closeout review <handoff-id>|generation [prepare|activate <id>|status|collect]|demo|uninstall|waive <gate> [--session]]";
+const COMMAND_USAGE = "/verifier [status|checks|verify|timings|demo|uninstall|generation|closeout|waive]";
+const STATUS_USAGE = "/verifier status [--details|--usage]";
 const SUBCOMMANDS = [
-  { name: "status", description: "Show verifier advisor setup (or --usage for command counts)" },
+  { name: "status", description: "Show verifier setup; use --details for paths or --usage for command counts" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
   {
@@ -211,8 +212,12 @@ async function showDemo(ctx) {
 
 function completeSubcommands(argumentPrefix) {
   const statusOption = argumentPrefix.match(/^status\s+(\S*)$/);
-  if (statusOption && "--details".startsWith(statusOption[1])) {
-    return [{ value: "status --details", label: "--details", description: "Show generation IDs and local paths" }];
+  if (statusOption) {
+    const options = [
+      { value: "status --details", label: "--details", description: "Show generation IDs and local paths" },
+      { value: "status --usage", label: "--usage", description: "Show recorded command counts" },
+    ];
+    return options.filter(option => option.label.startsWith(statusOption[1]));
   }
 
   if (argumentPrefix.includes(" ")) return null;
@@ -424,8 +429,8 @@ export default async function verifierPlugin(pi) {
       }
 
       if (action === "status" && rest.length === 1 && rest[0] === "--usage") {
-        const output = await commandUsage.report(agentDir, { invocationRecorded });
-        return ctx.ui.notify(output, "info");
+        const report = await commandUsage.report(agentDir, { invocationRecorded });
+        return showVerifierStatusReport(pi, ctx, report);
       }
 
       if (action === "status") {

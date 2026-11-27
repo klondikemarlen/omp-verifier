@@ -331,7 +331,7 @@ test("when usage storage is unreadable, still reports the normal verifier status
   const status = await command.invoke("status");
 
   // Assert
-  assert.match(status, /WATCHDOG\.md/);
+  assert.match(status, /Setup details: Run \/verifier status --details\./);
 });
 
 test("when stored counts are unreadable, reports unavailable rather than zero", async t => {
