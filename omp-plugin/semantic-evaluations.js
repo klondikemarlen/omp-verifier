@@ -23,6 +23,7 @@ import { saveTimingAssessment } from "#root/omp-plugin/timing-history.js";
 import { claimOperationLock, tryClaimRequestLease } from "#root/omp-plugin/file-lease.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import { waivedVerificationResult } from "#root/omp-plugin/waived-verification-result.js";
+import { blocked, MissingSemanticRequestState, requestBlock } from "#root/omp-plugin/semantic-request-errors.js";
 
 const execFileAsync = promisify(execFile);
 const CACHE_DIRECTORY = process.env.OMP_VERIFIER_SEMANTIC_CACHE
@@ -48,10 +49,6 @@ const MAX_CACHED_REQUESTS = 100;
 const MAX_CACHED_CHECKS = 200;
 function hash(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function blocked(id, summary, evidence) {
-  return { id, status: "BLOCKED", summary, ...(evidence ? { evidence } : {}) };
 }
 
 function projectCacheDirectory(repositoryRoot) {
@@ -207,9 +204,18 @@ async function readCurrentState(cacheDirectory, checkId) {
   }
 }
 
+async function readRequiredCurrentState(cacheDirectory, checkId) {
+  const state = await readCurrentState(cacheDirectory, checkId);
+  if (!state) {
+    throw new MissingSemanticRequestState();
+  }
+
+  return state;
+}
+
 async function readStoredRequest(cacheDirectory, checkId, requestId, { requireCurrent = true } = {}) {
-  const currentState = await readCurrentState(cacheDirectory, checkId);
-  if (!currentState || (requireCurrent && currentState.requestId !== requestId)) {
+  const currentState = await readRequiredCurrentState(cacheDirectory, checkId);
+  if (requireCurrent && currentState.requestId !== requestId) {
     throw new Error("semantic request has been superseded");
   }
   if (requireCurrent && currentState.consumed) throw new Error("semantic request has already been consumed");
@@ -518,14 +524,6 @@ async function validateFreshness({ checkId, repositoryRoot, stored }) {
   if (payload.continuation) await validateSemanticContinuation(payload);
 }
 
-function requestBlock(id, error) {
-  const unavailable = blocked(id || "semantic-evaluation", "Semantic request is unavailable", error);
-  return {
-    ...unavailable,
-    nextCheck: "Restore the named request prerequisite, then prepare fresh verification with the original complete scope and actual delivery base. Do not reuse citations from an unavailable or stale request.",
-  };
-}
-
 async function reconcileAutomaticScope(target, current) {
   const { payload, runtime } = current.stored;
   const automatic = payload.scope.automatic;
@@ -603,9 +601,8 @@ async function reconcileAutomaticScope(target, current) {
 }
 
 async function reconcileRequest(target) {
-  const currentState = await readCurrentState(target.cacheDirectory, target.checkId);
-  const isCurrent = currentState?.requestId === target.requestId;
-  if (!currentState) throw new Error("semantic request has been superseded");
+  const currentState = await readRequiredCurrentState(target.cacheDirectory, target.checkId);
+  const isCurrent = currentState.requestId === target.requestId;
 
   const current = await readStoredRequest(target.cacheDirectory, target.checkId, currentState.requestId, {
     requireCurrent: false,
@@ -782,7 +779,7 @@ export async function prepareSemanticEvaluation({
       return requestEnvelope(result.payload, requestPath);
     });
   } catch (error) {
-    return requestBlock(check.id, error.message);
+    return requestBlock(check.id, error);
   }
 }
 
@@ -799,7 +796,7 @@ export async function readSemanticEvaluation({
       throw error;
     }
 
-    return requestBlock(undefined, error.message);
+    return requestBlock(undefined, error);
   }
 
   if (target.checkId === waiver?.id) {
@@ -908,7 +905,7 @@ export async function readSemanticEvaluation({
       return requestEnvelope(result.payload, nextRequestPath);
     });
   } catch (error) {
-    return requestBlock(target.checkId, error.message);
+    return requestBlock(target.checkId, error);
   }
 }
 
@@ -993,8 +990,7 @@ export async function readSemanticDiagnostics({ cwd, requestPath }) {
     cwd,
     requestPath,
   });
-  const state = await readCurrentState(target.cacheDirectory, target.checkId);
-  if (!state) throw new Error("No current semantic request");
+  const state = await readRequiredCurrentState(target.cacheDirectory, target.checkId);
   const { stored, currentState, requestPath: currentPath } = await readStoredRequest(
     target.cacheDirectory,
     target.checkId,
@@ -1084,7 +1080,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
       throw error;
     }
 
-    return requestBlock(undefined, error.message);
+    return requestBlock(undefined, error);
   }
 
   if (target.checkId === waiver?.id) {
@@ -1180,7 +1176,7 @@ export async function completeSemanticEvaluation({ cwd, requestPath, assessment,
       return finalResult;
     });
   } catch (error) {
-    return requestBlock(target.checkId, error.message);
+    return requestBlock(target.checkId, error);
   } finally {
     await assessmentLease?.close();
   }
