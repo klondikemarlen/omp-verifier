@@ -90,6 +90,7 @@ Each requirement names its trigger, check id, quality standard, executable narro
 ```text
 /verifier
 /verifier status
+/verifier status --details
 /verifier status --usage
 /verifier checks
 /verifier verify
@@ -107,6 +108,10 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier uninstall
 /verifier waive <verification|namespace:name> [--session]
 ```
+
+`/verifier` and `/verifier status` show a setup snapshot: the version loaded by this OMP process, whether the verifier is configured globally, whether advisor guidance is installed, and whether the project has its own roster. No project roster is required. If global setup is missing, start a fresh OMP session to restore managed files. Use `/advisor status` to check live activity; a setup snapshot does not say whether the verifier is running.
+
+Use `/verifier status --details` for advisor names, full generation identifiers, and configuration paths. The setup report stays in the conversation on supported OMP hosts without starting a model turn. Its text carries the same facts if the custom frame is unavailable. The loaded plugin and selected coordinator generation can have different versions; use the details view to compare them.
 
 Use `/verifier status --usage` to see how often each menu option was invoked across projects in your current OMP profile. The report separates bare `/verifier` from explicit `status` and shows when observation began. See [command usage](docs/references/verifier-concepts-reference.md#command-usage) for what counts and what stays private.
 
