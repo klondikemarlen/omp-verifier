@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.3 - 2026-11-27
+
+- When no state exists for the check named in a review handle, the verifier directs the reviewer back to the exact handle instead of claiming that the review was superseded.
+
 ## 1.36.2 - 2026-11-27
 
 - The primary now receives instructions to open the retained check result before quoting evidence or acting on a Verifier findings note.
