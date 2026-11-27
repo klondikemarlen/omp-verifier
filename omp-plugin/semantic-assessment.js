@@ -89,6 +89,12 @@ export function finalAssessmentResult(payload, assessment, state) {
         finalResult.findings.push(finding);
       }
     }
+    for (const citation of checkpoint.citations ?? []) {
+      finalResult.citations ??= [];
+      if (!finalResult.citations.some(existing => isDeepStrictEqual(existing, citation))) {
+        finalResult.citations.push(citation);
+      }
+    }
     finalResult.evidence += `\nBatch ${batch.index} ${checkpoint.status}: ${checkpoint.summary}\n${checkpoint.evidence}`;
     if (checkpoint.nextCheck) finalResult.evidence += `\nNext check: ${checkpoint.nextCheck}`;
   }
@@ -106,6 +112,7 @@ function resultFromAssessment(payload, assessment) {
     summary: assessment.summary,
     evidence: [assessment.rationale, ...citationEvidence].join("\n"),
     scope,
+    ...(assessment.citations.length ? { citations: assessment.citations } : {}),
     ...(assessment.findings?.length ? { findings: assessment.findings } : {}),
     ...(assessment.nextCheck ? { nextCheck: assessment.nextCheck } : {}),
     standard: {
