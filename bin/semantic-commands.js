@@ -14,9 +14,12 @@ import {
 } from "#root/omp-plugin/semantic-evaluations.js";
 
 export function registerSemanticCommands(program) {
+  const requestArgument = process.env.OMP_VERIFIER_REQUEST_ID_ARGUMENT === "1"
+    ? "Exact request ID in this checkout, or the full request file path"
+    : "Full request file path";
   const review = program.command("review")
     .description("Read a semantic review request and recover supporting context")
-    .argument("<request-file>", "Semantic request file")
+    .argument("<request>", requestArgument)
     .option("--context <path>", "Add source context, optionally with #Lstart-Lend", appendContext, [])
     .option("--caller-context <path>", "Add caller source context", appendContext, [])
     .option("--external-context <path>", "Add external source context", appendContext, [])
@@ -31,7 +34,7 @@ export function registerSemanticCommands(program) {
 
   const evaluate = program.command("evaluate")
     .description("Complete a semantic review using a structured assessment")
-    .argument("<request-file>", "Semantic request file")
+    .argument("<request>", requestArgument)
     .requiredOption("--assessment <json>", "Assessment JSON, or - to read stdin");
   addRequestOption(addReportingOptions(evaluate, {
     failuresOnly: true,
@@ -40,7 +43,7 @@ export function registerSemanticCommands(program) {
 
   const handoff = program.command("resume-checkpoint")
     .description("Hand a checkpointed request to a fresh native verifier in its owning checkout")
-    .argument("<request-file>", "Current checkpointed semantic request file")
+    .argument("<request>", requestArgument)
     .option("--pull-request <url>", "Intended GitHub PR or GitLab MR URL for a delivery review")
     .option("--target-branch <name>", "Expected target branch of that PR or MR");
   addRequestOption(addReportingOptions(handoff, {
@@ -50,7 +53,7 @@ export function registerSemanticCommands(program) {
 
   const diagnostics = program.command("diagnostics")
     .description("Read privacy-safe semantic request diagnostics")
-    .argument("<request-file>", "Semantic request file");
+    .argument("<request>", requestArgument);
   addReportingOptions(diagnostics);
   diagnostics.action(showDiagnostics);
 }

@@ -1,12 +1,15 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { execFile, spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
-import { lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const GENERATION_ID = /^[a-f0-9-]{36}$/;
+const REQUEST_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
+const execute = promisify(execFile);
 const ownPath = fileURLToPath(import.meta.url);
 
 export async function privateDirectory(path) {
@@ -126,12 +129,12 @@ export async function collectGenerations(root) {
 }
 
 class InvalidReviewRequestPath extends Error {
-  constructor() {
-    super("Invalid review request path. Retry the last page footer's exact Next command, or copy the complete request path from the coordinator's response. Do not prepare a new review for this argument error.");
+  constructor(reason = "Invalid review request path or UUID.") {
+    super(`${reason} Retry the last page footer's exact Next command, or copy the complete request path from the coordinator's response. Do not prepare a new review for this argument error.`);
   }
 }
 
-function requestedGeneration(root, args) {
+function reviewRequestArgument(args) {
   if (!["review", "evaluate", "diagnostics", "resume-checkpoint"].includes(args[0])) {
     return undefined;
   }
@@ -146,7 +149,11 @@ function requestedGeneration(root, args) {
   if (!args[1]) {
     throw new InvalidReviewRequestPath();
   }
-  const request = resolve(args[1]);
+  return args[1];
+}
+
+function generationForRequestPath(root, requestPath) {
+  const request = resolve(requestPath);
   const parts = relative(join(root, "reviews"), request).split("/");
   if (parts[0] === "..") {
     // A complete file from another runtime belongs to its original coordinator.
@@ -162,8 +169,82 @@ function requestedGeneration(root, args) {
   return parts[0];
 }
 
+async function checkoutNamespace() {
+  // Match semantic-evaluations.js#currentRepositoryRoot and projectCacheDirectory.
+  let root = await realpath(process.cwd());
+  try {
+    const { stdout } = await execute("git", ["-C", root, "rev-parse", "--show-toplevel"], {
+      maxBuffer: 4_000_000,
+    });
+    root = await realpath(stdout.trim());
+  } catch {
+    // Non-git projects use the canonical working directory itself.
+  }
+  return createHash("sha256").update(root).digest("hex");
+}
+
+async function isDirectory(path) {
+  try {
+    return (await lstat(path)).isDirectory();
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
+}
+
+async function findReviewRequest(root, namespace, requestId) {
+  const generations = join(root, "generations");
+  const reviews = join(root, "reviews");
+  if (!await isDirectory(generations) || !await isDirectory(reviews)) {
+    throw new InvalidReviewRequestPath();
+  }
+
+  const fileName = new RegExp(`^[A-Za-z0-9_-]+\\.${requestId}\\.json$`);
+  let match;
+  for (const generation of await directories(generations)) {
+    if (!generation.isDirectory() || !GENERATION_ID.test(generation.name)) continue;
+
+    const generationReviews = join(reviews, generation.name);
+    const checkoutReviews = join(generationReviews, namespace);
+    const requests = join(checkoutReviews, "requests");
+    if (!await isDirectory(generationReviews) || !await isDirectory(checkoutReviews) || !await isDirectory(requests)) {
+      continue;
+    }
+
+    for (const entry of await directories(requests)) {
+      if (!entry.isFile() || !fileName.test(entry.name)) continue;
+
+      if (match) {
+        throw new InvalidReviewRequestPath("Ambiguous review request UUID in this checkout.");
+      }
+      match = {
+        id: generation.name,
+        path: join(requests, entry.name),
+      };
+    }
+  }
+
+  if (!match) {
+    throw new InvalidReviewRequestPath("No exact review request UUID found in this checkout.");
+  }
+  return match;
+}
+
 export async function dispatchGeneration(root, args) {
-  const requested = requestedGeneration(root, args);
+  const boundReviewer = Boolean(process.env.OMP_VERIFIER_FRESH_REVIEWER);
+  const request = reviewRequestArgument(args);
+  let namespace;
+  let requestPathGeneration;
+  if (request) {
+    if (!boundReviewer && request.length === 36 && REQUEST_ID.test(request)) {
+      namespace = await checkoutNamespace();
+    } else {
+      requestPathGeneration = generationForRequestPath(root, request);
+    }
+  }
+
   let leasePath;
   let child;
   let completion;
@@ -177,6 +258,14 @@ export async function dispatchGeneration(root, args) {
   }
 
   async function startCoordinator() {
+    let requested = requestPathGeneration;
+    let coordinatorArgs = args;
+    if (namespace) {
+      const match = await findReviewRequest(root, namespace, request);
+      requested = match.id;
+      coordinatorArgs = [args[0], match.path, ...args.slice(2)];
+    }
+
     const active = await activeGeneration(root);
     const id = requested ?? active.id;
     const directory = generationDirectory(root, id);
@@ -196,6 +285,7 @@ export async function dispatchGeneration(root, args) {
       OMP_VERIFIER_GENERATION: identity,
       OMP_VERIFIER_SEMANTIC_CACHE: cache,
       OMP_VERIFIER_COORDINATOR: launcher,
+      OMP_VERIFIER_REQUEST_ID_ARGUMENT: boundReviewer ? "0" : "1",
       OMP_VERIFIER_PACKAGE_DIRECTORY: packageDirectory,
       PI_CODING_AGENT_DIR: agentDir,
     };
@@ -203,7 +293,7 @@ export async function dispatchGeneration(root, args) {
     await atomicJson(leasePath, {
       pid: process.pid,
     });
-    child = spawn(process.execPath, [coordinator, ...args], {
+    child = spawn(process.execPath, [coordinator, ...coordinatorArgs], {
       env: environment,
       stdio: "inherit",
     });
