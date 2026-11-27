@@ -50,7 +50,7 @@ test("when OMP is the host executable, closeout reports the coordinator's receip
   assert.match(message, /outside private closeout storage/);
 });
 
-test("a prepared slash closeout report retains the receipt path and does not imply PASS", async context => {
+test("when closeout prepares a receipt, the slash report shows its path without claiming PASS", async context => {
   // Arrange
   const agentDir = await mkdtemp(join(tmpdir(), "verifier-closeout-prepared-"));
   const storageRoot = join(agentDir, "tmp");
