@@ -64,6 +64,48 @@ function passAssessment(requestId) {
   };
 }
 
+test("when only the check name in a review handle is wrong, the exact handle still works", async () => {
+  // Arrange
+  const fixture = await createSemanticFixture();
+
+  try {
+    const check = await discoverSemanticCheck(fixture);
+    const prepared = await prepareSemanticEvaluation({
+      check,
+      cwd: fixture.root,
+      changedPaths: ["src/helper.js"],
+    });
+    const { path, requestId } = prepared.reviewRequest;
+    const missingCheckId = "publisher:missing-check";
+    const encodedMissingCheck = Buffer.from(missingCheckId).toString("base64url");
+    const wrongPath = join(dirname(path), `${encodedMissingCheck}.${requestId}.json`);
+    const options = { cwd: fixture.root, encoding: "utf8" };
+
+    // Act
+    const wrongReview = spawnSync(process.execPath, [CLI, "review", wrongPath], options);
+    const exactReview = spawnSync(process.execPath, [CLI, "review", path], options);
+
+    // Assert
+    assert.equal(wrongReview.status, 1, wrongReview.stderr);
+    const [blocked] = JSON.parse(wrongReview.stdout);
+    assert.equal(blocked.id, missingCheckId);
+    assert.equal(blocked.status, "BLOCKED");
+    assert.match(blocked.evidence, /no semantic request state was found for the supplied check/i);
+    assert.match(blocked.nextCheck, /retry the exact command .*footer in the owning checkout/i);
+    assert.doesNotMatch(wrongReview.stdout, /supersed|prepare fresh/i);
+    assert.equal(blocked.reviewRequest, undefined);
+
+    assert.equal(exactReview.status, 0, exactReview.stderr);
+    const [current] = JSON.parse(exactReview.stdout);
+    assert.equal(current.status, "PENDING");
+    assert.equal(current.reviewRequest.path, path);
+    assert.equal(current.reviewRequest.requestId, requestId);
+    assert.equal(current.evaluation?.supersededBy, undefined);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("when a superseded operation arrives after current completion, it cannot replay a verdict", async () => {
   // Arrange
   const fixture = await createSemanticFixture();
