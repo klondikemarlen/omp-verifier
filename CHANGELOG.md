@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.35.0 - 2026-11-27
+
+- `/verifier status --usage` reports local invocation counts across projects, separating the bare command from explicit `status` without adding a menu entry.
+
 ## 1.33.0 - 2026-11-26
 
 - A verifier nearing its context limit can hand an accepted checkpoint to a fresh native reviewer without restarting the review or asking the operator to continue.

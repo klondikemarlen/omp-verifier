@@ -90,6 +90,7 @@ Each requirement names its trigger, check id, quality standard, executable narro
 ```text
 /verifier
 /verifier status
+/verifier status --usage
 /verifier checks
 /verifier verify
 /verifier verify <check-id...>
@@ -103,6 +104,8 @@ Each requirement names its trigger, check id, quality standard, executable narro
 /verifier closeout review <handoff-id>
 /verifier uninstall
 ```
+
+Use `/verifier status --usage` to see how often each menu option was invoked across projects in your current OMP profile. The report separates bare `/verifier` from explicit `status` and shows when observation began. See [command usage](docs/references/verifier-concepts-reference.md#command-usage) for what counts and what stays private.
 
 `/verifier checks` lists valid checks declared by installed plugin manifests. `/verifier verify` runs all discovered checks; named IDs run only the requested checks. Deterministic results are `PASS`, `FAIL`, or `BLOCKED`. A supported semantic result includes `reviewRequest` and has status `PENDING` whether the assessment is ready or awaits recoverable context; it is not a final verdict. The verifier advisor must complete the semantic assessment before delivering any final `FAIL`/`BLOCKED`.
 

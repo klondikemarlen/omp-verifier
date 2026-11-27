@@ -40,6 +40,14 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
 
+### Command Usage
+
+`/verifier status --usage` summarizes recorded interactive invocations across projects in the active OMP profile, from the first recorded invocation through the time of the report. Bare `/verifier` is reported separately from explicit `status`, which includes requests for the usage report. Zero means no invocation was observed in that period, not that an option has never been used.
+
+Typing a recognized top-level command and submitting an autocomplete selection count the same way. Opening or navigating completion, unknown commands, headless sessions without a UI context, automatic advisor runs, and direct `omp-verifier` CLI calls are not counted. A count means invocation, not success or authorization: a recognized command with invalid arguments or a canceled `waive` still counts.
+
+Only the observation start and a fixed set of local aggregate counts are stored under `<agent-dir>/verifier/command-usage/`, outside Git checkouts. Collection is best-effort and never prevents the requested command, so a storage outage can leave gaps. Usage collection does not record arguments, project paths, prompts, user or session identities, or individual events, and it does not transmit usage data.
+
 ### Runtime Generations
 
 The persistent launcher lives at `<agent-dir>/verifier/omp-verifier.mjs`, outside package-manager replacement paths. Its private `runtime` directory contains an atomic active-generation pointer and independent artifact directories. A generation captures the coordinator, registered verification providers, supplied standards, executable entries, and installed runtime/peer/optional dependencies. Copies have independent contents, not hard links to development or installed files; package-internal symlinks remain internal. Missing required dependencies or a package changing during capture blocks preparation.
