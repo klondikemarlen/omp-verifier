@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.0 - 2026-11-27
+
+- Verifier blocker notes group current check results by PR or MR and affected location. Open the exact retained report from the note for full provenance, structured results, and literal diagnostic evidence without rerunning verification.
+
 ## 1.33.0 - 2026-11-26
 
 - A verifier nearing its context limit can hand an accepted checkpoint to a fresh native reviewer without restarting the review or asking the operator to continue.
