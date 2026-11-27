@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { lstat, opendir, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, extname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import { deferredProjectGuidance } from "#root/omp-plugin/deferred-project-guidance.js";
@@ -15,6 +15,7 @@ import {
   readProjectText,
   ROOT_REVIEW_CONFIG,
 } from "#root/omp-plugin/semantic-project-source.js";
+import { callerLineExcerpt, codeFile, discoverSourceCandidates, MAX_CALLER_LINE_BYTES } from "#root/omp-plugin/semantic-source-candidates.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_INVENTORY_FILES = 1_200;
@@ -28,10 +29,6 @@ const DEFAULT_MAX_SOURCE_BYTES = MAX_FILE_EVIDENCE_BYTES;
 const MAX_SOURCE_BYTES = MAX_INVENTORY_FILE_BYTES;
 const DEFAULT_MAX_CONTEXT_PATHS = 30;
 const MAX_CONTEXT_PATHS = 256;
-const CODE_EXTENSIONS = new Set([
-  ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".java", ".js", ".jsx", ".mjs", ".cjs", ".kt", ".mts", ".php",
-  ".py", ".rb", ".rs", ".ts", ".tsx", ".vue", ".svelte",
-]);
 const SKIPPED_DIRECTORIES = new Set([
   ".git", "node_modules", "vendor", "dist", "build", "coverage", "target", ".next", ".cache", ".turbo",
 ]);
@@ -119,11 +116,7 @@ function admitSourceChunks(records, chunks, budget) {
 }
 
 function sourceFile(path) {
-  return CODE_EXTENSIONS.has(extname(path).toLowerCase()) || isGuidancePath(path);
-}
-
-function codeFile(path) {
-  return CODE_EXTENSIONS.has(extname(path).toLowerCase());
+  return codeFile(path) || isGuidancePath(path);
 }
 
 async function gitInventory(root) {
@@ -503,6 +496,7 @@ export async function captureSemanticContext({
   // An omitted contract keeps the default eager discovery behavior.
   const captureCallerSource = requiredContext?.includes("callers") ?? true;
   const captureSiblingSource = requiredContext?.includes("siblings") ?? true;
+  const compactOptionalSource = requiredContext != null && Boolean(delivery);
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -551,6 +545,7 @@ export async function captureSemanticContext({
   const selectedInventoryPaths = orderedInventoryPaths.slice(0, MAX_INVENTORY_FILES);
   const inventoryRecords = [];
   const availableText = new Map();
+  const inventorySourceHashes = new Map();
   let inventoryReadBytes = 0;
   let inventoryReadTruncated = false;
 
@@ -569,7 +564,10 @@ export async function captureSemanticContext({
       continue;
     }
     inventoryReadBytes += result.size;
-    if (result.referenceSelectionEligible || codeFile(path)) availableText.set(path, result.content);
+    if (result.referenceSelectionEligible || codeFile(path)) {
+      availableText.set(path, result.content);
+      if (compactOptionalSource) inventorySourceHashes.set(path, result.sha256);
+    }
   }
 
   const referenceGuideConfig = availableText.get(ROOT_REVIEW_CONFIG);
@@ -791,18 +789,11 @@ export async function captureSemanticContext({
     }
   }
 
-  const callerPaths = new Set();
-  const siblingPaths = new Set();
-  for (const changedPath of normalizedChangedPaths) {
-    const stem = basename(changedPath).replace(/\.[^.]+$/, "");
-    for (const path of selectedInventoryPaths) {
-      if (normalizedChangedPaths.includes(path) || !codeFile(path)) continue;
-      const content = availableText.get(path);
-      if (content === undefined) continue;
-      if (dirname(path) === dirname(changedPath)) siblingPaths.add(path);
-      if (stem && content.includes(stem)) callerPaths.add(path);
-    }
-  }
+  const { callerMatches, siblingPaths, changedStems } = discoverSourceCandidates({
+    changedPaths: normalizedChangedPaths,
+    selectedInventoryPaths,
+    availableText,
+  });
 
   const projectGuidance = [];
   // Authenticated deletions remain changed-source evidence, never live instructions.
@@ -874,6 +865,12 @@ export async function captureSemanticContext({
   const capturedOptionalPaths = new Set([...targetedContext, ...changedCode]
     .filter(record => typeof record.content === "string").map(record => record.path));
   const attemptedOptionalPaths = new Set();
+  // An explicitly selected range counts as caller evidence only if it actually
+  // contains a filename match or was explicitly supplied as caller discovery.
+  const capturedCallerPaths = compactOptionalSource
+    ? new Set(targetedContext.filter(record => record.content && (record.source === "caller-context"
+      || changedStems.some(stem => stem && record.content.includes(stem)))).map(record => record.path))
+    : capturedOptionalPaths;
 
   function captureOptionalSource(path, records, source) {
     if (capturedOptionalPaths.has(path)) return true;
@@ -904,18 +901,39 @@ export async function captureSemanticContext({
       if (inventory.files.some(path => capturedOptionalPaths.has(path))) continue;
 
       for (const path of inventory.files) {
-        if (captureOptionalSource(path, siblings, "siblings")) break;
+        if (!captureOptionalSource(path, siblings, "siblings")) continue;
+
+        if (callerMatches.has(path)) capturedCallerPaths.add(path);
+        break;
       }
     }
   }
   if (captureCallerSource) {
-    for (const path of callerPaths) captureOptionalSource(path, callers, "callers");
+    for (const [path, matchOffset] of callerMatches) {
+      if (!compactOptionalSource) {
+        captureOptionalSource(path, callers, "callers");
+        continue;
+      }
+      if (capturedCallerPaths.has(path)) continue;
+
+      // A rejected full sibling may still supply caller evidence, but an
+      // excerpt does not stand in for a representative sibling body.
+      const excerpt = callerLineExcerpt(availableText.get(path), matchOffset, inventorySourceHashes.get(path));
+      if (excerpt.error) {
+        budget.rejections.push({ path, source: "callers", bytes: excerpt.bytes, reason: excerpt.error });
+        budget.truncated = true;
+        continue;
+      }
+      if (addRecord(callers, recordFor(path, excerpt, "callers"), budget)) {
+        capturedCallerPaths.add(path);
+      }
+    }
   }
-  if (captureSiblingSource) {
+  if (captureSiblingSource && !compactOptionalSource) {
     for (const path of siblingPaths) captureOptionalSource(path, siblings, "siblings");
   }
 
-  const uncapturedCallerPaths = [...callerPaths].filter(path => !capturedOptionalPaths.has(path));
+  const uncapturedCallerPaths = [...callerMatches.keys()].filter(path => !capturedCallerPaths.has(path));
   const uncapturedSiblingSource = [...siblingPaths].some(path => !capturedOptionalPaths.has(path));
   const deferredCallerPaths = captureCallerSource ? [] : uncapturedCallerPaths;
   const hasDeferredSource = deferredCallerPaths.length > 0 || (!captureSiblingSource && uncapturedSiblingSource);
@@ -936,14 +954,14 @@ export async function captureSemanticContext({
 
   let callerEvidence = callers;
   if (!callers.length) {
-    if ([...callerPaths].some(path => capturedOptionalPaths.has(path))) {
+    if ([...callerMatches.keys()].some(path => capturedCallerPaths.has(path))) {
       callerEvidence = { status: "captured-elsewhere", explanation: "Filename-matched caller candidates are captured in sibling or targeted records; source relationships still require assessment." };
     } else if (deferredCallerPaths.length) {
       callerEvidence = {
         status: "not-captured",
         explanation: "Optional caller source is deferred; inspect callerRetrieval.deferredPaths and select material evidence before assessment.",
       };
-    } else if (callerPaths.size) {
+    } else if (callerMatches.size) {
       callerEvidence = { status: "not-captured", explanation: "Caller candidates were found but not admitted; inspect evidenceBudget.rejections and recover material source with review --context." };
     } else {
       callerEvidence = { status: "none-found", explanation: "No current project source file referenced the changed file names in the inspected inventory." };
@@ -1014,6 +1032,12 @@ export async function captureSemanticContext({
       siblings: uncapturedSiblingSource,
     },
     notes: [
+      ...(compactOptionalSource && captureCallerSource && callerMatches.size ? [
+        `Filename matches do not establish a caller relationship. Automatic discovery captures at most the first matching original line per speculative candidate (${MAX_CALLER_LINE_BYTES} UTF-8 bytes); longer lines are omitted and listed in evidenceBudget.rejections. Recover material source with review --context '<path#Lstart-Lend>' or real runner discovery with --caller-context before assessment; cite only captured lines.`,
+      ] : []),
+      ...(compactOptionalSource && captureSiblingSource && siblingInventory.some(inventory => inventory.files.length) ? [
+        "Automatic sibling capture reserves one representative per required changed directory; it does not fill the remaining budget with sibling bodies. Inspect siblingInventory and recover other material source with review --context.",
+      ] : []),
       ...(hasDeferredSource ? ["Optional caller or sibling source is not included unless requested by the contract or explicitly selected. Use callerRetrieval.deferredPaths and siblingInventory to find material source; recover it with review --context or --caller-context before assessment."] : []),
       ...(budget.truncated ? ["Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
       ...(!sourceInventory.complete ? ["Source inventory is incomplete; callers or siblings may be omitted."] : []),
@@ -1086,7 +1110,7 @@ export function semanticContextMissing(requiredContext, captured) {
       }));
   const siblingRecords = [
     ...(Array.isArray(context.siblings) ? context.siblings : []),
-    ...(Array.isArray(context.callers) ? context.callers : []),
+    ...(Array.isArray(context.callers) ? context.callers.filter(record => !record.partial) : []),
     ...targetedRecords.filter(record => codeFile(record.path) && !context.changedPaths.includes(record.path)),
     ...context.changedCode.filter(record => record.state === "present" && typeof record.content === "string"),
   ];

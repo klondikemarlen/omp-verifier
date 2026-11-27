@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.39.0 - 2026-11-27
+
+- Automatic PR reviews show where a possible caller mentions a changed filename instead of sending the entire file. Reviewers can retrieve the surrounding code and additional siblings when those relationships matter.
+
 ## 1.38.0 - 2026-11-27
 
 - Semantic reviews can retrieve relevant passages from project-declared reference manuals instead of reading each unchanged manual in full for every check. Changed guides and governing instructions remain part of the review.

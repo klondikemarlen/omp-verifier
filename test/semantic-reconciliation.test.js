@@ -7,16 +7,20 @@ import test from "node:test";
 
 import { completeSemanticEvaluation, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";
-import { runAutomaticVerificationForPaths } from "#root/omp-plugin/verifications.js";
+import { runAutomaticVerificationForPaths, runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const ID = "publisher:scope";
 const SOURCE = "export const live = 1;\n";
 const CALLER_SOURCE = 'import { live } from "./src/live.js";';
 const SIBLING_SOURCE = "export const restored = true;";
+const UNRELATED_CALLER_LINE = 'export const edition = "internal";';
 
 async function fixture({
   requiredContext = ["changed-code", "project-guidance"],
   optionalSourcePadding = "",
+  callerSource = CALLER_SOURCE,
+  unchangedLiveSource = "",
+  extraSourceFiles = {},
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "verifier-reconcile-"));
   const cwd = join(root, "project");
@@ -25,16 +29,21 @@ async function fixture({
   await mkdir(join(cwd, "src"), { recursive: true });
   await mkdir(provider, { recursive: true });
   const git = (...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  await writeFile(join(cwd, "src/live.js"), "export const live = 0;\n");
+  await writeFile(join(cwd, "src/live.js"), `export const live = 0;\n${unchangedLiveSource}`);
   await writeFile(join(cwd, "src/restored.js"), `${SIBLING_SOURCE}\n${optionalSourcePadding}`);
   await writeFile(join(cwd, "src/removed.js"), "export const removed = true;\n");
-  await writeFile(join(cwd, "caller.js"), `${CALLER_SOURCE}\n${optionalSourcePadding}`);
+  await writeFile(join(cwd, "caller.js"), `${callerSource}\n${optionalSourcePadding}`);
+
+  for (const [path, content] of Object.entries(extraSourceFiles)) {
+    await writeFile(join(cwd, path), content);
+  }
+
   await writeFile(join(cwd, "AGENTS.md"), "Live exports equal one. Deleted source may remain deleted.\n");
   git("init", "-q");
   git("add", ".");
   git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "-qm", "base");
   const baseRef = git("rev-parse", "HEAD");
-  await writeFile(join(cwd, "src/live.js"), SOURCE);
+  await writeFile(join(cwd, "src/live.js"), `${SOURCE}${unchangedLiveSource}`);
   await rm(join(cwd, "src/removed.js"));
   git("add", ".");
   git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "-qm", "delivery");
@@ -55,7 +64,7 @@ async function fixture({
     }],
   }));
   const prepare = async (changedPaths = [], options = {}) => (await runAutomaticVerificationForPaths({ cwd, packageDirectory, baseRef, changedPaths, ...options })).find(result => result.id === ID);
-  return { root, cwd, provider, manifest, prepare, git };
+  return { root, cwd, packageDirectory, provider, manifest, prepare, git };
 }
 
 function assessment(requestId) {
@@ -190,6 +199,162 @@ for (const requiredCategory of ["callers", "siblings"]) {
     }
   });
 }
+
+test("when an exact-base caller has multiple matches, review shows the first original match and requires explicit recovery of other lines", async t => {
+  // Arrange
+  const firstMatch = "// The removed endpoint stays retired.";
+  const unchangedLine = "export const stable = true;";
+  const f = await fixture({
+    requiredContext: ["changed-code", "callers"],
+    callerSource: ["// Local notes.", firstMatch, CALLER_SOURCE, UNRELATED_CALLER_LINE].join("\n"),
+    unchangedLiveSource: `${unchangedLine}\n`,
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+
+  // Act
+  const automatic = await f.prepare();
+  assert.equal(automatic.status, "PENDING", automatic.evidence);
+  const { context, missingContext, path, requestId, scope } = automatic.reviewRequest;
+  const draft = assessment(requestId);
+  draft.citations.push(
+    { path: "src/live.js", line: 2, quote: unchangedLine },
+    { path: "caller.js", line: 4, quote: UNRELATED_CALLER_LINE },
+  );
+  const rejected = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
+  const recovered = await readSemanticEvaluation({
+    cwd: f.cwd,
+    requestPath: path,
+    callerContextPaths: ["caller.js#L4"],
+  });
+  assert.equal(recovered.status, "PENDING", recovered.evidence);
+  const reviewed = recovered.reviewRequest;
+  const accepted = await completeSemanticEvaluation({
+    cwd: f.cwd,
+    requestPath: reviewed.path,
+    assessment: { ...draft, requestId: reviewed.requestId },
+  });
+
+  // Assert
+  assert.deepEqual(missingContext, []);
+  assert.deepEqual(context.callers.map(({ path, startLine, content }) => [path, startLine, content]), [
+    ["caller.js", 2, firstMatch],
+  ]);
+  assert.deepEqual(scope.changedPaths, ["src/live.js", "src/removed.js"]);
+  assert.deepEqual(context.changedCode.map(({ path, state, content }) => [path, state, content]), [
+    ["src/live.js", "present", `${SOURCE}${unchangedLine}\n`],
+    ["src/removed.js", "deleted", "export const removed = true;\n"],
+  ]);
+  assert.equal(rejected.status, "BLOCKED", rejected.evidence);
+  assert.equal(rejected.evaluation.requestId, requestId);
+  assert.notEqual(reviewed.requestId, requestId);
+  assert.deepEqual(reviewed.scope.changedPaths, scope.changedPaths);
+  assert.deepEqual(reviewed.scope.automatic.delivery, scope.automatic.delivery);
+  assert.deepEqual(reviewed.context.changedCode, context.changedCode);
+  assert.equal(accepted.status, "PASS", accepted.evidence);
+});
+
+test("when an exact-base contract requires siblings, review captures a representative without backfilling other sibling bodies", async t => {
+  // Arrange
+  const neighborMatch = 'import { live } from "./live.js";';
+  const f = await fixture({
+    requiredContext: ["changed-code", "callers", "siblings"],
+    extraSourceFiles: {
+      "src/worker.js": "export const revision = 2;\n",
+      "src/zone.js": `// Zone configuration.\n${neighborMatch}\n${UNRELATED_CALLER_LINE}\n`,
+    },
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+
+  // Act
+  const automatic = await f.prepare();
+  assert.equal(automatic.status, "PENDING", automatic.evidence);
+  const { context, missingContext, path, requestId } = automatic.reviewRequest;
+  const draft = assessment(requestId);
+  draft.citations.push(
+    { path: "src/restored.js", line: 1, quote: SIBLING_SOURCE },
+    { path: "src/zone.js", line: 2, quote: neighborMatch },
+  );
+  const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
+
+  // Assert
+  assert.deepEqual(missingContext, []);
+  assert.deepEqual(context.siblingInventory[0].files, ["src/restored.js", "src/worker.js", "src/zone.js"]);
+  assert.deepEqual(context.siblings.map(({ path, content }) => [path, content]), [
+    ["src/restored.js", `${SIBLING_SOURCE}\n`],
+  ]);
+  assert.deepEqual(context.callers.filter(record => record.path.startsWith("src/"))
+    .map(({ path, startLine, content }) => [path, startLine, content]), [
+    ["src/zone.js", 2, neighborMatch],
+  ]);
+  assert.equal(accepted.status, "PASS", accepted.evidence);
+});
+
+test("when the first exact-base caller match is oversized, review leaves it for explicit recovery", async t => {
+  // Arrange
+  const oversizedMatch = `// live ${"é".repeat(350)}`;
+  const f = await fixture({
+    requiredContext: ["changed-code", "callers"],
+    callerSource: `${oversizedMatch}\n${CALLER_SOURCE}`,
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+
+  // Act
+  const automatic = await f.prepare();
+  assert.equal(automatic.status, "PENDING", automatic.evidence);
+  const { context, missingContext, path } = automatic.reviewRequest;
+  const recovered = await readSemanticEvaluation({
+    cwd: f.cwd,
+    requestPath: path,
+    callerContextPaths: ["caller.js#L1"],
+  });
+  assert.equal(recovered.status, "PENDING", recovered.evidence);
+  const reviewed = recovered.reviewRequest;
+  const draft = assessment(reviewed.requestId);
+  draft.citations.push({ path: "caller.js", line: 1, quote: oversizedMatch });
+  const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: reviewed.path, assessment: draft });
+
+  // Assert
+  assert.equal(context.callers.status, "not-captured");
+  assert.ok(context.sourceInventory.files.some(record => record.path === "caller.js"));
+  assert.ok(missingContext.length > 0);
+  assert.deepEqual(reviewed.missingContext, []);
+  assert.equal(accepted.status, "PASS", accepted.evidence);
+});
+
+test("when review is manual, it retains full caller and sibling source without explicit recovery", async t => {
+  // Arrange
+  const callerSource = `${CALLER_SOURCE}\n${UNRELATED_CALLER_LINE}\n`;
+  const f = await fixture({
+    requiredContext: ["changed-code", "callers", "siblings"],
+    callerSource: callerSource.trimEnd(),
+    extraSourceFiles: { "src/worker.js": "export const revision = 2;\n" },
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  await writeFile(join(f.cwd, "src/live.js"), `${SOURCE}export const manualChange = true;\n`);
+
+  // Act
+  const [manual] = await runInstalledVerificationChecks({
+    cwd: f.cwd,
+    packageDirectory: f.packageDirectory,
+    ids: [ID],
+  });
+  assert.equal(manual.status, "PENDING", manual.evidence);
+  const { context, missingContext, path, requestId } = manual.reviewRequest;
+  const draft = {
+    ...assessment(requestId),
+    rationale: "The edited source still exports one; the captured surrounding source supports the review.",
+  };
+  draft.citations.push(
+    { path: "caller.js", line: 2, quote: UNRELATED_CALLER_LINE },
+    { path: "src/worker.js", line: 1, quote: "export const revision = 2;" },
+  );
+  const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
+
+  // Assert
+  assert.deepEqual(missingContext, []);
+  assert.equal(context.callers.find(record => record.path === "caller.js")?.content, callerSource);
+  assert.equal(accepted.status, "PASS", accepted.evidence);
+});
 
 test("when automatic candidates are obsolete, changed source excludes them but guidance and committed deletions remain", async () => {
   // Arrange
