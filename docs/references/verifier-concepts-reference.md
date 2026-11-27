@@ -36,7 +36,7 @@ The user-level `WATCHDOG.yml` always keeps `default` first. The plugin inserts a
 
 - Extension registration awaits guidance and roster reconciliation through OMP's active-profile SDK before native advisors import the generated file. Session starts also reconcile the active context; independent advisors remain untouched.
 - When native OMP schedules a review, the verifier advisor binds transcript changes to their edit-owned Git checkouts and invokes the packaged automatic coordinator once per complete checkout group. It validates each request's root and changed scope before assessment and keeps recovery in that checkout. Unknown ownership stays BLOCKED; same-named files in another worktree do not establish identity. The plugin has no `agent_end` notification runner and does not select review cadence.
-- `/verifier status` reports global and project roster entries plus the guidance-file path.
+- `/verifier status` keeps a snapshot of the loaded plugin version and global advisor, project roster, and guidance setup in the conversation. `--details` includes roster entries, generation identifiers, and file paths; `/advisor status` reports live activity.
 - `/verifier uninstall` removes only the marked verifier block and unchanged guidance file.
 - The plugin does not create project configuration, local-rules templates, task agents, daemons, or custom agent loops.
 
@@ -217,7 +217,7 @@ The public commands are:
 /verifier verify <check-id...>
 ```
 
-Verifier itself declares the project-lint manifest. An isolated package directory without compatible manifests reports `none installed` from `checks` and `BLOCKED` from `verify`; installed checks with no applicable work produce an empty result array. Existing `/verifier`, `/verifier status`, `/verifier uninstall`, advisor setup, and guidance ownership remain independent.
+Verifier itself declares the project-lint manifest. An isolated package directory without compatible manifests reports no usable checks from `/verifier checks` and `BLOCKED` from `/verifier verify`. Installed checks with no applicable work produce no verdict (an empty array in the CLI). Advisor setup and cleanup are independent of check availability.
 
 The packaged CLI also exposes `checks` and `verify [<check-id>...]` to the `bash`-only advisor. By default, `checks` returns a JSON object with public check metadata (`id`, `label`, `description`, optional `pathTriggers`) and `blockedResults`; it does not execute entries. `verify` returns the existing result array, shares manual execution with `/verifier verify`, and runs only exact requested IDs when supplied. Both commands also support `--reporter text`. The model selects named checks only for explicit applicable requirements, not as a catch-all review substitute.
 

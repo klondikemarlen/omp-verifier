@@ -9,13 +9,14 @@ import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalo
 import { runAutomaticVerification, runVerificationChecks } from "#root/omp-plugin/verifications.js";
 
 const startupAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-startup-"));
-const registrations = { commands: new Map(), events: new Map(), notices: [] };
+const registrations = { commands: new Map(), events: new Map(), notices: [], messages: [] };
 const pi = {
   pi: { getAgentDir() { return startupAgentDir; } },
   setLabel() {},
   on(event, handler) { registrations.events.set(event, handler); },
   registerCommand(name, command) { registrations.commands.set(name, command); },
   registerMessageRenderer() {},
+  sendMessage(message, options) { registrations.messages.push({ message, options }); },
 };
 const ctx = { ui: { notify(message, level) { registrations.notices.push({ message, level }); } } };
 
@@ -35,8 +36,31 @@ assert.deepEqual(verifier.getArgumentCompletions("").map(item => item.label), [
 ]);
 assert.equal(verifier.getArgumentCompletions("verify "), null);
 
-await verifier.handler("status", { ...ctx, cwd: startupAgentDir });
-assert.ok(registrations.notices.at(-1).message.includes(join(startupAgentDir, "verifier", "WATCHDOG.md")));
+assert.equal(verifier.getArgumentCompletions("status --det")[0].value, "status --details");
+
+const startupProject = join(startupAgentDir, "project");
+await verifier.handler("", { ...ctx, cwd: startupProject });
+const retainedStatus = registrations.messages.at(-1);
+assert.equal(retainedStatus.message.customType, "verifier-status");
+assert.equal(retainedStatus.message.display, true);
+assert.equal(retainedStatus.options.triggerTurn, false);
+assert.match(retainedStatus.message.content, /^Verifier status\nLoaded plugin: \d+\.\d+\.\d+\n/);
+assert.match(retainedStatus.message.content, /Global verifier: Configured/);
+assert.match(retainedStatus.message.content, /Advisor guidance: Installed/);
+assert.match(retainedStatus.message.content, /Project roster: No project-specific roster/);
+assert.match(retainedStatus.message.content, /Live activity: Run \/advisor status\./);
+assert.match(retainedStatus.message.content, /Setup details: Run \/verifier status --details\./);
+assert.doesNotMatch(retainedStatus.message.content, /Generation ID:|Generation digest:|WATCHDOG/);
+assert.ok(retainedStatus.message.content.split("\n").every(line => line.length <= 80));
+assert.equal(registrations.notices.length, 0);
+
+await verifier.handler("status", { ...ctx, cwd: startupProject, hasUI: false });
+assert.equal(registrations.notices.at(-1).message, retainedStatus.message.content);
+assert.equal(registrations.messages.length, 1);
+
+await verifier.handler("demo", { ...ctx, cwd: startupProject, hasUI: false });
+assert.match(registrations.notices.at(-1).message, /^Verifier preview unavailable\.\n/);
+assert.equal(registrations.messages.length, 1);
 
 const registryRoot = await mkdtemp(join(tmpdir(), "omp-verifier-registry-"));
 const registryPackageDirectory = join(registryRoot, "node_modules");
@@ -305,10 +329,10 @@ assert.equal(unknownSuppressionResults.find(result => result.id === "publisher-m
 assert.equal(invalidSuppressionResults.find(result => result.id === "suppression:.omp-verifier.json").status, "BLOCKED");
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const checksMessage = registrations.notices.at(-1).message;
-assert.match(checksMessage, /Verifier checks:/);
-assert.match(checksMessage, /discovered: 9/);
+assert.match(checksMessage, /^Installed verification checks: 9\nDiscovery blockers: /);
 assert.match(checksMessage, /publisher-pass:check — Pass check/);
 assert.match(checksMessage, /BLOCKED publisher-duplicate:check/);
+assert.match(checksMessage, /Run checks: \/verifier verify/);
 
 await verifier.handler("verify", { ...ctx, cwd: verificationCwd, verificationPackageDirectory });
 const verificationMessage = registrations.notices.at(-1).message;
@@ -324,7 +348,7 @@ assert.match(verificationMessage, /BLOCKED publisher-duplicate:check/);
 
 const emptyVerificationPackageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-empty-packages-"));
 await verifier.handler("checks", { ...ctx, cwd: verificationCwd, verificationPackageDirectory: emptyVerificationPackageDirectory });
-assert.match(registrations.notices.at(-1).message, /none installed/);
+assert.match(registrations.notices.at(-1).message, /^No usable verification checks found\.\nNext: Install/);
 
 registrations.notices.length = 0;
 const agentDir = await mkdtemp(join(tmpdir(), "omp-verifier-agent-"));
@@ -380,14 +404,30 @@ assert.match(globalWatchdog, new RegExp(`@${guidancePath}`));
 assert.doesNotMatch(globalWatchdog, /# omp-verifier: generated/);
 assert.match(globalWatchdog, /name: learner/);
 
+await verifier.handler("status --details", { ...ctx, cwd: repo, agentDir });
+const statusMessage = registrations.messages.at(-1).message.content;
+assert.match(statusMessage, /^Verifier status details\n/);
+assert.match(statusMessage, /Global advisors: default, verifier, learner/);
+assert.match(statusMessage, /Project advisors: Roster not present/);
+assert.ok(statusMessage.includes(`Global roster path: ${globalWatchdogPath}`));
+assert.ok(statusMessage.includes(`Project roster path: ${join(repo, "WATCHDOG.yml")}`));
+assert.ok(statusMessage.includes(`Guidance path: ${guidancePath}`));
+assert.match(statusMessage, /Generation ID: [\da-f-]{36}\nGeneration digest: [\da-f]{64}/);
+assert.equal(registrations.messages.at(-1).message.details.lines.join("\n"), statusMessage.split("\n").slice(1).join("\n"));
+
+await writeFile(join(repo, "WATCHDOG.yml"), "advisors:\n  - name: learner\n");
 await verifier.handler("status", { ...ctx, cwd: repo, agentDir });
-const statusMessage = registrations.notices.at(-1).message;
-assert.match(statusMessage, /Verifier status:/);
-assert.match(statusMessage, /global roster: default, verifier, learner/);
-assert.match(statusMessage, /project roster: absent/);
-assert.match(statusMessage, new RegExp(`guidance: installed — ${guidancePath}`));
+assert.match(registrations.messages.at(-1).message.content, /Project roster: Present/);
+
+await verifier.handler("timings", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /^No recorded verification runs in this working directory\.\nRun checks: \/verifier verify/);
+
+await verifier.handler("generation", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /^Active verifier generation selected for new runs:\nCoordinator version: /);
 
 await verifier.handler("uninstall", { ...ctx, cwd: repo, agentDir });
+assert.match(registrations.notices.at(-1).message, /^Verifier advisor cleanup completed\./);
+assert.match(registrations.notices.at(-1).message, /The plugin remains installed; project setup was not changed\./);
 globalWatchdog = await readFile(globalWatchdogPath, "utf8");
 assert.match(globalWatchdog, /name: default/);
 assert.match(globalWatchdog, /name: learner/);
@@ -395,6 +435,13 @@ assert.doesNotMatch(globalWatchdog, /name: verifier/);
 await assert.rejects(readFile(guidancePath, "utf8"), /ENOENT/);
 await uninstallGlobalVerifier({ agentDir });
 assert.doesNotMatch(await readFile(globalWatchdogPath, "utf8"), /name: verifier/);
+
+await verifier.handler("", { ...ctx, cwd: repo, agentDir });
+const missingSetup = registrations.messages.at(-1).message.content;
+assert.match(missingSetup, /Global verifier: Not configured/);
+assert.match(missingSetup, /Advisor guidance: Missing/);
+assert.match(missingSetup, /Restore managed setup: Start a fresh OMP session/);
+assert.match(retainedStatus.message.content, /Advisor guidance: Installed/);
 
 const customAgentDir = await mkdtemp(join(tmpdir(), "omp-verifier-custom-"));
 const customWatchdogPath = join(customAgentDir, "WATCHDOG.yml");

@@ -4,19 +4,30 @@ import { promisify } from "node:util";
 import { registerCloseoutTool } from "#root/omp-plugin/closeout-tool.js";
 import createVerifierCommandUsage from "#root/omp-plugin/create-verifier-command-usage.js";
 import {
-  buildGlobalVerifierStatus,
+  collectGlobalVerifierStatus,
   installGlobalVerifier,
   uninstallGlobalVerifier,
 } from "#root/omp-plugin/global-verifier.js";
 import { presentLintAdvisor } from "#root/omp-plugin/lint-presentation.js";
 import { registerAdvisorCheckWidget } from "#root/omp-plugin/register-advisor-check-widget.js";
-import { formatVerificationInventory, formatVerificationResults } from "#root/omp-plugin/reporters.js";
+import { formatVerificationResults } from "#root/omp-plugin/reporters.js";
 import {
   createRequestIntent,
   isRequestWaiver,
   openRequestWaiverAuthority,
   readRequestIntent,
 } from "#root/omp-plugin/request-intent.js";
+import {
+  registerVerifierStatusReport,
+  showVerifierStatusReport,
+} from "#root/omp-plugin/show-verifier-status-report.js";
+import {
+  formatSlashChecks,
+  formatSlashCloseoutReceipt,
+  formatSlashGeneration,
+  formatSlashTimings,
+  formatVerifierStatus,
+} from "#root/omp-plugin/slash-command-reports.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 import { timeVerificationRun } from "#root/omp-plugin/run-timings.js";
 import { runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
@@ -61,19 +72,53 @@ function executeRuntimeCommand(agentDir, cwd, args) {
 
 async function runtimeCommand(agentDir, cwd, args) {
   try {
-    const result = await executeRuntimeCommand(agentDir, cwd, args);
-    return result.stdout;
+    const { stdout } = await executeRuntimeCommand(agentDir, cwd, args);
+    return { output: stdout.trimEnd(), level: "info", hasResult: true };
   } catch (error) {
     if (args[0] === "verify" && ["SIGINT", "SIGTERM"].includes(error.signal)) {
-      return `Verification interrupted by ${error.signal}. Rerun the same /verifier verify command to continue.`;
+      return {
+        output: `Verification interrupted by ${error.signal}.\nNext: Rerun the same /verifier verify command.`,
+        level: "warning",
+      };
+    }
+    if (error.stdout) {
+      return {
+        output: error.stdout.trimEnd(),
+        level: "warning",
+        hasResult: error.code === 1,
+      };
     }
 
-    return error.stdout || `BLOCKED verifier:generation\n${error.stderr || error.message}`;
+    return {
+      output: `Verifier ${args[0]} could not complete.\n${error.stderr?.trimEnd() || error.message}`,
+      level: "error",
+    };
   }
 }
 
-async function buildChecks(packageDirectory) {
-  return formatVerificationInventory(await discoverVerificationChecks({ packageDirectory }));
+function notifyRuntimeReport(ctx, result, format) {
+  if (!format || !result.hasResult) {
+    return ctx.ui.notify(result.output, result.level);
+  }
+
+  let report;
+  try {
+    report = format(JSON.parse(result.output));
+  } catch {
+    return ctx.ui.notify("Verifier returned an unreadable report. Retry in a fresh OMP session.", "error");
+  }
+  return ctx.ui.notify(report, result.level);
+}
+
+function verificationReport(output, args) {
+  if (output) {
+    return output;
+  }
+  if (args.includes("--failures-only")) {
+    return "No results matched the failure-only filter. This is not proof of PASS.";
+  }
+
+  return "No verification checks applied. No verdict was recorded.";
 }
 
 async function buildVerification(cwd, ids, packageDirectory) {
@@ -82,12 +127,12 @@ async function buildVerification(cwd, ids, packageDirectory) {
     ids,
     packageDirectory,
   }));
-  return `Verifier verification:\n${formatVerificationResults(results)}`;
+  return formatVerificationResults(results);
 }
 
 async function showDemo(ctx) {
   if (!ctx.hasUI) {
-    return ctx.ui.notify("Verifier demo requires an interactive OMP terminal.", "warning");
+    return ctx.ui.notify("Verifier preview unavailable.\nOpen an interactive OMP terminal to run /verifier demo.", "warning");
   }
 
   let advisor;
@@ -101,7 +146,7 @@ async function showDemo(ctx) {
       throw new Error("OMP does not export its advisor-card renderer.");
     }
   } catch (error) {
-    return ctx.ui.notify(`Verifier demo unavailable: ${error.message}`, "warning");
+    return ctx.ui.notify(`Verifier preview unavailable: ${error.message}\nUse an OMP version with the advisor-card renderer.`, "warning");
   }
 
   const samples = [
@@ -165,6 +210,11 @@ async function showDemo(ctx) {
 }
 
 function completeSubcommands(argumentPrefix) {
+  const statusOption = argumentPrefix.match(/^status\s+(\S*)$/);
+  if (statusOption && "--details".startsWith(statusOption[1])) {
+    return [{ value: "status --details", label: "--details", description: "Show generation IDs and local paths" }];
+  }
+
   if (argumentPrefix.includes(" ")) return null;
   return SUBCOMMANDS
     .filter(command => command.name.startsWith(argumentPrefix.toLowerCase()))
@@ -246,6 +296,7 @@ export default async function verifierPlugin(pi) {
     render: () => [],
     invalidate() {},
   }));
+  await registerVerifierStatusReport(pi);
   await installGlobalVerifier({ agentDir: pi.pi.getAgentDir() });
   let confirmedWaiver;
   let openingWaiverAuthority;
@@ -377,26 +428,48 @@ export default async function verifierPlugin(pi) {
         return ctx.ui.notify(output, "info");
       }
 
-      if (action === "status" && rest.length === 0) {
-        const agentDir = ctx.agentDir || pi.pi.getAgentDir();
-        return ctx.ui.notify(await buildGlobalVerifierStatus(cwd, { agentDir }), "info");
+      if (action === "status") {
+        const details = rest.length === 1 && rest[0] === "--details";
+        if (rest.length && !details) {
+          return ctx.ui.notify(`Usage: ${STATUS_USAGE}`, "error");
+        }
+
+        try {
+          const status = await collectGlobalVerifierStatus(cwd, { agentDir });
+          return showVerifierStatusReport(pi, ctx, formatVerifierStatus(status, { details }));
+        } catch (error) {
+          return ctx.ui.notify(`Verifier setup could not be read.\n${error.message}\nNext: Check access to WATCHDOG.yml and advisor guidance, then retry.`, "error");
+        }
       }
 
       if (action === "uninstall" && rest.length === 0) {
-        const agentDir = ctx.agentDir || pi.pi.getAgentDir();
-        return ctx.ui.notify(`Verifier cleanup: ${(await uninstallGlobalVerifier({ agentDir })).join("; ")}`, "info");
+        try {
+          const changes = await uninstallGlobalVerifier({ agentDir });
+          return ctx.ui.notify([
+            "Verifier advisor cleanup completed.",
+            ...changes,
+            "Scope: The plugin remains installed; project setup was not changed.",
+          ].join("\n"), "info");
+        } catch (error) {
+          return ctx.ui.notify(`Verifier advisor cleanup could not complete.\n${error.message}\nNext: Run /verifier status --details to inspect the remaining setup.`, "error");
+        }
       }
 
       if (action === "checks" && rest.length === 0) {
-        const output = ctx.verificationPackageDirectory
-          ? await buildChecks(ctx.verificationPackageDirectory)
-          : await runtimeCommand(agentDir, cwd, ["checks", "--reporter", "text"]);
-        return ctx.ui.notify(output, "info");
+        if (ctx.verificationPackageDirectory) {
+          const inventory = await discoverVerificationChecks({
+            packageDirectory: ctx.verificationPackageDirectory,
+          });
+          return ctx.ui.notify(formatSlashChecks(inventory), "info");
+        }
+
+        const result = await runtimeCommand(agentDir, cwd, ["checks", "--reporter", "json"]);
+        return notifyRuntimeReport(ctx, result, formatSlashChecks);
       }
 
       if (action === "timings" && rest.length === 0) {
-        const output = await runtimeCommand(agentDir, cwd, ["timings", "--reporter", "text"]);
-        return ctx.ui.notify(output, "info");
+        const result = await runtimeCommand(agentDir, cwd, ["timings", "--reporter", "json"]);
+        return notifyRuntimeReport(ctx, result, formatSlashTimings);
       }
 
       if (action === "demo" && rest.length === 0) {
@@ -404,23 +477,44 @@ export default async function verifierPlugin(pi) {
       }
 
       if (action === "verify") {
-        const output = ctx.verificationPackageDirectory
-          ? await buildVerification(cwd, rest, ctx.verificationPackageDirectory)
-          : await runtimeCommand(agentDir, cwd, ["verify", ...rest, "--reporter", "text"]);
-        return ctx.ui.notify(output, "info");
+        if (ctx.verificationPackageDirectory) {
+          const output = await buildVerification(cwd, rest, ctx.verificationPackageDirectory);
+          return ctx.ui.notify(verificationReport(output, rest), "info");
+        }
+
+        const result = await runtimeCommand(agentDir, cwd, ["verify", ...rest, "--reporter", "text"]);
+        return ctx.ui.notify(verificationReport(result.output, rest), result.level);
       }
 
       if (action === "generation") {
-        const output = await runtimeCommand(agentDir, cwd, ["generation", ...rest]);
-        if (rest[0] === "activate" && !output.startsWith("BLOCKED")) {
-          await installGlobalVerifier({ agentDir });
+        const result = await runtimeCommand(agentDir, cwd, ["generation", ...rest]);
+        if (rest.includes("--help") || rest.includes("-h")) {
+          return notifyRuntimeReport(ctx, result);
         }
-        return ctx.ui.notify(output, "info");
+        if (rest[0] === "activate" && result.level === "info") {
+          try {
+            await installGlobalVerifier({ agentDir });
+          } catch (error) {
+            return ctx.ui.notify(`Verifier generation activated, but advisor setup could not be refreshed.\n${error.message}\nNext: Start a fresh OMP session to refresh the managed setup.`, "warning");
+          }
+        }
+
+        return notifyRuntimeReport(ctx, result, output => formatSlashGeneration(rest[0], output));
       }
 
       if (action === "closeout") {
-        const output = await runtimeCommand(agentDir, cwd, ["closeout", ...rest, "--reporter", "text"]);
-        return ctx.ui.notify(output, "info");
+        if (rest[0] === "prepare" && !rest.includes("--help") && !rest.includes("-h")) {
+          const result = await runtimeCommand(agentDir, cwd, ["closeout", ...rest, "--reporter", "json"]);
+          return notifyRuntimeReport(ctx, result, output => {
+            if (output.status === "PREPARED") {
+              return formatSlashCloseoutReceipt(output);
+            }
+            return formatVerificationResults(output);
+          });
+        }
+
+        const result = await runtimeCommand(agentDir, cwd, ["closeout", ...rest, "--reporter", "text"]);
+        return ctx.ui.notify(verificationReport(result.output, rest), result.level);
       }
 
       if (action === "waive") {
@@ -431,7 +525,7 @@ export default async function verifierPlugin(pi) {
 
         const sessionId = ctx.sessionManager?.getSessionId();
         if (!sessionId || !ctx.hasUI || typeof ctx.ui.confirm !== "function") {
-          return ctx.ui.notify("A Verifier waiver requires user confirmation in the active session UI.", "warning");
+          return ctx.ui.notify("Verifier waiver not granted.\nIt requires user confirmation in the active session UI.", "warning");
         }
 
         const confirmationSessionEpoch = sessionEpoch;
@@ -471,10 +565,14 @@ export default async function verifierPlugin(pi) {
           lifetime,
           authorityId,
         };
-        return ctx.ui.notify(`User confirmed the Verifier waiver for "${gate}" on ${scope}.`, "info");
+        return ctx.ui.notify([
+          `Verifier waiver confirmed for "${gate}".`,
+          `Applies to: ${scope}.`,
+          "This is not PASS or merge approval; other requirements still apply.",
+        ].join("\n"), "info");
       }
 
-      return ctx.ui.notify(`Usage: ${COMMAND_USAGE}`, "error");
+      return ctx.ui.notify(`Usage: ${COMMAND_USAGE}\nType /verifier followed by a space to see available commands.`, "error");
     },
   });
   logStartupTiming(pi, "extension_load", loadStartedAt);
