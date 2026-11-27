@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.36.1 - 2026-11-27
+
+- Clarified who continues a release while checks are pending: the primary coordinates ordinary review, the named verifier assesses it, and a printed handle is not proof that review started.
+
 ## 1.36.0 - 2026-11-27
 
 - Verifier blocker notes group current check results by PR or MR and affected location. Open the exact retained report from the note for full provenance, structured results, and literal diagnostic evidence without rerunning verification.
