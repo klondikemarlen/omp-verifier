@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import { registerCloseoutTool } from "#root/omp-plugin/closeout-tool.js";
+import createVerifierCommandUsage from "#root/omp-plugin/create-verifier-command-usage.js";
 import {
   collectGlobalVerifierStatus,
   installGlobalVerifier,
@@ -34,9 +35,9 @@ import { runtimePaths } from "#root/omp-plugin/runtime-generations.js";
 
 const WAIVER_USAGE = "/verifier waive <verification|namespace:name> [--session]";
 const COMMAND_USAGE = "/verifier [status|checks|verify|timings|demo|uninstall|generation|closeout|waive]";
-const STATUS_USAGE = "/verifier status [--details]";
+const STATUS_USAGE = "/verifier status [--details|--usage]";
 const SUBCOMMANDS = [
-  { name: "status", description: "Show verifier setup; use --details for generation IDs and paths" },
+  { name: "status", description: "Show verifier setup; use --details for paths or --usage for command counts" },
   { name: "checks", description: "List installed verification checks" },
   { name: "verify", description: "Run installed verification checks" },
   {
@@ -58,6 +59,7 @@ const SUBCOMMANDS = [
     description: "Confirm a named Verifier waiver for the next prompt or live session",
   },
 ];
+const commandUsage = createVerifierCommandUsage(SUBCOMMANDS.map(command => command.name));
 const execute = promisify(execFile);
 
 function executeRuntimeCommand(agentDir, cwd, args) {
@@ -210,8 +212,12 @@ async function showDemo(ctx) {
 
 function completeSubcommands(argumentPrefix) {
   const statusOption = argumentPrefix.match(/^status\s+(\S*)$/);
-  if (statusOption && "--details".startsWith(statusOption[1])) {
-    return [{ value: "status --details", label: "--details", description: "Show generation IDs and local paths" }];
+  if (statusOption) {
+    const options = [
+      { value: "status --details", label: "--details", description: "Show generation IDs and local paths" },
+      { value: "status --usage", label: "--usage", description: "Show recorded command counts" },
+    ];
+    return options.filter(option => option.label.startsWith(statusOption[1]));
   }
 
   if (argumentPrefix.includes(" ")) return null;
@@ -413,9 +419,19 @@ export default async function verifierPlugin(pi) {
     description: "Show verifier setup, preview results, or run installed checks",
     getArgumentCompletions: completeSubcommands,
     handler: async (args, ctx) => {
-      const [action = "status", ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const [submittedAction, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+      const action = submittedAction ?? "status";
       const cwd = ctx.cwd || process.cwd();
       const agentDir = ctx.agentDir || pi.pi.getAgentDir();
+      let invocationRecorded;
+      if (ctx.hasUI) {
+        invocationRecorded = await commandUsage.record(agentDir, submittedAction);
+      }
+
+      if (action === "status" && rest.length === 1 && rest[0] === "--usage") {
+        const report = await commandUsage.report(agentDir, { invocationRecorded });
+        return showVerifierStatusReport(pi, ctx, report);
+      }
 
       if (action === "status") {
         const details = rest.length === 1 && rest[0] === "--details";

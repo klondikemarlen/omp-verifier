@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.35.0 - 2026-11-27
+
+- `/verifier status --usage` reports local invocation counts across projects, separating the bare command from explicit `status` without adding a menu entry.
+
 ## 1.34.0 - 2026-11-27
 
 - `/verifier status` keeps a compact setup report in the conversation. It distinguishes missing setup from an optional project roster and points to `/advisor status` for live activity. Use `--details` for full generation identifiers and paths.
