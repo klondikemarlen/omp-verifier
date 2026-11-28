@@ -48,6 +48,7 @@ export function continuationReviewPayload(payload, state, batchIndex) {
   const context = batch?.context ?? {
     changedPaths: payload.scope.changedPaths,
     fingerprint: payload.continuation.fingerprint,
+    ...(payload.context.deliveryIdentity ? { deliveryIdentity: payload.context.deliveryIdentity } : {}),
     ...(payload.context.deferredGuidance ? {
       deferredGuidance: payload.context.deferredGuidance,
     } : {}),
@@ -85,6 +86,7 @@ export function continuationAssessmentPayload(payload, batchIndex) {
   // Only citation validation uses this union; raw combined source is never presented.
   const contexts = payload.continuation.batches.map(batch => batch.context);
   const context = { callerContextPaths: [...new Set(contexts.flatMap(entry => entry.callerContextPaths))] };
+  if (payload.context.deliveryIdentity) context.deliveryIdentity = payload.context.deliveryIdentity;
   for (const group of SOURCE_GROUPS) {
     context[group] = contexts.flatMap(entry => Array.isArray(entry[group]) ? entry[group] : []);
   }

@@ -52,7 +52,7 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
           label: "Failing check",
           description: "Fails for advisor correction",
           entry: "./fail.mjs",
-          executionScope: "changed-files",
+          executionScope: "changed-lines",
           pathTriggers: ["src/changed.txt"],
         }],
       },
@@ -60,7 +60,10 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
     await writeFile(checkPath, `
 import { readFileSync } from "node:fs";
 
-const failed = readFileSync("src/changed.txt", "utf8").includes("BROKEN");
+const path = "src/changed.txt";
+const { lineRanges } = JSON.parse(process.env.OMP_VERIFIER_PR_SCOPE);
+const lines = readFileSync(path, "utf8").split("\\n");
+const failed = lineRanges[path].some(([start, end]) => lines.slice(start - 1, end).includes("BROKEN"));
 process.stdout.write(JSON.stringify(failed
   ? { status: "FAIL", summary: "Fixture failed", evidence: "src/changed.txt contains BROKEN", nextCheck: "remove BROKEN" }
   : { status: "PASS", summary: "Fixture repaired", evidence: "src/changed.txt has no BROKEN marker" }));
@@ -85,7 +88,7 @@ process.exitCode = failed ? 1 : 0;
     // Act
     await verifierPlugin(pi);
     const guidance = await readFile(guidancePath, "utf8");
-    const [, command, options] = guidance.match(/`(node .+? automatic --base )<actual-PR-base> <current-edited-path\.\.\.>(.*?)`/);
+    const [, command, options] = guidance.match(/`(node .+? automatic --base )<actual-PR-base>(.*?)`/);
     const runGeneratedCommand = () => {
       const result = spawnSync("/bin/sh", ["-c", `${command}${base}${options}`], {
         cwd: projectDir,

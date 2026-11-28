@@ -236,7 +236,6 @@ test("when the prompt hook supplies request intent, the chat stays quiet without
   assert.equal(result.message.attribution, "agent");
   assert.equal(intent.level, "quick-tweak");
   assert.ok(result.message.content.slice(0, 120).includes(`quick-tweak --request ${handle}`));
-  assert.match(result.message.content, /For applicable PR\/MR source review only: .* automatic --base <actual-PR-base> <current-edited-path\.\.\.> --request/);
   assert.match(result.message.content, /--full/);
   assert.match(result.message.content, /not PASS.*mandatory.*explicit verification.*initial delivery\/release.*semantic escalation/);
   assert.equal(result.systemPrompt[0], "Existing policy.");

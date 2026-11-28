@@ -418,3 +418,168 @@ test("when a candidate restores committed source to its base, whole-file cleanup
   assert.equal(cleanup.status, "rejected");
   assert.match(cleanup.reason.message, /whole-file cleanup must target a changed delivery path/);
 });
+
+test("when a PR spans commits, routine review uses only tip changes still in the PR and final review is cumulative", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const path = "multi-commit.txt";
+  const lines = Array.from({ length: 24 }, (_, index) => `line ${index + 1}`);
+  async function writeLines() {
+    await writeFile(join(repositoryRoot, path), `${lines.join("\n")}\n`);
+  }
+  await writeLines();
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "shared multi-line source");
+  const mergeBaseCommit = git(repositoryRoot, "rev-parse", "HEAD");
+  git(repositoryRoot, "checkout", "--quiet", "-b", "upstream");
+  await writeFile(join(repositoryRoot, "upstream-only.txt"), "unrelated target work\n");
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "advance target branch");
+  const baseCommit = git(repositoryRoot, "rev-parse", "HEAD");
+  git(repositoryRoot, "checkout", "--quiet", "main");
+  lines[2] = "earlier edit";
+  await writeLines();
+  await writeFile(join(repositoryRoot, "earlier.txt"), "earlier-only contribution\n");
+  await writeFile(join(repositoryRoot, "staged.txt"), "temporary contribution\n");
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "earlier PR contribution");
+  const firstParent = git(repositoryRoot, "rev-parse", "HEAD");
+  lines[18] = "tip edit";
+  lines.splice(22, 1);
+  await writeLines();
+  await writeFile(join(repositoryRoot, "latest.txt"), "tip-only addition\n");
+  await writeFile(join(repositoryRoot, "staged.txt"), "baseline\n");
+  await rm(join(repositoryRoot, "removed.txt"));
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "tip PR contribution");
+  const headCommit = git(repositoryRoot, "rev-parse", "HEAD");
+  const request = {
+    repositoryRoot,
+    baseRef: "upstream",
+    candidatePaths: ["earlier.txt", "staged.txt"],
+  };
+
+  // Act
+  const final = await captureDeliveryScope({ ...request, reviewScope: "final" });
+  await writeFile(join(repositoryRoot, "earlier.txt"), "uncommitted overlay on an earlier-only file\n");
+  await writeFile(join(repositoryRoot, "staged.txt"), "uncommitted overlay on a fully reversed file\n");
+  const routine = await captureDeliveryScope({ ...request, reviewScope: "commit" });
+
+  // Assert
+  assert.equal(routine.reviewScope, "commit");
+  assert.equal(routine.comparisonCommit, firstParent);
+  assert.equal(final.reviewScope, "final");
+  assert.equal(final.comparisonCommit, mergeBaseCommit);
+  for (const scope of [routine, final]) {
+    assert.equal(scope.baseRef, "upstream");
+    assert.equal(scope.baseCommit, baseCommit);
+    assert.equal(scope.mergeBaseCommit, mergeBaseCommit);
+    assert.equal(scope.headCommit, headCommit);
+    assert.deepEqual(scope.deletedPaths, ["removed.txt"]);
+  }
+  assert.deepEqual(routine.changedPaths, ["latest.txt", path, "removed.txt"]);
+  assert.deepEqual(routine.lineRanges, {
+    "latest.txt": [[1, 1]],
+    [path]: [[19, 19]],
+  });
+  assert.deepEqual(routine.removedLineRanges, {
+    [path]: [[19, 19], [23, 23]],
+    "removed.txt": [[1, 1]],
+  });
+  assert.deepEqual(final.changedPaths, ["earlier.txt", "latest.txt", path, "removed.txt"]);
+  assert.deepEqual(final.lineRanges, {
+    "earlier.txt": [[1, 1]],
+    "latest.txt": [[1, 1]],
+    [path]: [[3, 3], [19, 19]],
+  });
+  assert.deepEqual(final.removedLineRanges, {
+    [path]: [[3, 3], [19, 19], [23, 23]],
+    "removed.txt": [[1, 1]],
+  });
+  await assert.rejects(captureDeliveryScope({ ...request, reviewScope: "final" }), /committed delivery at earlier\.txt/);
+});
+
+test("when a rename spans commits, each review preserves its actual old name and keys removed hunks by destination", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const oldPath = "original.txt";
+  const intermediatePath = "previous.txt";
+  const newPath = "renamed\n@@ -1 +1 @@.txt";
+  const lines = Array.from({ length: 12 }, (_, index) => `line ${index + 1}: keeps the rename recognizable`);
+  await writeFile(join(repositoryRoot, oldPath), `${lines.join("\n")}\n`);
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "original implementation");
+  git(repositoryRoot, "tag", "rename-base");
+  await rename(join(repositoryRoot, oldPath), join(repositoryRoot, intermediatePath));
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "intermediate rename");
+  await rename(join(repositoryRoot, intermediatePath), join(repositoryRoot, newPath));
+  lines[3] = "@@ -40,0 +55,3 @@ fake hunk";
+  await writeFile(join(repositoryRoot, newPath), `${lines.join("\n")}\n`);
+  await rename(join(repositoryRoot, "staged.txt"), join(repositoryRoot, "empty-hunk-rename.txt"));
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "final rename and edit");
+  const request = { repositoryRoot, baseRef: "rename-base" };
+
+  // Act
+  const routine = await captureDeliveryScope({ ...request, reviewScope: "commit" });
+  const final = await captureDeliveryScope({ ...request, reviewScope: "final" });
+
+  // Assert
+  for (const [scope, renameSource] of [[routine, intermediatePath], [final, oldPath]]) {
+    assert.deepEqual(scope.changedPaths, ["empty-hunk-rename.txt", renameSource, newPath, "staged.txt"]);
+    assert.deepEqual(scope.renames, [
+      { from: "staged.txt", to: "empty-hunk-rename.txt" },
+      { from: renameSource, to: newPath },
+    ]);
+    assert.deepEqual(scope.deletedPaths, []);
+    assert.deepEqual(scope.lineRanges, {
+      "empty-hunk-rename.txt": [],
+      [newPath]: [[4, 4]],
+    });
+    assert.deepEqual(scope.removedLineRanges, { [newPath]: [[4, 4]] });
+  }
+});
+
+test("when a selected path has staged or working overlays, committed review rejects even explicit candidates", async t => {
+  // Arrange
+  const { repositoryRoot } = await repositoryFixture(t);
+  const path = "tracked.txt";
+  const workingPath = join(repositoryRoot, path);
+  const committedSource = "committed edit\n";
+  await writeFile(workingPath, committedSource);
+  await rm(join(repositoryRoot, "removed.txt"));
+  git(repositoryRoot, "add", ".");
+  git(repositoryRoot, "commit", "--quiet", "-m", "authored changes");
+  git(repositoryRoot, "update-index", "--assume-unchanged", path);
+  const request = { repositoryRoot, baseRef: "delivery-base", candidatePaths: [path] };
+
+  // Act and assert
+  await writeFile(workingPath, "dirty candidate\n");
+  for (const reviewScope of ["commit", "final"]) {
+    await assert.rejects(captureDeliveryScope({ ...request, reviewScope }), /committed delivery at tracked\.txt/);
+  }
+
+  git(repositoryRoot, "update-index", "--no-assume-unchanged", path);
+  git(repositoryRoot, "add", path);
+  await writeFile(workingPath, committedSource);
+  await assert.rejects(captureDeliveryScope({ ...request, reviewScope: "commit" }), /committed delivery at tracked\.txt/);
+
+  git(repositoryRoot, "restore", "--staged", path);
+  await writeFile(join(repositoryRoot, "removed.txt"), "recreated deletion\n");
+  await assert.rejects(captureDeliveryScope({ ...request, reviewScope: "commit" }), /committed delivery at removed\.txt/);
+  await assert.rejects(captureDeliveryScope({
+    ...request,
+    reviewScope: "commit",
+    wholeFilePaths: [path],
+  }), /whole-file cleanup requires an explicit manual audit/);
+});
+
+test("when there is no first parent, routine review cannot fall back to the final comparator", async t => {
+  const { repositoryRoot } = await repositoryFixture(t);
+  const request = { repositoryRoot, baseRef: "delivery-base" };
+
+  await assert.rejects(captureDeliveryScope({ ...request, reviewScope: "commit" }), /rev-parse.*\^1/);
+  const final = await captureDeliveryScope({ ...request, reviewScope: "final" });
+  assert.deepEqual(final.changedPaths, []);
+});

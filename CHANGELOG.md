@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.41.0 - 2026-11-28
+
+- Routine PR verification reviews changed hunks in the published tip commit. `--final-review` reviews cumulative PR hunks before merge; `--full` selects checks without widening their scope.
+- File-only executables no longer run as hunk checks. Optional incompatible checks are skipped; an applicable requirement blocks instead of silently expanding to the file or repository.
+
 ## 1.40.0 - 2026-11-28
 
 - Automatic PR review limits source discovery and lint targets to changed files. Governing instructions and tool configuration remain inputs, not audit targets. Broader audits require an explicit request.

@@ -166,14 +166,21 @@ test("when a quick request has no requirements, skipping optional checks is an e
   await assert.rejects(readFile(join(f.project, "executed.txt")), { code: "ENOENT" });
 });
 
-test("when PR verification selects opaque executables, neither ordinary nor full execution launches them", async t => {
+test("when PR verification selects broader executables, neither ordinary nor full execution launches them", async t => {
   // Arrange
-  const { project, run, intent } = await fixture(t, { requiredExecutionScope: "whole-project" });
+  const { project, run, intent } = await fixture(t, {
+    optionalExecutionScope: "changed-files",
+    requiredExecutionScope: "whole-project",
+  });
   const base = commitSources(project, "Baseline");
   await writeFile(join(project, "source.js"), "export const value = 2;\n");
-  commitSources(project, "PR change");
+  await writeFile(join(project, "unrequired.js"), "export const other = true;\n");
+  commitSources(project, "PR change", ["source.js", "unrequired.js"]);
 
-  const requirements = [{ id: "publisher:required", path: "source.js" }];
+  const requirements = [
+    { id: "publisher:optional", path: "source.js" },
+    { id: "publisher:required", path: "source.js" },
+  ];
   const policyPath = join(project, ".omp-verifier.json");
   await writeFile(policyPath, JSON.stringify({ requirements }));
   const request = await intent("Review the delivery.");
@@ -183,29 +190,35 @@ test("when PR verification selects opaque executables, neither ordinary nor full
   for (const result of [run(...scope), run(...scope, "--full")]) {
     assert.equal(result.status, 1, result.stderr);
     const results = JSON.parse(result.stdout);
-    assert.equal(results.length, 2);
-    const [optional, required] = results;
+    assert.equal(results.length, 3);
+    const [optional, optionalRequiredPath, required] = results;
     assert.deepEqual([optional.id, optional.status], ["publisher:optional", "SUPPRESSED"]);
-    assert.match(optional.evidence, /executionScope: "changed-files"; .*none/);
-    assert.deepEqual(optional.matches, [{ path: "source.js", trigger: "**/*.js" }]);
+    assert.match(optional.evidence, /executionScope: "changed-lines"; .*"changed-files"/);
+    assert.deepEqual(optional.matches, [{ path: "unrequired.js", trigger: "**/*.js" }]);
+    assert.deepEqual([optionalRequiredPath.id, optionalRequiredPath.status], ["publisher:optional", "BLOCKED"]);
+    assert.match(optionalRequiredPath.evidence, /executionScope: "changed-lines"; .*"changed-files"/);
+    assert.deepEqual(optionalRequiredPath.matches, [{ path: "source.js", trigger: "**/*.js" }]);
     assert.deepEqual([required.id, required.status], ["publisher:required", "BLOCKED"]);
-    assert.match(required.evidence, /executionScope: "changed-files"; .*"whole-project"/);
+    assert.match(required.evidence, /executionScope: "changed-lines"; .*"whole-project"/);
     assert.deepEqual(required.matches, [{ path: "source.js", trigger: "source.js" }]);
   }
 
   // A real project suppression takes precedence over the incompatible-scope blocker.
   await writeFile(policyPath, JSON.stringify({
     requirements,
-    suppressions: [{
-      ...requirements[0],
+    suppressions: requirements.map(requirement => ({
+      ...requirement,
       reason: "The retained project policy exempts this migration.",
-    }],
+    })),
   }));
   const suppressed = run(...scope);
   assert.equal(suppressed.status, 0, suppressed.stderr);
-  const [, exempt] = JSON.parse(suppressed.stdout);
-  assert.equal(exempt.status, "SUPPRESSED");
-  assert.match(exempt.evidence, /The retained project policy exempts this migration/);
+  const [exemptOptional, skipped, exemptRequired] = JSON.parse(suppressed.stdout);
+  assert.equal(skipped.status, "SUPPRESSED");
+  for (const exempt of [exemptOptional, exemptRequired]) {
+    assert.equal(exempt.status, "SUPPRESSED");
+    assert.match(exempt.evidence, /The retained project policy exempts this migration/);
+  }
   await assert.rejects(readFile(join(project, "executed.txt")), { code: "ENOENT" });
 });
 
@@ -232,7 +245,7 @@ test("when a user waives an opaque required PR check, it is waived without execu
 
 test("when host-bound PR review is given draft paths, only committed delivery files can be reviewed", async t => {
   // Arrange
-  const { project, provider, run, intent } = await fixture(t, { optionalExecutionScope: "changed-files" });
+  const { project, provider, run, intent } = await fixture(t, { optionalExecutionScope: "changed-lines" });
   const trackedPath = join(project, "tracked.js");
   await writeFile(trackedPath, "export const unchanged = true;\n");
   const base = commitSources(project, "Baseline", ["source.js", "tracked.js"]);
@@ -254,29 +267,21 @@ console.log(JSON.stringify({
   const hostScope = [...delivery, "source.js", "tracked.js", "untracked.js", "--request", request.handle];
 
   // Act
-  const hostReview = run(...hostScope, "--whole-file", "source.js");
-  const manualAudit = run(...delivery, "tracked.js", "--whole-file", "untracked.js");
-  const draftCleanup = run(...hostScope, "--whole-file", "untracked.js");
+  const hostReview = run(...hostScope);
+  const cleanup = run(...hostScope, "--whole-file", "source.js");
   await writeFile(join(project, "source.js"), "export const value = 3;\n");
-  const dirtyDelivery = run(...hostScope, "--whole-file", "source.js");
+  const dirtyDelivery = run(...hostScope);
 
   // Assert
   assert.equal(hostReview.status, 0, hostReview.stderr);
   const [reviewed] = JSON.parse(hostReview.stdout);
   assert.equal(reviewed.status, "PASS");
   assert.equal(reviewed.scope.headCommit, head);
-  assert.deepEqual(JSON.parse(reviewed.evidence), { changedPaths: ["source.js"], wholeFilePaths: ["source.js"] });
+  assert.deepEqual(JSON.parse(reviewed.evidence), { changedPaths: ["source.js"], wholeFilePaths: [] });
 
-  assert.equal(manualAudit.status, 0, manualAudit.stderr);
-  const [audited] = JSON.parse(manualAudit.stdout);
-  assert.deepEqual(JSON.parse(audited.evidence), {
-    changedPaths: ["source.js", "tracked.js", "untracked.js"], wholeFilePaths: ["untracked.js"],
-  });
+  assert.equal(cleanup.status, 2);
+  assert.match(cleanup.stderr, /explicit manual cleanup/);
 
-  assert.equal(draftCleanup.status, 1, draftCleanup.stderr);
-  const [cleanupBlocker] = JSON.parse(draftCleanup.stdout);
-  assert.equal(cleanupBlocker.status, "BLOCKED");
-  assert.match(cleanupBlocker.evidence, /whole-file cleanup must target a changed delivery path with present text: untracked\.js/);
 
   assert.equal(dirtyDelivery.status, 1, dirtyDelivery.stderr);
   const [overlayBlocker] = JSON.parse(dirtyDelivery.stdout);

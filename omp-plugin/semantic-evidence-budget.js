@@ -29,6 +29,8 @@ export class SemanticEvidenceBudget {
 
   admit(records, record) {
     if (records.some(existing => existing.path === record.path
+      && existing.state === record.state
+      && existing.reference === record.reference
       && (existing.startLine ?? 1) === (record.startLine ?? 1)
       && existing.content === record.content)) {
       return true;
@@ -66,6 +68,7 @@ export class SemanticEvidenceBudget {
       source: record.source,
       bytes,
       startLine: record.startLine ?? 1,
+      ...(record.reference && record.partial && record.endLine ? { state: record.state } : {}),
     });
     return true;
   }

@@ -135,7 +135,7 @@ Verifier includes `verifier:project-lint`, a bounded catalog for JavaScript/Type
 
 For lint-only notes, enable OMP’s `extensionRenderers.transcriptPresenters` setting (off by default in OMP 19.2.1) to use Ctrl+O. It switches between the compact lint verdict and the original card with its retained evidence, without rerunning lint or recovering discarded output. Combined findings notes do not depend on transcript presenters.
 
-For current PR or MR changes, the advisor passes `--base <actual-base>` to `automatic`. This includes earlier commits in the proposed change; stacked PRs use their immediate parent. Matching `pathTriggers` and applicable project `requirements` select installed checks. Only final `FAIL` and `BLOCKED` results reach the primary. Direct CLI callers can still select explicit paths without a base or request a full working-tree check with `automatic --worktree`.
+For an open PR or MR, use the actual target branch as the base. See [review scope and proof reuse](docs/references/verifier-concepts-reference.md#request-intent-and-proof-reuse) for the comparison used by the coordinator. A check on a local working tree is not approval of the published head.
 
 Required PR verification belongs **before merge**. Immediately before starting or resuming automatic review, the advisor checks the hosting service for an open PR or MR with the expected base and head. If it has merged or closed, the advisor skips the old request; that is not a PASS. You can explicitly request a retrospective check on the pinned revisions. Post-merge CI is independent.
 
@@ -157,7 +157,6 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
 omp-verifier automatic [--progress] [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
-omp-verifier automatic --request <current-handle> --full --base <actual-PR-base> [--lint-budget-ms <milliseconds>]
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
@@ -189,12 +188,12 @@ If the reviewer is nearing its context limit after an accepted checkpoint, use `
 
 For an explicitly authorized one-off larger changed-source capture, start `automatic` or `verify` with `--max-source-bytes`; see the [capture-limit contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for supported bounds and request-local behavior.
 
-If PR lint needs more time, retry the same full verification with its actual base and `--lint-budget-ms`. Do not substitute standalone lint: without the PR boundary it can run a whole-project command. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint).
+A longer timeout is not permission to check more source. Keep the same scope when retrying a verification; run independently required release checks through the project’s documented commands.
 
 For a PR targeting `origin/main`, the advisor runs, for example:
 
 ```text
-omp-verifier automatic --base origin/main api/tests/downloads.test.ts --progress --reporter text --failures-only
+omp-verifier automatic --request <current-handle> --base origin/main --progress --reporter text --failures-only
 ```
 
 Its blocker note contains the reporter output, without JSON or a code fence:
@@ -223,7 +222,6 @@ An installed OMP plugin can opt in through `package.json`:
       "label": "Human label",
       "description": "What the check proves",
       "entry": "./verifications/check-id.mjs",
-      "executionScope": "changed-files",
       "pathTriggers": ["tests/**", "**/*.test.js"],
       "timeoutMs": 30000
     }]
@@ -233,7 +231,7 @@ An installed OMP plugin can opt in through `package.json`:
 
 Without `mode`, an entry is a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. Valid `FAIL` and `BLOCKED` results may exit nonzero when stderr is empty; the verifier preserves their summary, evidence, and next check. A `PASS` paired with a nonzero exit is `BLOCKED`, not successful verification. Automatic executable entries receive `OMP_VERIFIER_CHANGED_PATHS` as a JSON array of their matching project-relative paths; manual `/verifier verify` removes it. The package must expose an `omp.extensions` or `pi.extensions` entry; executable checks run without a shell in the active project directory. `pathTriggers` is an optional non-empty array of project-relative glob patterns. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and other non-zero exits fail closed as `BLOCKED`; model-supplied executable paths are never accepted.
 
-For automatic PR execution, a deterministic provider must declare `"executionScope": "changed-files"`. This promises that every verification target, including targets passed to child processes, comes from `OMP_VERIFIER_CHANGED_PATHS`. Reading a tool configuration is not checking the configuration as source. `pathTriggers` alone only selects a provider; it says nothing about the files its command will check. Without the declaration, an optional executable is suppressed and an applicable required executable is blocked. Neither is a pass. This is a contract for trusted providers, not an operating-system sandbox.
+Before enabling automatic PR execution, read the [manifest contract](docs/references/verifier-concepts-reference.md#manifest-contract). A filename trigger selects a check; it does not prove the provider limits its execution or findings to the selected changes.
 
 A deterministic entry may instead return `N/A` with a non-empty summary and exit `0` when it has no applicable work. The coordinator removes that non-verdict from manual and automatic result arrays; it is not `PASS`. A nonzero exit cannot hide behind `N/A`. Semantic assessments still require `PASS`, `FAIL`, or `BLOCKED`.
 

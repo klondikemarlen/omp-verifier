@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { lstat, readlink, realpath } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
-import { changedEntries, deliveryGit, gitFields, workingFileRanges } from "#root/omp-plugin/delivery-git.js";
+import { changedEntries, committedFileRanges, deliveryGit, gitFields, workingFileRanges } from "#root/omp-plugin/delivery-git.js";
 
 const MAX_SCOPE_PATHS = 2_000;
 const MAX_PATH_ARGUMENT_BYTES = 96_000;
@@ -34,6 +34,16 @@ function checkScopeSize(paths) {
     || paths.reduce((bytes, path) => bytes + Buffer.byteLength(path) + 1, 0) > MAX_PATH_ARGUMENT_BYTES) {
     throw new Error("delivery scope exceeds its changed-path limits");
   }
+}
+
+function scopeByteReservation() {
+  let sourceBytes = 0;
+  return bytes => {
+    sourceBytes += bytes;
+    if (sourceBytes > MAX_SCOPE_BYTES) {
+      throw new Error("delivery scope exceeds its source byte limits");
+    }
+  };
 }
 
 function gitEntry(mode, object) {
@@ -311,13 +321,7 @@ async function capturePaths({ repositoryRoot, mergeBaseCommit, headCommit, candi
   const candidateBase = await baseEntries(repositoryRoot, mergeBaseCommit, paths);
   const base = new Map([...committed.base, ...candidateBase]);
   const selected = new Set(paths);
-  let sourceBytes = 0;
-  function reserveBytes(bytes) {
-    sourceBytes += bytes;
-    if (sourceBytes > MAX_SCOPE_BYTES) {
-      throw new Error("delivery scope exceeds its source byte limits");
-    }
-  }
+  const reserveBytes = scopeByteReservation();
 
   const worktree = await mapPaths(allPaths, path => workspaceEntry(repositoryRoot, path, {
     algorithm,
@@ -363,16 +367,150 @@ async function capturePaths({ repositoryRoot, mergeBaseCommit, headCommit, candi
   };
 }
 
-export async function captureDeliveryScope({ repositoryRoot, baseRef, candidatePaths = [], wholeFilePaths = [] }) {
+async function committedReviewEntries(repositoryRoot, comparisonCommit, mergeBaseCommit, headCommit) {
+  const entries = await changedEntries(repositoryRoot, [comparisonCommit, headCommit]);
+  if (!entries.length || comparisonCommit === mergeBaseCommit) {
+    return entries;
+  }
+
+  // A complete reversal does not belong to the cumulative PR. Match either
+  // identity of rename pairs, but keep the actual comparison-side names.
+  const cumulative = await changedEntries(repositoryRoot, [mergeBaseCommit, headCommit]);
+  const prPaths = new Set();
+  for (const entry of cumulative) {
+    prPaths.add(entry.path);
+    prPaths.add(entry.oldPath);
+  }
+  return entries.filter(entry => prPaths.has(entry.path) || prPaths.has(entry.oldPath));
+}
+
+async function requireCommittedWorkspace(repositoryRoot, path, expected, { algorithm, reserveBytes }) {
+  const workspace = await workspaceEntry(repositoryRoot, path, {
+    algorithm,
+    gitlink: expected?.mode === "160000",
+    candidate: false,
+    reserveBytes,
+  });
+  if (workspace?.mode === "160000") {
+    const target = resolve(repositoryRoot, path);
+    const gitRoot = await deliveryGit(target, ["rev-parse", "--show-toplevel"]);
+    if (gitRoot !== `${target}\n`) {
+      throw new Error(`delivery scope cannot validate uninitialized submodule source: ${path}`);
+    }
+    workspace.object = (await deliveryGit(target, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+    const status = await deliveryGit(target, [
+      "-c", "core.fsmonitor=false", "status", "--porcelain=v1", "-z", "--ignore-submodules=none", "--untracked-files=all",
+    ]);
+    if (status) {
+      throw dirtyOverlay(path);
+    }
+  }
+
+  if (workspace?.mode !== expected?.mode || workspace?.object !== expected?.object) {
+    throw dirtyOverlay(path);
+  }
+  return workspace;
+}
+
+async function captureCommittedPaths({ repositoryRoot, comparisonCommit, mergeBaseCommit, headCommit }) {
+  const entries = await committedReviewEntries(repositoryRoot, comparisonCommit, mergeBaseCommit, headCommit);
+  const { head, renames: renameSources } = committedScope(entries);
+  const changedPaths = [...head.keys()].sort();
+  checkScopeSize(changedPaths);
+
+  const algorithm = headCommit.length === 64 ? "sha256" : "sha1";
+  const reserveBytes = scopeByteReservation();
+  const worktree = await mapPaths(changedPaths, path => requireCommittedWorkspace(repositoryRoot, path, head.get(path), {
+    algorithm,
+    reserveBytes,
+  }));
+  if (changedPaths.length) {
+    const staged = await changedEntries(repositoryRoot, ["--cached", headCommit], changedPaths);
+    const overlay = staged.find(entry => head.has(entry.path) || head.has(entry.oldPath));
+    if (overlay) {
+      throw dirtyOverlay(head.has(overlay.path) ? overlay.path : overlay.oldPath);
+    }
+  }
+
+  const entriesByPath = new Map(entries.map(entry => [entry.path, entry]));
+  let rangeCount = 0;
+  const ranges = await mapPaths([...entriesByPath.keys()], async path => {
+    const { oldMode, oldObject, newMode, newObject } = entriesByPath.get(path);
+    const workspace = worktree.get(path);
+    if (workspace?.binary) {
+      return { lineRanges: [], removedLineRanges: [] };
+    }
+    const pathRanges = await committedFileRanges(repositoryRoot, path, {
+      oldObject: isRegular({ mode: oldMode }) ? oldObject : undefined,
+      newObject: isRegular({ mode: newMode }) ? newObject : undefined,
+      reserveBytes,
+    });
+    rangeCount += pathRanges.lineRanges.length + pathRanges.removedLineRanges.length;
+    if (rangeCount > MAX_SCOPE_RANGES) {
+      throw new Error("delivery scope exceeds its Git hunk coordinate limits");
+    }
+    return pathRanges;
+  });
+
+  const deletedPaths = changedPaths.filter(path => {
+    const entry = entriesByPath.get(path);
+    return entry?.status === "D" && isRegular({ mode: entry.oldMode });
+  });
+  const renames = changedPaths.filter(path => renameSources.has(path)).map(to => ({ from: renameSources.get(to), to }));
+  return {
+    changedPaths,
+    deletedPaths,
+    ...(renames.length ? { renames } : {}),
+    lineRanges: Object.fromEntries(changedPaths.filter(path => head.get(path)).map(path => [path, ranges.get(path).lineRanges])),
+    removedLineRanges: Object.fromEntries(changedPaths.filter(path => ranges.get(path)?.removedLineRanges.length)
+      .map(path => [path, ranges.get(path).removedLineRanges])),
+  };
+}
+
+export async function captureDeliveryScope({ repositoryRoot, baseRef, candidatePaths = [], wholeFilePaths = [], reviewScope }) {
   if (typeof baseRef !== "string" || !baseRef.trim()) {
     throw new Error("delivery scope requires a base reference");
   }
   const normalizedCandidates = normalizePaths(candidatePaths, "candidates");
   const normalizedWholeFiles = normalizePaths(wholeFilePaths, "whole-file selectors");
+  if (reviewScope !== undefined && reviewScope !== "commit" && reviewScope !== "final") {
+    throw new Error(`unknown delivery review scope: ${reviewScope}`);
+  }
+  if (reviewScope !== undefined && normalizedWholeFiles.length) {
+    throw new Error("whole-file cleanup requires an explicit manual audit, not committed PR review");
+  }
+
   const root = await realpath(repositoryRoot);
   const baseCommit = (await deliveryGit(root, ["rev-parse", "--verify", "--end-of-options", `${baseRef}^{commit}`])).trim();
   const headCommit = (await deliveryGit(root, ["rev-parse", "--verify", "--end-of-options", "HEAD^{commit}"])).trim();
   const mergeBaseCommit = (await deliveryGit(root, ["merge-base", baseCommit, headCommit])).trim();
+  if (reviewScope !== undefined) {
+    const comparisonCommit = reviewScope === "final"
+      ? mergeBaseCommit
+      : (await deliveryGit(root, ["rev-parse", "--verify", `${headCommit}^1`])).trim();
+    const paths = await captureCommittedPaths({
+      repositoryRoot: root,
+      comparisonCommit,
+      mergeBaseCommit,
+      headCommit,
+    });
+    const currentHead = (await deliveryGit(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+    if (currentHead !== headCommit) {
+      throw new Error("delivery HEAD changed while capturing committed review scope");
+    }
+    return {
+      baseRef,
+      baseCommit,
+      mergeBaseCommit,
+      headCommit,
+      reviewScope,
+      comparisonCommit,
+      candidatePaths: normalizedCandidates,
+      wholeFilePaths: normalizedWholeFiles,
+      ...paths,
+    };
+  }
+
   const paths = await capturePaths({
     repositoryRoot: root,
     mergeBaseCommit,

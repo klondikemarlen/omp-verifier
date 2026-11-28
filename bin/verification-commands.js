@@ -56,8 +56,9 @@ export function registerVerificationCommands(program) {
     .option("--progress", "report coordinator and check progress to stderr even when piped")
     .option("--worktree", "inspect current worktree changes instead of supplied paths")
     .addOption(base)
+    .option("--final-review", "review cumulative PR hunks instead of just the tip commit; requires --base")
     .option("--whole-file <path...>", "include unchanged lines in these selected PR files for cleanup; requires --base")
-    .option("--full", "perform full delivery verification; requires --request")
+    .option("--full", "select all applicable checks without widening the source scope; requires --request")
     .option("--lint-budget-ms <milliseconds>", "shared project lint budget (1–600000); requires --full", parseLintBudget)
     .option("--closeout <receipt.json>", "also verify declared final resource dispositions")
     .option("--max-source-bytes <bytes>", "source capture budget (16000–256000)", parseSourceByteLimit);
@@ -191,6 +192,13 @@ async function verifyAutomatic(paths, options) {
   if (options.wholeFile && options.base === undefined) {
     throw new Error("--whole-file requires --base and exact paths in the PR");
   }
+  if (options.finalReview && options.base === undefined) throw new Error("--final-review requires --base");
+  if (options.wholeFile && (options.request || options.finalReview)) {
+    throw new Error("--whole-file is for explicit manual cleanup, not a commit or final PR review");
+  }
+  if (options.finalReview && paths.length && !options.request) {
+    throw new Error("--final-review checks committed PR hunks; omit manual draft paths");
+  }
 
   let gateId;
   if (options.closeout !== undefined && !options.worktree && paths.length === 0 && options.base === undefined) {
@@ -223,6 +231,7 @@ async function verifyAutomatic(paths, options) {
     paths: selectedPaths,
     worktree: options.worktree,
     base: options.base,
+    finalReview: options.finalReview,
     wholeFile: options.wholeFile,
     request: options.request,
     full: options.full,
@@ -271,17 +280,24 @@ const automaticProgress = {
   },
 };
 
+// Path/whole-file selectors on a direct invocation are a manual audit, not published review.
+function deliveryReviewScope(options, intent, paths) {
+  if (options.base === undefined) return;
+  if (options.finalReview) return "final";
+  if (intent || (!paths.length && !options.wholeFile)) return "commit";
+}
+
 async function automaticResults(cwd, paths, options, intent, waiver) {
   let selectionReason = intent?.selectionReason ?? "manual-automatic";
-  if (options.full) selectionReason = "full-delivery";
+  if (options.finalReview) selectionReason = "full-delivery";
   else if (intent?.selectionReason === "explicit-work-level") selectionReason = `explicit-${intent.level}`;
 
   const verification = {
     cwd,
     maxSourceBytes: options.maxSourceBytes,
     lintBudgetMs: options.lintBudgetMs,
-    workLevel: options.full ? "normal" : intent?.level,
-    reuseExisting: !options.fresh && !options.full && intent?.level === "normal",
+    workLevel: options.full || options.finalReview ? "normal" : intent?.level,
+    reuseExisting: !options.fresh && !options.full && !options.finalReview && intent?.level === "normal",
     selectionReason,
     waiver,
   };
@@ -295,6 +311,7 @@ async function automaticResults(cwd, paths, options, intent, waiver) {
       ...verification,
       changedPaths: paths,
       baseRef: options.base,
+      reviewScope: deliveryReviewScope(options, intent, paths),
       wholeFilePaths: options.wholeFile,
     });
   } else if (options.full && options.closeout === undefined) {

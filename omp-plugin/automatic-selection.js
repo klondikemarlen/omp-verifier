@@ -44,21 +44,22 @@ function suppressedResult(id, match, suppression) {
   };
 }
 
-function unscopedProviderResult(check, matches, required) {
+function unscopedProviderResult(check, matches, required, executionScope) {
   const declaredScope = check.executionScope === undefined ? "none" : JSON.stringify(check.executionScope);
+  const scopeLabel = executionScope === "changed-lines" ? "changed-line" : "changed-file";
   return {
     id: check.id,
     status: required ? "BLOCKED" : "SUPPRESSED",
     summary: required
-      ? "Required verification provider does not support changed-file execution"
-      : "Automatic verification skipped: provider does not support changed-file execution",
-    evidence: `Delivery execution requires executionScope: "changed-files"; the provider declares ${declaredScope}.`,
+      ? `Required verification provider does not support ${scopeLabel} execution`
+      : `Automatic verification skipped: provider does not support ${scopeLabel} execution`,
+    evidence: `Delivery execution requires executionScope: "${executionScope}"; the provider declares ${declaredScope}.`,
     matches,
   };
 }
 
-function selectCheckMatches({ check, matches }, { repositoryRoot, suppressions, requiredPathKeys, isDelivery }) {
-  const lacksDeliveryScope = isDelivery && check.mode !== "agentic" && check.executionScope !== "changed-files";
+function selectCheckMatches({ check, matches }, { repositoryRoot, suppressions, requiredPathKeys, executionScope }) {
+  const lacksDeliveryScope = executionScope !== undefined && check.mode !== "agentic" && check.executionScope !== executionScope;
   const runnableMatches = [];
   const skippedResults = [];
   const optionalUnscopedMatches = [];
@@ -78,11 +79,11 @@ function selectCheckMatches({ check, matches }, { repositoryRoot, suppressions, 
   }
 
   if (optionalUnscopedMatches.length) {
-    skippedResults.push(unscopedProviderResult(check, optionalUnscopedMatches, false));
+    skippedResults.push(unscopedProviderResult(check, optionalUnscopedMatches, false, executionScope));
   }
 
   if (requiredUnscopedMatches.length) {
-    skippedResults.push(unscopedProviderResult(check, requiredUnscopedMatches, true));
+    skippedResults.push(unscopedProviderResult(check, requiredUnscopedMatches, true, executionScope));
   }
 
   // Keep these results beside their check so execution preserves reporting order and waivers.
@@ -100,6 +101,7 @@ export function planAutomaticVerification({
   blockedResults,
   workLevel = "normal",
   isDelivery = false,
+  reviewScope,
 }) {
   const checksById = new Map(checks.map(check => [check.id, check]));
   const declaredRequirementIds = new Set(requirements.map(requirement => requirement.id));
@@ -165,8 +167,15 @@ export function planAutomaticVerification({
     });
   }
 
+  let executionScope;
+  if (reviewScope !== undefined) {
+    executionScope = "changed-lines";
+  } else if (isDelivery) {
+    executionScope = "changed-files";
+  }
+
   const selections = Array.from(selectedById.values(), selection => selectCheckMatches(selection, {
-    repositoryRoot, suppressions, requiredPathKeys, isDelivery,
+    repositoryRoot, suppressions, requiredPathKeys, executionScope,
   }));
   return { results, selections };
 }

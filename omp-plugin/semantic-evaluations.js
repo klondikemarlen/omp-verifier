@@ -8,7 +8,7 @@ import { isDeepStrictEqual, promisify } from "node:util";
 import { loadSemanticContract } from "#root/omp-plugin/semantic-contracts.js";
 import { discoverAutomaticVerification } from "#root/omp-plugin/verification-catalog.js";
 import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
-import { deliveryFindingEligibility, deliveryFindingMode } from "#root/omp-plugin/finding-scope.js";
+import { automaticEvidenceScope, deliveryFindingMode } from "#root/omp-plugin/finding-scope.js";
 import { finalAssessmentResult, isSemanticVerdict, normalizeSemanticAssessment, validSemanticText } from "#root/omp-plugin/semantic-assessment.js";
 import {
   captureSemanticContext,
@@ -529,6 +529,7 @@ async function reconcileAutomaticScope(target, current) {
     baseRef: automatic.delivery.baseRef,
     candidatePaths: automatic.delivery.candidatePaths,
     wholeFilePaths: automatic.delivery.wholeFilePaths,
+    reviewScope: automatic.delivery.reviewScope,
   });
   const plan = await discoverAutomaticVerification({
     repositoryRoot: target.repositoryRoot,
@@ -536,6 +537,7 @@ async function reconcileAutomaticScope(target, current) {
     packageDirectory: automatic.packageDirectory,
     workLevel: automatic.workLevel,
     isDelivery: true,
+    reviewScope: delivery.reviewScope,
   });
   const selection = plan.selections.find(({ check }) => check.id === target.checkId);
   const blockers = [...plan.results, ...(selection?.skippedResults ?? [])].filter(result => result.status === "BLOCKED");
@@ -601,6 +603,15 @@ async function reconcileRequest(target) {
   const current = await readStoredRequest(target.cacheDirectory, target.checkId, currentState.requestId, {
     requireCurrent: false,
   });
+  const currentReviewScope = current.stored.payload.scope.automatic?.delivery.reviewScope;
+  if (!isCurrent && !(await sameReviewScope(target, currentReviewScope))) {
+    return { result: {
+      id: target.checkId,
+      status: "SUPERSEDED",
+      summary: "Obsolete semantic operation skipped; the current request has a different review scope",
+      evaluation: { mode: "agentic", requestId: target.requestId },
+    } };
+  }
   const automaticResult = await reconcileAutomaticScope(target, current);
   if (automaticResult) return { result: automaticResult };
   if (!current.stored.payload.scope.automatic) {
@@ -640,21 +651,15 @@ async function reconcileRequest(target) {
   } };
 }
 
-function automaticEvidenceScope(automatic, changedPaths) {
-  if (!automatic) {
-    return undefined;
+async function sameReviewScope(target, currentReviewScope) {
+  // A stale file is not evidence. Read it only to prevent redirecting the old handle across review modes.
+  try {
+    const { payload } = JSON.parse(await readFile(target.absoluteRequestPath, "utf8"));
+    return payload?.requestId === target.requestId && payload?.check?.id === target.checkId
+      && payload.scope.automatic?.delivery.reviewScope === currentReviewScope;
+  } catch {
+    return false;
   }
-  const { delivery } = automatic;
-  const eligibility = deliveryFindingEligibility(delivery, changedPaths);
-  return {
-    packageDirectory: automatic.packageDirectory,
-    workLevel: automatic.workLevel,
-    baseRef: delivery.baseRef,
-    baseCommit: delivery.baseCommit,
-    mergeBaseCommit: delivery.mergeBaseCommit,
-    wholeFileSelectors: delivery.wholeFilePaths,
-    eligibility,
-  };
 }
 
 async function reusableResult({ cacheDirectory, check, repositoryRoot, changedPaths, contextPaths, maxSourceBytes, sourceRecovery, automaticScope, restartId, reuseExisting }) {
@@ -751,6 +756,8 @@ export async function prepareSemanticEvaluation({
         && Boolean(previous.payload.scope.automatic) === Boolean(automaticScope)
         && previous.payload.scope.automatic?.delivery.baseRef === automaticScope?.delivery.baseRef
         && previous.payload.scope.automatic?.delivery.mergeBaseCommit === automaticScope?.delivery.mergeBaseCommit
+        && previous.payload.scope.automatic?.delivery.reviewScope === automaticScope?.delivery.reviewScope
+        && previous.payload.scope.automatic?.delivery.comparisonCommit === automaticScope?.delivery.comparisonCommit
         && isDeepStrictEqual(previous.payload.scope.changedPaths, [...new Set(changedPaths)].sort());
       const retainSelectors = reuseExisting && isSameEvidenceScope
         && (!automaticScope || previous.payload.context.sourceInventory.scope === "delivery");

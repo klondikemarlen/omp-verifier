@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import verifierPlugin from "#root/omp-plugin/index.js";
-import { runVerificationCheck } from "#root/omp-plugin/verifications.js";
+import { runAutomaticVerificationForPaths, runVerificationCheck } from "#root/omp-plugin/verifications.js";
 
 test("when OMP is the host executable, closeout reports the coordinator's receipt finding", async context => {
   // Arrange
@@ -233,7 +233,7 @@ test("when automatic CLI receives explicit paths, ignores stale worktree paths u
   }
 });
 
-async function baseScopeFixture(t) {
+async function baseScopeFixture(t, { executionScope = "changed-files" } = {}) {
   const root = await mkdtemp(join(tmpdir(), "omp-verifier-base-scope-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const projectDirectory = join(root, "project");
@@ -248,7 +248,7 @@ async function baseScopeFixture(t) {
       label: "Source syntax",
       description: "Checks the syntax of selected existing JavaScript sources",
       entry: "./check.mjs",
-      executionScope: "changed-files",
+      executionScope,
       pathTriggers: ["**/*.js"],
     }] },
   }));
@@ -325,6 +325,102 @@ test("when PR verification has an earlier committed violation, the actual base i
   assert.equal(JSON.parse(repaired.stdout)[0].status, "PASS");
 });
 
+test("when an executable opts into changed lines, it receives only selected hunks for each review mode", async t => {
+  // Arrange
+  const { projectDirectory, packageDirectory, git, commit } = await baseScopeFixture(t, { executionScope: "changed-lines" });
+  const original = Array.from({ length: 16 }, (_, index) => `// stable source line ${index + 1}`);
+  const writeSource = (path, lines) => writeFile(join(projectDirectory, path), `${lines.join("\n")}\n`);
+  await writeSource("old.js", original);
+  await writeSource("removed.js", ["// old first line", "// old second line"]);
+  await writeSource("notes.txt", ["baseline"]);
+  const mergeBase = commit("baseline");
+  git("checkout", "--quiet", "-b", "upstream");
+  await writeSource("upstream.txt", ["target advanced independently"]);
+  const base = commit("target-only change");
+  git("checkout", "--quiet", "main");
+  const earlier = [...original];
+  earlier[1] = "// earlier PR change";
+  await writeSource("old.js", earlier);
+  await writeSource("earlier.js", ["// added on an earlier commit"]);
+  const parent = commit("earlier PR changes");
+  await rename(join(projectDirectory, "old.js"), join(projectDirectory, "new.js"));
+  const latest = [...earlier];
+  latest[13] = "// latest PR change";
+  await writeSource("new.js", latest);
+  await rm(join(projectDirectory, "removed.js"));
+  await writeSource("notes.txt", ["latest notes"]);
+  const head = commit("rename and edit source");
+  await writeFile(join(packageDirectory, "check.mjs"), `
+const scope = JSON.parse(process.env.OMP_VERIFIER_PR_SCOPE);
+const paths = JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
+console.log(JSON.stringify({
+  status: "PASS",
+  summary: "Received selected hunks",
+  evidence: JSON.stringify({ scope, paths }),
+}));
+`);
+
+  // Act
+  const review = reviewScope => runAutomaticVerificationForPaths({
+    cwd: projectDirectory,
+    packageDirectory: dirname(packageDirectory),
+    baseRef: "upstream",
+    reviewScope,
+  });
+  const [commitReview] = await review("commit");
+  const [finalReview] = await review("final");
+
+  // Assert
+  for (const [result, mode, comparison] of [[commitReview, "commit", parent], [finalReview, "final", mergeBase]]) {
+    assert.equal(result.status, "PASS", result.evidence);
+    assert.equal(result.scope.mode, "changed-lines");
+    const { scope, paths } = JSON.parse(result.evidence);
+    assert.equal(scope.version, 1);
+    assert.deepEqual(scope.changedPaths, paths);
+    assert.deepEqual(paths, result.matches.map(match => match.path));
+    assert.ok(paths.includes("new.js"));
+    assert.ok(paths.includes("old.js"));
+    assert.ok(paths.includes("removed.js"));
+    assert.ok(!paths.includes("notes.txt"));
+    assert.equal(scope.reviewScope, mode);
+    assert.equal(scope.baseRef, "upstream");
+    assert.equal(scope.baseCommit, base);
+    assert.equal(scope.mergeBaseCommit, mergeBase);
+    assert.equal(scope.comparisonCommit, comparison);
+    assert.equal(scope.headCommit, head);
+    assert.deepEqual(scope.renames, [{ from: "old.js", to: "new.js" }]);
+    assert.deepEqual(scope.deletedPaths, ["removed.js"]);
+    assert.deepEqual(scope.wholeFilePaths, []);
+    assert.equal(scope.lineRanges["notes.txt"], undefined);
+    assert.equal(scope.removedLineRanges["notes.txt"], undefined);
+    assert.deepEqual(scope.removedLineRanges["removed.js"], [[1, 2]]);
+  }
+
+  const commitScope = JSON.parse(commitReview.evidence).scope;
+  assert.deepEqual(commitScope.lineRanges["new.js"], [[14, 14]]);
+  assert.deepEqual(commitScope.removedLineRanges["new.js"], [[14, 14]]);
+  assert.ok(!commitScope.changedPaths.includes("earlier.js"));
+  const finalScope = JSON.parse(finalReview.evidence).scope;
+  assert.deepEqual(finalScope.lineRanges["new.js"], [[2, 2], [14, 14]]);
+  assert.deepEqual(finalScope.removedLineRanges["new.js"], [[2, 2], [14, 14]]);
+  assert.deepEqual(finalScope.lineRanges["earlier.js"], [[1, 1]]);
+
+  // If policy excludes the destination, the source alias cannot certify its edited hunks.
+  await writeFile(join(projectDirectory, ".omp-verifier.json"), JSON.stringify({
+    requirements: [{ id: "publisher:syntax", path: "old.js" }],
+    suppressions: ["new.js", "removed.js"].map(path => ({
+      id: "publisher:syntax",
+      path,
+      reason: "Excluded by project policy",
+    })),
+  }));
+  const oldAliasReview = await review("commit");
+  const blockedAlias = oldAliasReview.find(result => result.status === "BLOCKED");
+  assert.deepEqual(blockedAlias?.matches, [{ path: "old.js", trigger: "**/*.js" }]);
+  assert.match(blockedAlias.evidence, /renamed source old\.js.*unselected destination new\.js/);
+  assert.ok(!oldAliasReview.some(result => result.status === "PASS"));
+});
+
 test("when an executable provider applies the PR scope, only an explicit cleanup selection admits a legacy violation", async t => {
   // Arrange
   const { projectDirectory, packageDirectory, commit, run } = await baseScopeFixture(t);
@@ -356,7 +452,7 @@ console.log(JSON.stringify({
 `);
 
   // Act
-  const changedLines = run("automatic", "--base", base);
+  const changedLines = run("automatic", "--base", base, "policy.js");
   const cleanup = run("automatic", "--base", base, "--whole-file", "policy.js");
 
   // Assert
@@ -375,8 +471,8 @@ test("when a stacked PR names its parent as base, parent-only violations are not
   commit("child change");
 
   // Act
-  const child = run("automatic", "--base", parent);
-  const entireStack = run("automatic", "--base", trunk);
+  const child = run("automatic", "--base", parent, "child.js");
+  const entireStack = run("automatic", "--base", trunk, "child.js");
 
   // Assert
   assert.equal(child.status, 0);
@@ -396,7 +492,7 @@ test("when PR source is renamed, selection retains the old deletion and checks t
   commit("renamed invalid source");
 
   // Act
-  const result = run("automatic", "--base", base);
+  const result = run("automatic", "--base", base, "new.js");
 
   // Assert
   assert.equal(result.status, 1);
@@ -417,8 +513,8 @@ test("when a PR deletes its only applicable source or has no diff, verification 
   commit("delete source");
 
   // Act
-  const deleted = run("automatic", "--base", base);
-  const empty = run("automatic", "--base", "HEAD");
+  const deleted = run("automatic", "--base", base, "removed.js");
+  const empty = run("automatic", "--base", "HEAD", "baseline.js");
 
   // Assert
   assert.equal(deleted.status, 0);
