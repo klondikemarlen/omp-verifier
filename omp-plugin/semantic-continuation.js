@@ -41,9 +41,13 @@ function continuationFingerprint(options, requiredContext, batches, captures) {
   })).digest("hex");
 }
 
-function capacityPrerequisite(paths, rejections) {
+function capacityPrerequisite(context, rejections) {
+  const { changedPaths } = context;
   const details = rejections.map(record => `${record.path} (${record.source}: ${record.reason})`).join("; ");
-  return new Error(`Bounded continuation cannot capture the required bundle for ${paths.join(", ") || "the empty changed scope"} within ${LIMITS.maxBatches} batches of ${LIMITS.maxBatchBytes} bytes / ${LIMITS.maxBatchFiles} paths. ${details}. Recover bounded material context selectors while preserving complete changed-source coverage and applicable guidance; keep the whole review BLOCKED until the required evidence fits.`);
+  const recovery = context.deliveryIdentity
+    ? "Do not widen or fragment the review."
+    : "Recover bounded material context selectors while preserving complete changed-source coverage and applicable guidance.";
+  return new Error(`Bounded continuation cannot capture the required bundle for ${changedPaths.join(", ") || "the empty changed scope"} within ${LIMITS.maxBatches} batches of ${LIMITS.maxBatchBytes} bytes / ${LIMITS.maxBatchFiles} paths. ${details}. ${recovery} Keep the whole review BLOCKED until the required evidence fits.`);
 }
 
 function partitionEvidence(context) {
@@ -57,10 +61,10 @@ function partitionEvidence(context) {
       if (typeof record.content !== "string") continue;
       const recordBytes = Buffer.byteLength(record.content);
       if (recordBytes > LIMITS.maxBatchBytes) {
-        throw capacityPrerequisite(context.changedPaths, [{
+        throw capacityPrerequisite(context, [{
           path: record.path,
           source: record.source,
-          reason: "one evidence record exceeds the batch byte limit; recover bounded original-line ranges",
+          reason: "one evidence record exceeds the batch byte limit",
         }]);
       }
       if (records.length && (bytes + recordBytes > LIMITS.maxBatchBytes
@@ -100,6 +104,7 @@ function partitionEvidence(context) {
         source: record.source,
         bytes,
         startLine,
+        ...(context.deliveryIdentity && record.reference ? { state: record.state } : {}),
       };
     });
     const usedBytes = admittedRecords.reduce((total, record) => total + record.bytes, 0);
@@ -150,7 +155,7 @@ export async function captureSemanticContinuation(options, requiredContext) {
       legacyRequest: false,
     });
     const remaining = requiredCapacityRejections(captured.context);
-    if (remaining.length) throw capacityPrerequisite(changedPaths, remaining);
+    if (remaining.length) throw capacityPrerequisite(captured.context, remaining);
   }
   let contexts;
   if (partitioned) {
@@ -158,7 +163,7 @@ export async function captureSemanticContinuation(options, requiredContext) {
   } else {
     contexts = [captured.context];
   }
-  if (contexts.length > LIMITS.maxBatches) throw capacityPrerequisite(changedPaths, rejections);
+  if (contexts.length > LIMITS.maxBatches) throw capacityPrerequisite(captured.context, rejections);
   const missingContext = semanticContextMissing(requiredContext, captured);
   const captures = [{
     changedPaths,

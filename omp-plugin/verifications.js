@@ -91,6 +91,31 @@ function resultFromOutput(check, output) {
   }
 }
 
+function selectedReviewHunks(delivery, changedPaths, renames = []) {
+  if (!delivery.baseRef || !delivery.baseCommit || !delivery.mergeBaseCommit || !delivery.headCommit
+    || !delivery.comparisonCommit || !delivery.removedLineRanges
+    || typeof delivery.removedLineRanges !== "object" || Array.isArray(delivery.removedLineRanges)
+    || delivery.wholeFilePaths.length) {
+    throw new Error("Changed-line execution requires both sides of a committed hunk scope");
+  }
+
+  const selectedPaths = new Set(changedPaths);
+
+  for (const { from, to } of renames) {
+    if (!selectedPaths.has(to) && (delivery.lineRanges[to]?.length || delivery.removedLineRanges[to]?.length)) {
+      throw new Error(`Changed hunks for renamed source ${from} are keyed by the unselected destination ${to}`);
+    }
+  }
+
+  return {
+    reviewScope: delivery.reviewScope,
+    baseRef: delivery.baseRef,
+    comparisonCommit: delivery.comparisonCommit,
+    changedPaths,
+    renames,
+  };
+}
+
 function verificationEnvironment(changedPaths, delivery, lintRestartDirectory) {
   const environment = { ...process.env };
   delete environment.OMP_VERIFIER_CHANGED_PATHS;
@@ -106,12 +131,14 @@ function verificationEnvironment(changedPaths, delivery, lintRestartDirectory) {
 
   environment.OMP_VERIFIER_CHANGED_PATHS = JSON.stringify(changedPaths);
   if (delivery) {
+    const eligibility = deliveryFindingEligibility(delivery, changedPaths);
     environment.OMP_VERIFIER_PR_SCOPE = JSON.stringify({
       version: 1,
       baseCommit: delivery.baseCommit,
       mergeBaseCommit: delivery.mergeBaseCommit,
       headCommit: delivery.headCommit,
-      ...deliveryFindingEligibility(delivery, changedPaths),
+      ...eligibility,
+      ...(delivery.reviewScope === undefined ? {} : selectedReviewHunks(delivery, changedPaths, eligibility.renames)),
     });
   }
   return environment;
@@ -158,7 +185,7 @@ async function prepareSemanticCheck(check, cwd, changedPaths, repositoryRoot, ma
   });
 }
 
-async function executeVerificationCheck(check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs, lintRestartDirectory) {
+async function executeVerificationCheck(check, cwd, environment, timeoutMs, lintBudgetMs) {
   const args = [check.entryPath];
   if (lintBudgetMs !== undefined) {
     args.push(String(lintBudgetMs));
@@ -169,7 +196,7 @@ async function executeVerificationCheck(check, cwd, changedPaths, automaticScope
     signal?.throwIfAborted();
     const { stdout, stderr } = await execFileAsync(NODE_RUNTIME, args, {
       cwd,
-      env: verificationEnvironment(changedPaths, automaticScope?.delivery, lintRestartDirectory),
+      env: environment,
       timeout: timeoutMs,
       maxBuffer: MAX_OUTPUT_BYTES,
       signal,
@@ -222,7 +249,17 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
 
   const restart = currentVerificationRestart();
   const isProjectLint = isInstalledProjectLint(check, resolve(defaultPackageDirectory()));
-  const key = `check:${JSON.stringify([check.id, changedPaths])}`;
+  const delivery = automaticScope?.delivery;
+  let environment;
+  try {
+    environment = verificationEnvironment(changedPaths, delivery, isProjectLint ? restart?.directory : undefined);
+  } catch (error) {
+    return blocked(check.id, "Verification could not run", error.message);
+  }
+
+  const key = delivery?.reviewScope === undefined
+    ? `check:${JSON.stringify([check.id, changedPaths])}`
+    : `changed-lines:${check.id}:${environment.OMP_VERIFIER_PR_SCOPE}`;
   if (restart && !isProjectLint) {
     const saved = await restart.read(key);
     if (saved?.id === check.id && saved.status === "PASS") {
@@ -235,10 +272,7 @@ async function runVerificationCheckWithRoot(check, cwd, changedPaths, repository
   }
 
   return timeVerificationCheck(check.id, async () => {
-    const result = await executeVerificationCheck(
-      check, cwd, changedPaths, automaticScope, timeoutMs, lintBudgetMs,
-      isProjectLint ? restart?.directory : undefined,
-    );
+    const result = await executeVerificationCheck(check, cwd, environment, timeoutMs, lintBudgetMs);
     if (restart && !isProjectLint && result?.status === "PASS") {
       await restart.save(key, result);
     }
@@ -316,7 +350,7 @@ export async function runAutomaticVerification({
   }
 
   const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({
-    repositoryRoot, changedPaths, packageDirectory, workLevel, isDelivery: Boolean(delivery),
+    repositoryRoot, changedPaths, packageDirectory, workLevel, isDelivery: Boolean(delivery), reviewScope: delivery?.reviewScope,
   });
   const automaticScope = delivery ? {
     packageDirectory: selectedDirectory,
@@ -368,6 +402,7 @@ export async function runAutomaticVerificationForPaths({
   cwd,
   changedPaths = [],
   baseRef,
+  reviewScope,
   wholeFilePaths = [],
   packageDirectory,
   maxSourceBytes,
@@ -377,6 +412,10 @@ export async function runAutomaticVerificationForPaths({
   selectionReason,
   waiver,
 }) {
+  if (reviewScope !== undefined && baseRef === undefined) {
+    return [automaticSelectionBlocker(waiver, "Could not inspect base changes", "A delivery review scope requires the actual PR/MR base.")];
+  }
+
   const root = await projectRepositoryRoot(cwd);
   if (root.error) {
     if (baseRef !== undefined) return [automaticSelectionBlocker(waiver, "Could not inspect base changes", root.error)];
@@ -390,6 +429,7 @@ export async function runAutomaticVerificationForPaths({
       delivery = await captureDeliveryScope({
         repositoryRoot: root.repositoryRoot,
         baseRef,
+        reviewScope,
         candidatePaths: changedPaths.map(path => projectPath(path, "changed path")),
         wholeFilePaths: wholeFilePaths.map(path => projectPath(path, "whole-file path")),
       });

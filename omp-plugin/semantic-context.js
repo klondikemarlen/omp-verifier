@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 
 import { pinnedExternalSource, readExternalText } from "#root/omp-plugin/external-context.js";
+import { deliveryFindingEligibility } from "#root/omp-plugin/finding-scope.js";
 import { SemanticEvidenceBudget, sourceEvidenceRecord } from "#root/omp-plugin/semantic-evidence-budget.js";
 import { captureProjectGuidance, selectBindingGuidance } from "#root/omp-plugin/semantic-guidance-evidence.js";
 import { captureNearbyEvidence } from "#root/omp-plugin/semantic-nearby-evidence.js";
@@ -47,6 +48,12 @@ export async function captureSemanticContext({
   }
 
   const deliveryScoped = Boolean(delivery);
+  const hunkScoped = delivery?.reviewScope !== undefined;
+  if (hunkScoped && (contextPaths.length || callerContextPaths.length || externalContextPaths.length)) {
+    throw new Error("commit and final reviews only capture changed hunks and binding guidance; use an explicit manual audit for additional context");
+  }
+  if (hunkScoped) deliveryFindingEligibility(delivery, changedPaths);
+
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -117,6 +124,12 @@ export async function captureSemanticContext({
     targetedContext,
     requestedContext,
     recovery,
+    ...(hunkScoped ? {
+      deletedDeliveryPaths: [
+        ...delivery.deletedPaths,
+        ...(delivery.renames ?? []).map(rename => rename.from).filter(path => !Object.hasOwn(delivery.lineRanges, path)),
+      ],
+    } : {}),
     deliveryScoped,
   }, budget);
   const externalContext = await captureExternalContext(externalSelectors, externalSnapshot, boundedBatch, budget);
@@ -131,6 +144,16 @@ export async function captureSemanticContext({
   const { callers, siblings, siblingInventory, sourceInventory, callerInventory, evidenceTruncated } = nearbyEvidence;
   const context = {
     changedPaths: normalizedChangedPaths,
+    ...(hunkScoped ? {
+      deliveryIdentity: {
+        reviewScope: delivery.reviewScope,
+        baseRef: delivery.baseRef,
+        baseCommit: delivery.baseCommit,
+        mergeBaseCommit: delivery.mergeBaseCommit,
+        headCommit: delivery.headCommit,
+        comparisonCommit: delivery.comparisonCommit,
+      },
+    } : {}),
     ...(recovery ? { sourceRecovery: recovery } : {}),
     changedCode,
     ...(changedCodeCoverage.length ? { changedCodeCoverage } : {}),
@@ -146,7 +169,9 @@ export async function captureSemanticContext({
     callerContextPaths: [...callerSourcePaths].sort(),
     callerRetrieval: {
       ...callerInventory,
-      recovery: deliveryScoped
+      recovery: hunkScoped
+        ? "Do not search outside the captured hunks or add context. If a material relationship cannot be assessed, report BLOCKED; a broader audit requires explicit user authorization."
+        : deliveryScoped
         ? "Do not search outside the delivery for candidates. If the user explicitly authorizes more evidence, use review --context, --caller-context or --external-context with only the named selectors. If an unresolved relationship materially prevents assessment, name the missing prerequisite and report BLOCKED; absence here does not establish global caller completeness."
         : "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
     },
@@ -156,7 +181,9 @@ export async function captureSemanticContext({
     }),
     evidenceTruncated,
     notes: [
-      ...(budget.truncated ? ["Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
+      ...(budget.truncated ? [hunkScoped
+        ? "Some required evidence exceeded the bounded evidence capacity; use bounded continuation without widening the changed hunks."
+        : "Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
       ...(!sourceInventory.complete ? ["Source inventory is incomplete; callers or siblings may be omitted."] : []),
     ],
     missingChangedPaths,
@@ -319,6 +346,7 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
     sourceInventory: context.sourceInventory,
     callerContextPaths: context.callerContextPaths,
   };
+  if (context.deliveryIdentity) fingerprint.deliveryIdentity = context.deliveryIdentity;
   if (context.externalContext?.length) fingerprint.externalContext = context.externalContext;
   if (context.deferredGuidance) fingerprint.deferredGuidance = context.deferredGuidance;
   if (includeMaxSourceBytes) fingerprint.maxSourceBytes = context.evidenceBudget.maxSourceBytes;

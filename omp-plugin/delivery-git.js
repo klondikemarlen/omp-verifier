@@ -7,13 +7,21 @@ const GIT_TIMEOUT_MS = 20_000;
 const MAX_METADATA_BYTES = 2_000_000;
 const MAX_RANGES_PER_PATH = 20_000;
 const MAX_BLOB_BYTES = 64 * 1024 * 1024;
-const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/;
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 const DIFF_OPTIONS = [
   "--no-ext-diff",
   "--no-textconv",
   "--no-color",
   "--ignore-submodules=none",
+];
+
+const HUNK_OPTIONS = [
+  ...DIFF_OPTIONS,
+  "--no-renames",
+  "--unified=0", "--inter-hunk-context=0",
+  "--diff-algorithm=myers", "--no-indent-heuristic", "--line-prefix=", "--output-indicator-new=+",
+  "--output-indicator-old=-", "--output-indicator-context= ",
 ];
 
 function gitOptions(repositoryRoot) {
@@ -79,13 +87,9 @@ export async function changedEntries(repositoryRoot, revisions, paths = []) {
   return entries;
 }
 
-function recordRange(prefix, ranges) {
-  const match = HUNK_HEADER.exec(prefix);
-  if (!match) {
-    throw new Error("delivery scope cannot read Git hunk coordinates");
-  }
-  const first = Number(match[1]);
-  const count = Number(match[2] ?? 1);
+function recordRange(ranges, firstValue, countValue) {
+  const first = Number(firstValue);
+  const count = Number(countValue ?? 1);
   if (!count) {
     return;
   }
@@ -101,8 +105,22 @@ function recordRange(prefix, ranges) {
   }
 }
 
-async function readHunkRanges(stdout) {
-  const ranges = [];
+function recordHunk(prefix, lineRanges, removedLineRanges) {
+  const match = HUNK_HEADER.exec(prefix);
+  if (!match) {
+    throw new Error("delivery scope cannot read Git hunk coordinates");
+  }
+
+  const [, oldFirst, oldCount, newFirst, newCount] = match;
+  recordRange(lineRanges, newFirst, newCount);
+  if (removedLineRanges) {
+    recordRange(removedLineRanges, oldFirst, oldCount);
+  }
+}
+
+async function readHunkRanges(stdout, includeRemoved) {
+  const lineRanges = [];
+  const removedLineRanges = includeRemoved ? [] : undefined;
   let atLineStart = true;
   let hunkPrefix;
   for await (const chunk of stdout) {
@@ -123,7 +141,7 @@ async function readHunkRanges(stdout) {
         break;
       }
       if (hunkPrefix !== undefined) {
-        recordRange(hunkPrefix, ranges);
+        recordHunk(hunkPrefix, lineRanges, removedLineRanges);
       }
       atLineStart = true;
       hunkPrefix = undefined;
@@ -131,38 +149,81 @@ async function readHunkRanges(stdout) {
     }
   }
   if (hunkPrefix !== undefined) {
-    recordRange(hunkPrefix, ranges);
+    recordHunk(hunkPrefix, lineRanges, removedLineRanges);
   }
-  return ranges;
+  return { lineRanges, removedLineRanges };
+}
+
+async function reserveBlobBytes(repositoryRoot, path, object, reserveBytes) {
+  const size = Number(await deliveryGit(repositoryRoot, ["cat-file", "-s", object]));
+  if (!Number.isSafeInteger(size) || size < 0 || size > MAX_BLOB_BYTES) {
+    throw new Error(`delivery scope cannot diff the oversized Git blob for ${path}`);
+  }
+  reserveBytes(size);
+}
+
+export async function committedFileRanges(repositoryRoot, path, { oldObject, newObject, reserveBytes }) {
+  if (oldObject === newObject) {
+    return { lineRanges: [], removedLineRanges: [] };
+  }
+  if (oldObject) {
+    await reserveBlobBytes(repositoryRoot, path, oldObject, reserveBytes);
+  }
+  if (newObject) {
+    await reserveBlobBytes(repositoryRoot, path, newObject, reserveBytes);
+  }
+
+  let inputObject;
+  let diffArgs;
+  if (oldObject && newObject) {
+    diffArgs = ["--exit-code", ...HUNK_OPTIONS, oldObject, newObject, "--"];
+  } else {
+    inputObject = oldObject ?? newObject;
+    diffArgs = ["--no-index", ...HUNK_OPTIONS, "--", oldObject ? "-" : "/dev/null", newObject ? "-" : "/dev/null"];
+  }
+  return captureDiffRanges(repositoryRoot, path, diffArgs, { inputObject, includeRemoved: true });
 }
 
 export async function workingFileRanges(repositoryRoot, path, oldObject, reserveBytes) {
-  const options = gitOptions(repositoryRoot);
   if (oldObject) {
-    const size = Number(await deliveryGit(repositoryRoot, ["cat-file", "-s", oldObject]));
-    if (!Number.isSafeInteger(size) || size > MAX_BLOB_BYTES) {
-      throw new Error(`delivery scope cannot diff the oversized Git blob for ${path}`);
-    }
-    reserveBytes(size);
+    await reserveBlobBytes(repositoryRoot, path, oldObject, reserveBytes);
   }
-  const args = [
-    "-c", "core.quotePath=true", "diff", "--no-index", ...DIFF_OPTIONS, "--no-renames", "--text",
-    "--unified=0", "--inter-hunk-context=0",
-    "--diff-algorithm=myers", "--no-indent-heuristic", "--line-prefix=", "--output-indicator-new=+",
-    "--output-indicator-old=-", "--output-indicator-context= ", "--", oldObject ? "-" : "/dev/null", path,
-  ];
-  const diff = spawn("git", args, {
+  const diffArgs = ["--no-index", ...HUNK_OPTIONS, "--text", "--", oldObject ? "-" : "/dev/null", path];
+  const { lineRanges } = await captureDiffRanges(repositoryRoot, path, diffArgs, { inputObject: oldObject });
+  return lineRanges;
+}
+
+async function captureDiffRanges(repositoryRoot, path, diffArgs, { inputObject, includeRemoved }) {
+  const options = gitOptions(repositoryRoot);
+  const diff = spawn("git", ["-c", "core.quotePath=true", "diff", ...diffArgs], {
     ...options,
-    stdio: [oldObject ? "pipe" : "ignore", "pipe", "ignore"],
+    stdio: [inputObject ? "pipe" : "ignore", "pipe", includeRemoved ? "pipe" : "ignore"],
   });
   const diffClosed = once(diff, "close");
-  const rangesRead = readHunkRanges(diff.stdout);
+  const rangesRead = readHunkRanges(diff.stdout, includeRemoved);
+  let diagnostic;
+  if (includeRemoved) {
+    diff.stderr.on("data", chunk => {
+      diagnostic ??= chunk.subarray(0, 4096).toString("utf8").trim();
+    });
+  }
+
+  async function requireRanges() {
+    const [[code], ranges] = await Promise.all([diffClosed, rangesRead]);
+    if ((code !== 0 && code !== 1) || diagnostic !== undefined) {
+      const source = includeRemoved ? "committed source" : "working source";
+      const detail = diagnostic ? `: ${diagnostic}` : "";
+      throw new Error(`delivery scope could not capture ${source} ranges for ${path}${detail}`);
+    }
+    return ranges;
+  }
+
   try {
-    if (!oldObject) {
-      return await requireDiffResult(path, diffClosed, rangesRead);
+    if (!inputObject) {
+      return await requireRanges();
     }
 
-    const blob = spawn("git", ["cat-file", "blob", oldObject], {
+    const blob = spawn("git", ["cat-file", "blob", inputObject], {
       ...options,
       stdio: ["ignore", "pipe", "ignore"],
     });
@@ -170,7 +231,7 @@ export async function workingFileRanges(repositoryRoot, path, oldObject, reserve
     blob.stdout.pipe(diff.stdin);
     try {
       const [ranges, [blobCode]] = await Promise.all([
-        requireDiffResult(path, diffClosed, rangesRead),
+        requireRanges(),
         once(blob, "close"),
       ]);
       if (blobCode !== 0) {
@@ -183,12 +244,4 @@ export async function workingFileRanges(repositoryRoot, path, oldObject, reserve
   } finally {
     diff.kill();
   }
-}
-
-async function requireDiffResult(path, diffClosed, rangesRead) {
-  const [[code], ranges] = await Promise.all([diffClosed, rangesRead]);
-  if (code !== 0 && code !== 1) {
-    throw new Error(`delivery scope could not capture working source ranges for ${path}`);
-  }
-  return ranges;
 }

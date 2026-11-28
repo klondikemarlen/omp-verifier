@@ -348,11 +348,15 @@ export async function discoverAutomaticVerification({
   packageDirectory = defaultPackageDirectory(),
   workLevel = "normal",
   isDelivery = false,
+  reviewScope,
 }) {
   packageDirectory = resolve(packageDirectory);
   let paths;
   try {
     if (!["normal", "quick-tweak", "rearchitecture"].includes(workLevel)) throw new Error("Unknown request work level");
+    if (reviewScope !== undefined && reviewScope !== "commit" && reviewScope !== "final") {
+      throw new Error("Unknown delivery review scope");
+    }
     paths = [...new Set(changedPaths.map(path => projectPath(path, "changed path")))];
   } catch (error) {
     return {
@@ -373,6 +377,7 @@ export async function discoverAutomaticVerification({
     blockedResults,
     workLevel,
     isDelivery,
+    reviewScope,
   });
   return {
     results: [...blockedResults, ...policyBlocks, ...plan.results],

@@ -41,11 +41,15 @@ export async function captureProjectGuidance(root, {
   requestedContext,
   recovery,
   deliveryScoped,
+  deletedDeliveryPaths,
 }, budget) {
   const readText = deliveryScoped ? readDeliveryProjectText : readProjectText;
   // Authenticated deletions remain changed-source evidence, never live instructions.
   const guidanceRequirements = bindingGuidancePaths
-    .filter(path => !changedCode.some(record => record.path === path && record.state === "deleted"))
+    .filter(path => {
+      if (deletedDeliveryPaths) return !deletedDeliveryPaths.includes(path);
+      return !changedCode.some(record => record.path === path && record.state === "deleted");
+    })
     .map(path => ({
       path,
       requiredBy: boundaryPaths.filter(boundary => relevantGuidance(path, [boundary])),
@@ -58,7 +62,7 @@ export async function captureProjectGuidance(root, {
     if (targetedContext.some(record => record.path === path && record.content)) continue;
 
     // A complete changed guide is already admitted; partial source cannot discharge its guidance requirement.
-    if (!missingChangedPaths.includes(path)
+    if (!deletedDeliveryPaths && !missingChangedPaths.includes(path)
       && changedCode.some(record => record.path === path && record.state === "present")) {
       continue;
     }
@@ -71,7 +75,7 @@ export async function captureProjectGuidance(root, {
       continue;
     }
     let result = await readText(root, path);
-    if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
+    if (!deletedDeliveryPaths && result.sizeLimitExceeded) {
       result = await readText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });
     }
     if (result.missing || result.error) {
@@ -96,7 +100,9 @@ export async function captureProjectGuidance(root, {
   if (deferredGuides) {
     deferredGuidance = {
       guides: [...deferredGuides.values()],
-      recovery: deliveryScoped
+      recovery: deletedDeliveryPaths
+        ? "These unchanged reference guides are not binding evidence and were not read. Do not infer from the absent content or widen the hunk review to retrieve them."
+        : deliveryScoped
         ? "These unchanged reference guides are not binding evidence and were not read. If the user explicitly authorizes the material guide and range, use review --context; do not treat the absent body as evidence."
         : "These unchanged reference guides were not captured as evidence. If material, retrieve the original lines with review --context '<path#Lstart-Lend>' before assessment; do not infer from headings or treat the absent body as evidence for PASS.",
     };

@@ -405,6 +405,7 @@ function validateCheckResults(results, record, checkout) {
   for (const result of results) {
     const { reviewRequest, scope } = result;
     if (scope && (scope.repositoryRoot !== checkout.path ||
+        scope.reviewScope !== "final" ||
         scope.baseCommit !== record.baseCommit || scope.headCommit !== record.tipCommit ||
         !Array.isArray(scope.changedPaths) || !scope.changedPaths.every(path => changedPaths.has(path)))) {
       throw new Error("delivery handoff check returned results for a different delivery scope");
@@ -458,7 +459,7 @@ export async function checkDeliveryHandoff({ handoffPath, fresh = false, lintBud
     const continuesDelivery = previous?.status === "PENDING" && isDeepStrictEqual(previous.checkout, checkout);
     const execute = () => runAutomaticVerificationForPaths({
       cwd: checkout.path,
-      changedPaths: record.changedPaths,
+      reviewScope: "final",
       baseRef: record.baseCommit,
       packageDirectory,
       lintBudgetMs,

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { readDeliveryHunks } from "#root/omp-plugin/semantic-delivery-hunks.js";
 import { sourceEvidenceRecord } from "#root/omp-plugin/semantic-evidence-budget.js";
 import {
   deletedProjectSource,
@@ -49,6 +50,34 @@ export async function captureChangedSource(root, {
   }
 
   for (const path of changedPaths) {
+    if (delivery?.reviewScope !== undefined) {
+      const rename = delivery.renames?.find(rename => rename.from === path);
+      if (rename && !Object.hasOwn(delivery.lineRanges, path) && !deletedPaths.has(path)) {
+        if (changedPaths.includes(rename.to)) {
+          changedCode.push({ path, state: "renamed", renamedTo: rename.to, source: "changed-code" });
+        } else {
+          markUnavailable(path, `rename destination ${rename.to} is outside this check's selected paths; its hunks cannot be reviewed under the old name`);
+        }
+        continue;
+      }
+      let records;
+      try {
+        records = await readDeliveryHunks(root, path, delivery, sourceByteLimit);
+      } catch (error) {
+        markUnavailable(path, error.message);
+        continue;
+      }
+      for (const record of records) {
+        if (record.state === "no-text-hunks") {
+          changedCode.push(record);
+        } else if (!budget.admit(changedCode, record)) {
+          markUnavailable(path, budget.lastRejectionReason);
+          break;
+        }
+      }
+      continue;
+    }
+
     const selectedRanges = requestedContext.filter(selector => selector.path === path && selector.startLine);
     const recoverWholeSource = recovery && !selectedRanges.length;
     const changedSourceLimit = recoverWholeSource ? recovery.maxSourceBytes : sourceByteLimit;

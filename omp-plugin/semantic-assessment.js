@@ -39,6 +39,9 @@ export function normalizeSemanticAssessment(assessment, request, state) {
   if (assessment.status === "PASS" || assessment.status === "FAIL") {
     if (payload.missingContext.length) throw new Error(`required context is unavailable: ${payload.missingContext.join("; ")}`);
     const validatedCitations = validateSemanticCitations(citations, payload.context);
+    if (batchIndex === undefined && payload.context.deliveryIdentity && !validatedCitations.some(citation => citation.reference)) {
+      throw new Error("PASS and FAIL assessments must cite captured changed hunk evidence");
+    }
     if (batchIndex === undefined && !validatedCitations.some(citation => payload.scope.changedPaths.includes(citation.path))) {
       throw new Error("PASS and FAIL citations must include a path in the current changed scope");
     }
@@ -103,7 +106,7 @@ export function finalAssessmentResult(payload, assessment, state) {
 
 function resultFromAssessment(payload, assessment) {
   const citationEvidence = assessment.citations.map(citation =>
-    `${citation.path}:${citation.line}${citation.state === "deleted" ? " (deleted)" : ""}: ${JSON.stringify(citation.quote)}`,
+    `${citation.path}:${citation.line}${citation.state === "deleted" ? " (deleted)" : ""}${citation.reference ? ` [${citation.reference}]` : ""}: ${JSON.stringify(citation.quote)}`,
   );
   const scope = verificationScope(payload.scope.repositoryRoot, payload.scope.changedPaths, payload.scope.automatic?.delivery, "semantic-findings");
   return {
