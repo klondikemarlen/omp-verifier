@@ -291,6 +291,8 @@ A requirement names a check ID and bounded path. It selects that check for match
 
 Use Node `^20.19.0 || ^22.13.0 || >=24` for development (CI uses Node 22). Run `npm ci --ignore-scripts` to install the locked development tools, then `npm run lint` for non-fixing ESLint checks over the CLI, runtime, tests, and lint configuration. Recommended JavaScript rules apply with Node globals and zero allowed warnings. `npm run release:check` runs lint, syntax checks, and the test suite; it is also the CI gate. Lint tooling is development-only and is not required to run the installed plugin.
 
+For edits to `omp-plugin/semantic-*.js`, this checkout's [scoped requirement](.omp-verifier.json) selects the installed `marlens-rules:module-boundary-alignment` check even when optional checks are skipped. Review the touched implementation against the [module-boundary standard](https://github.com/klondikemarlen/marlens-skills-rules-and-tools/blob/main/docs/references/module-boundary-reference.md#ownership-before-extraction): trace who owns discovery, admission and assessment, including the failure path. Passing lint or staying under a file-size ceiling does not answer that question. A missing standards provider is `BLOCKED`, not a pass.
+
 Every release uses the same workflow:
 
 1. Create or update an issue with acceptance criteria and learner coverage.
