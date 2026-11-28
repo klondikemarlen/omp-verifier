@@ -1,25 +1,23 @@
-import { constants } from "node:fs";
-import { access, readFile, realpath, stat } from "node:fs/promises";
-import { execFile, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { realpath, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { delimiter, dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { promisify, stripVTControlCharacters } from "node:util";
+import { stripVTControlCharacters } from "node:util";
 
-import { LINTER_CATALOG } from "#root/omp-plugin/lint-catalog.js";
+import { discoverProjectLinters, insideLintCheckout } from "#root/omp-plugin/project-lint-discovery.js";
 import { lintVerdictRows } from "#root/omp-plugin/lint-presentation.js";
+import { prLintSourceArgument } from "#root/omp-plugin/project-lint-pr.js";
 import { markVerificationTimeout, verificationCancellationSignal } from "#root/omp-plugin/run-timings.js";
 import { currentVerificationRestart } from "#root/omp-plugin/verification-restart.js";
 import {
-  changedProjectPaths,
   DEFAULT_PROJECT_LINT_BUDGET_MS,
   MAX_PROJECT_LINT_BUDGET_MS,
   validateProjectLintBudget,
 } from "#root/omp-plugin/verifications.js";
 
-const execFileAsync = promisify(execFile);
 const MAX_EVIDENCE = 3_900;
 const MAX_LINT_STREAM_BYTES = 32_000;
 const LINT_OUTPUT_TRUNCATED = `Lint output truncated (${MAX_LINT_STREAM_BYTES * 2}-byte retention limit; ${MAX_LINT_STREAM_BYTES} bytes per stream)`;
@@ -29,425 +27,6 @@ const MAX_FINDING_DISPLAY = 360;
 const MAX_RESTART_EVIDENCE = MAX_EVIDENCE + 1;
 const MAX_RESTART_ARGUMENTS = 64;
 const lintProviderPath = fileURLToPath(new URL("./project-lint-check.mjs", import.meta.url));
-const PROJECT_MARKERS = {
-  javascript: ["package.json"],
-  ruby: ["Gemfile", "Rakefile"],
-  go: ["go.mod"],
-  python: ["pyproject.toml"],
-  shell: [],
-};
-
-function projectMarkers(family) {
-  return [...family.tools.flatMap(tool => tool.configs), ...PROJECT_MARKERS[family.id]];
-}
-
-function inside(root, path) {
-  const difference = relative(root, path);
-  return difference !== ".." && !difference.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) && !isAbsolute(difference);
-}
-
-async function fileExists(path) {
-  try {
-    return (await stat(path)).isFile();
-  } catch (error) {
-    if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
-    throw error;
-  }
-}
-
-async function readJson(path) {
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch (error) {
-    if (error.code === "ENOENT") return undefined;
-    throw new Error(`Could not read ${path}: ${error.message}`, { cause: error });
-  }
-}
-
-async function firstFile(directory, names) {
-  for (const name of names) {
-    if (await fileExists(join(directory, name))) return name;
-  }
-  return undefined;
-}
-
-function ancestorDirectories(directory, root) {
-  const directories = [];
-  while (inside(root, directory)) {
-    directories.push(directory);
-    if (directory === root) break;
-    directory = dirname(directory);
-  }
-  return directories;
-}
-
-async function owningProject(repositoryRoot, path, family) {
-  for (const directory of ancestorDirectories(dirname(path), repositoryRoot)) {
-    if (await firstFile(directory, projectMarkers(family))) return directory;
-    const configuration = await readJson(join(directory, ".omp-verifier.json"));
-    if (configuration?.lint?.commands?.[family.id]) return directory;
-  }
-  return repositoryRoot;
-}
-
-async function projectSources(repositoryRoot, directory, family) {
-  const { stdout } = await execFileAsync("git", ["-C", directory, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
-    timeout: 5_000,
-    maxBuffer: 1_024_000,
-  });
-  const paths = [];
-  for (const path of new Set(stdout.split("\0").filter(Boolean))) {
-    const absolute = resolve(directory, path);
-    if (!family.sources.includes(extname(path)) || !await fileExists(absolute)) continue;
-    if (!inside(repositoryRoot, await realpath(absolute))) throw new Error(`Source resolves outside the owning checkout: ${path}`);
-    if (await owningProject(repositoryRoot, absolute, family) !== directory) continue;
-    paths.push(relative(repositoryRoot, absolute));
-  }
-  return paths;
-}
-
-function blocked(language, root, summary, evidence) {
-  return {
-    language,
-    root,
-    status: "BLOCKED",
-    summary,
-    ...(evidence ? { evidence } : {}),
-  };
-}
-
-async function executable(command, cwd, repositoryRoot, env) {
-  const candidates = [];
-  if (isAbsolute(command) || command.includes("/") || command.includes("\\")) {
-    candidates.push(resolve(cwd, command));
-  } else {
-    for (const directory of ancestorDirectories(cwd, repositoryRoot)) {
-      candidates.push(join(directory, "node_modules", ".bin", command), join(directory, ".venv", "bin", command));
-    }
-    for (const directory of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
-      candidates.push(resolve(cwd, directory, command));
-    }
-  }
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
-      if (await fileExists(candidate)) return candidate;
-    } catch (error) {
-      if (!["ENOENT", "ENOTDIR", "EACCES"].includes(error.code)) throw error;
-    }
-  }
-  return undefined;
-}
-
-function unsafeArguments(command, tool) {
-  if (command.some(argument => typeof argument !== "string" || !argument || argument.includes("\0"))) return true;
-  const forbidden = /^(?:--fix(?:=true)?|--fix-only|--fix-suggestions|--fix-dangerously|--init|--write(?:=true)?|--unsafe-fixes|--autocorrect(?:-all)?|--auto-correct(?:-all)?|-a|-A|install|uninstall|add|update)$/;
-  // Oxlint's -A selects allowed rules; RuboCop uses the same flag for autocorrection.
-  if (command.some(argument => forbidden.test(argument) && !(tool === "oxlint" && argument === "-A"))) return true;
-  const binary = command[0].split(/[\\/]/).at(-1);
-  if (["npx", "corepack"].includes(binary)) return true;
-  if (["sh", "bash", "zsh"].includes(binary) && command.slice(1).some(argument => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(argument))) return true;
-  if (["sh", "bash", "zsh", "node", "ruby", "python", "python3", "cmd", "powershell", "pwsh"].includes(binary)) {
-    return command.slice(1).some(argument => ["-c", "-e", "-p", "--print", "--eval", "--command", "/c", "-command", "-encodedcommand"].includes(argument.toLowerCase()));
-  }
-  return false;
-}
-
-function unsafeLintArguments(tool, command) {
-  if (unsafeArguments(command, tool)) return true;
-  return ["oxlint", "pyflakes"].includes(tool) && command.some(argument =>
-    /^(?:--help|--version|-h|-V|--print-config|--rules|--lsp|--debug)(?:=|$)/.test(argument));
-}
-
-async function projectPackageManager(pkg, root) {
-  if (pkg?.packageManager) return pkg.packageManager.split("@")[0];
-  if (await fileExists(join(root, "pnpm-lock.yaml"))) return "pnpm";
-  if (await fileExists(join(root, "yarn.lock"))) return "yarn";
-  if (await fileExists(join(root, "bun.lock")) || await fileExists(join(root, "bun.lockb"))) return "bun";
-  return "npm";
-}
-
-async function projectBinding(projectRoot, repositoryRoot, family) {
-  for (const directory of ancestorDirectories(projectRoot, repositoryRoot)) {
-    const config = await readJson(join(directory, ".omp-verifier.json"));
-    const binding = config?.lint?.commands?.[family.id];
-    if (binding !== undefined) return { binding, directory };
-  }
-  return undefined;
-}
-
-async function wrapperIn(projectRoot, repositoryRoot) {
-  for (const directory of ancestorDirectories(projectRoot, repositoryRoot)) {
-    const wrapper = await firstFile(directory, ["bin/dev", "dev"]);
-    if (wrapper) return join(directory, wrapper);
-  }
-  return undefined;
-}
-
-function scriptTool(script, family) {
-  if (typeof script !== "string" || /[;&|`$<>'"\\\n\r]/.test(script)) return undefined;
-  const words = script.trim().split(/\s+/);
-  const tool = words[0] === "pyflakes3" ? "pyflakes" : words[0];
-  if (!family.tools.some(candidate => candidate.id === tool) || unsafeLintArguments(tool, words)) return undefined;
-  if (tool === "ruff" && (words[1] !== "check" || !words.includes("--no-fix"))) return undefined;
-  if (tool === "golangci-lint" && (words[1] !== "run" || !words.includes("--fix=false"))) return undefined;
-  return tool;
-}
-
-async function nativeConfiguration(directory, repositoryRoot, tool) {
-  for (const owner of ancestorDirectories(directory, repositoryRoot)) {
-    const name = await firstFile(owner, tool.configs);
-    if (name === "pyproject.toml") {
-      const source = await readFile(join(owner, name), "utf8");
-      if (/^\s*\[tool\.ruff(?:\]|\.)/m.test(source)) return join(owner, name);
-    } else if (name) {
-      return join(owner, name);
-    }
-    if (tool.id === "eslint") {
-      const pkg = await readJson(join(owner, "package.json"));
-      if (pkg?.eslintConfig && typeof pkg.eslintConfig === "object") return `${owner}/package.json:eslintConfig`;
-    }
-    if (tool.id === "rubocop" && await fileExists(join(owner, "Gemfile"))) {
-      const source = await readFile(join(owner, "Gemfile"), "utf8");
-      if (/^\s*gem\s+["']rubocop["']/m.test(source)) return join(owner, "Gemfile");
-    }
-  }
-  return undefined;
-}
-
-function nativeArguments(tool, paths) {
-  switch (tool) {
-    case "eslint": return ["--no-fix", "--", ...paths];
-    case "oxlint": return ["--", ...paths];
-    case "pyflakes": return paths.map(path => path.startsWith("-") ? `./${path}` : path);
-    case "ruff": return ["check", "--no-fix", "--", ...paths];
-    case "golangci-lint": return ["run", "--fix=false", "./..."];
-    case "rubocop": return ["--force-exclusion", "--", ...paths];
-    case "shellcheck": return ["--", ...paths];
-  }
-}
-
-async function lintPlan(group, repositoryRoot, env) {
-  const { family, root, paths, wholeProjectTrigger } = group;
-  const wholeProject = wholeProjectTrigger !== undefined;
-  const supportedTools = family.tools.map(tool => tool.id).join(", ");
-  const binding = await projectBinding(root, repositoryRoot, family);
-  if (binding) {
-    const { tool, command, appendPaths } = binding.binding ?? {};
-    if (!family.tools.some(candidate => candidate.id === tool) || !Array.isArray(command) || command.length === 0 || unsafeLintArguments(tool, command) || (appendPaths !== undefined && typeof appendPaths !== "boolean")) {
-      return { result: blocked(family.id, root, `Invalid or fixing lint.commands.${family.id} binding`, `Supported tools: ${supportedTools}. Declare the actual tool and a non-fixing command argv array; appendPaths, when present, must be boolean; shell evaluation and installers are not supported.`) };
-    }
-    const program = await executable(command[0], binding.directory, repositoryRoot, env);
-    if (!program) return { result: blocked(family.id, root, "The declared project lint command is unavailable", command[0]) };
-    const sourceArguments = appendPaths ? paths.map(path => {
-      const argument = relative(binding.directory, join(repositoryRoot, path));
-      return argument.startsWith("-") ? `./${argument}` : argument;
-    }) : [];
-    const restartArguments = command.slice(1);
-    return {
-      plan: {
-        language: family.id,
-        tool,
-        cwd: binding.directory,
-        command: [program, ...restartArguments, ...sourceArguments],
-        paths,
-        wholeProject,
-        configuration: "project binding",
-        requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(tool),
-        restartArguments,
-      },
-    };
-  }
-
-  const pkg = await readJson(join(root, "package.json"));
-  const scripts = Object.entries(pkg?.scripts ?? {}).filter(([name, value]) => {
-    if (name !== "lint" && !name.startsWith("lint:")) return false;
-    const firstWord = typeof value === "string" ? value.trim().split(/\s+/, 1)[0] : "";
-    const tool = firstWord === "pyflakes3" ? "pyflakes" : firstWord;
-    return !LINTER_CATALOG.some(other => other.id !== family.id && other.tools.some(candidate => candidate.id === tool));
-  });
-  const matches = scripts.map(([name, value]) => ({ name, value, tool: scriptTool(value, family) })).filter(script => script.tool);
-  const declaredTools = scripts.map(([, value]) => typeof value === "string" ? value.trim().split(/\s+/, 1)[0] : "")
-    .map(tool => tool === "pyflakes3" ? "pyflakes" : tool)
-    .filter(tool => family.tools.some(candidate => candidate.id === tool));
-  if (new Set(declaredTools).size > 1) {
-    return { result: blocked(family.id, root, "Multiple lint tools are selected by project scripts", `Declare the intended lint.commands.${family.id} binding explicitly; Verifier will not drop one tool's checks by guessing.`) };
-  }
-  const script = matches[0];
-  const executionWrapper = (await readJson(join(root, ".omp-verifier.json")))?.lint?.executionWrapper;
-  if (executionWrapper !== undefined) {
-    if (!Array.isArray(executionWrapper) || executionWrapper.length === 0 || unsafeArguments(executionWrapper)) {
-      return { result: blocked(family.id, root, "Invalid or fixing lint.executionWrapper", "Declare a non-fixing executable argv prefix; shell evaluation and installers are not supported.") };
-    }
-    if (!script) return { result: blocked(family.id, root, "The execution wrapper requires a supported non-fixing package lint script", `Supported tools: ${supportedTools}. A binding cannot add support for a different linter; host lint will not bypass this wrapper.`) };
-    const manager = await projectPackageManager(pkg, root);
-    if (manager !== "npm") return { result: blocked(family.id, root, "The execution wrapper currently supports npm scripts only", manager) };
-    const program = await executable(executionWrapper[0], root, repositoryRoot, env);
-    if (!program) return { result: blocked(family.id, root, "The declared execution wrapper is unavailable", executionWrapper[0]) };
-    const command = [program, ...executionWrapper.slice(1), "npm", "run", script.name];
-    if (script.tool === "eslint") command.push("--", "--no-fix");
-
-    // The wrapper may run npm and its linter outside the host's tooling.
-    return {
-      plan: {
-        language: family.id,
-        tool: script.tool,
-        cwd: root,
-        command,
-        paths,
-        wholeProject,
-        configuration: "project execution wrapper",
-        requiresDiagnostics: ["eslint", "oxlint", "pyflakes"].includes(script.tool),
-        restartDisabled: true,
-      },
-    };
-  }
-
-  const wrapper = await wrapperIn(root, repositoryRoot);
-  if (wrapper) return { result: blocked(family.id, root, "Project wrapper syntax is not declared for linting", `${wrapper}: declare lint.commands.${family.id} = {tool, command: [executable, ...args]} in .omp-verifier.json for a supported tool (${supportedTools}); a binding cannot add another linter. Host lint will not bypass this wrapper.`) };
-  if (scripts.length && !script) return { result: blocked(family.id, root, "The existing lint script is not a supported non-fixing command", `Supported tools for ${family.label}: ${supportedTools}. Bind only an existing command for one of these tools, with its actual identity. Other linters require catalog support; a separate project check does not clear this built-in BLOCKED result. No tools or configuration were installed.`) };
-
-  const configurations = [];
-  for (const tool of family.tools) {
-    if (script && script.tool !== tool.id) continue;
-    const path = await nativeConfiguration(root, repositoryRoot, tool);
-    if (path) configurations.push({ tool: tool.id, path });
-  }
-  if (!script && configurations.length > 1) {
-    return { result: blocked(family.id, root, "Multiple lint tools have project configuration", `Select the intended tool through a supported package script or lint.commands.${family.id}; Verifier will not choose by PATH order.`) };
-  }
-  const tool = script?.tool ?? configurations[0]?.tool ?? (family.id === "shell" ? "shellcheck" : undefined);
-  if (!tool || (!configurations.length && !["shellcheck", "pyflakes", "oxlint"].includes(tool))) {
-    return { result: blocked(family.id, root, "No supported project lint configuration was found", `Expected existing configuration for ${supportedTools} in ${family.label}, or an explicit supported project command. A tool on PATH alone does not select it. No tools or configuration were installed.`) };
-  }
-
-  const scriptBinary = script?.value.trim().split(/\s+/, 1)[0];
-  let program = await executable(scriptBinary ?? tool, root, repositoryRoot, env);
-  let prefix = [];
-  if (tool === "rubocop" && await fileExists(join(root, "Gemfile"))) {
-    program = await executable("bundle", root, repositoryRoot, env);
-    prefix = ["exec", "rubocop"];
-  }
-  if (!program) return { result: blocked(family.id, root, "The configured linter is unavailable", `${tool} could not be found in the project, its installed environment, or PATH. Restore the existing project setup; Verifier does not provision tools.`) };
-
-  let command = [program, ...prefix, ...nativeArguments(tool, paths.map(path => relative(root, join(repositoryRoot, path))))];
-  let restartDisabled = prefix.length > 0;
-  if (script) {
-    const manager = await projectPackageManager(pkg, root);
-    if (!["npm", "pnpm", "yarn", "bun"].includes(manager)) return { result: blocked(family.id, root, "The declared package manager is unsupported", manager) };
-    const runner = await executable(manager, root, repositoryRoot, env);
-    if (!runner) return { result: blocked(family.id, root, "The project package manager is unavailable", manager) };
-    command = [runner, "run", script.name];
-    // A delegated script can select another executable or run arbitrary lifecycle hooks.
-    restartDisabled ||= program !== join(root, "node_modules", ".bin", scriptBinary)
-      || Object.hasOwn(pkg.scripts, `pre${script.name}`)
-      || Object.hasOwn(pkg.scripts, `post${script.name}`);
-  }
-  return {
-    plan: {
-      language: family.id,
-      tool,
-      cwd: root,
-      command,
-      paths,
-      wholeProject,
-      configuration: configurations[0]?.path ?? "Explicit tool defaults",
-      inspectEslint: tool === "eslint",
-      requiresDiagnostics: ["oxlint", "pyflakes"].includes(tool),
-      executable: program,
-      restartDisabled,
-    },
-  };
-}
-
-export async function discoverProjectLinters({ cwd, changedPaths, env = process.env }) {
-  let repositoryRoot = resolve(cwd);
-  const plans = [];
-  const results = [];
-  try {
-    const root = await execFileAsync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], { timeout: 5_000, maxBuffer: 16_000 });
-    repositoryRoot = await realpath(root.stdout.trim());
-    if (changedPaths === undefined) {
-      const changeSet = await changedProjectPaths(cwd);
-      if (changeSet.error) throw new Error(changeSet.error);
-      changedPaths = changeSet.paths;
-    }
-    if (!Array.isArray(changedPaths) || changedPaths.some(path => typeof path !== "string")) throw new Error("Changed paths must be a project-relative string array");
-    const groups = new Map();
-    for (const raw of new Set(changedPaths)) {
-      const path = raw.replaceAll("\\", "/").replace(/^\.\//, "");
-      if (!path || isAbsolute(path) || path.split("/").includes("..")) throw new Error(`Changed path is outside the owning checkout: ${path}`);
-      const absolute = resolve(repositoryRoot, path);
-      if (!inside(repositoryRoot, absolute)) throw new Error(`Changed path is outside the owning checkout: ${path}`);
-      const name = path.split("/").at(-1);
-      const candidates = LINTER_CATALOG.filter(family =>
-        family.sources.includes(extname(path)) || projectMarkers(family).includes(name) || name === ".omp-verifier.json");
-      if (candidates.length === 0) continue;
-      if (!await fileExists(absolute)) continue;
-      if (!inside(repositoryRoot, await realpath(absolute))) throw new Error(`Changed source resolves outside the owning checkout: ${path}`);
-      const lintConfig = name === ".omp-verifier.json" ? (await readJson(absolute))?.lint : undefined;
-      for (const family of candidates) {
-        const source = family.sources.includes(extname(path));
-        const configuration = projectMarkers(family).includes(name);
-        const verifierConfig = lintConfig?.commands?.[family.id] !== undefined || lintConfig?.executionWrapper !== undefined;
-        if (!source && !configuration && !verifierConfig) continue;
-        const root = await owningProject(repositoryRoot, absolute, family);
-        const key = `${family.id}\0${root}`;
-        if (!groups.has(key)) {
-          groups.set(key, {
-            family,
-            root,
-            paths: [],
-          });
-        }
-        const group = groups.get(key);
-        if (source) group.paths.push(path);
-        // Prefer the manifest when several edits select the same whole-project run.
-        if ((configuration || verifierConfig) && (!group.wholeProjectTrigger || PROJECT_MARKERS[family.id].includes(name))) {
-          group.wholeProjectTrigger = name;
-        }
-      }
-    }
-    for (const group of groups.values()) {
-      if (group.wholeProjectTrigger) {
-        group.paths = await projectSources(repositoryRoot, group.root, group.family);
-      }
-    }
-    for (const group of groups.values()) {
-      if (group.paths.length === 0) continue;
-
-      const { root, wholeProjectTrigger } = group;
-      try {
-        const discovered = await lintPlan(group, repositoryRoot, env);
-        if (discovered.plan) {
-          plans.push({
-            ...discovered.plan,
-            root,
-            wholeProjectTrigger,
-          });
-        } else {
-          results.push({
-            ...discovered.result,
-            wholeProjectTrigger,
-            execution: "discovery",
-          });
-        }
-      } catch (error) {
-        results.push({
-          ...blocked(group.family.id, root, "Project lint discovery could not complete", error.message),
-          wholeProjectTrigger,
-          execution: "discovery",
-        });
-      }
-    }
-  } catch (error) {
-    results.push({
-      ...blocked("project", repositoryRoot, "Project lint scope could not be established", error.message),
-      execution: "discovery",
-    });
-  }
-  return { repositoryRoot, plans, results };
-}
 
 async function inspectEslint(plan) {
   if (!plan.inspectEslint || plan.paths.length === 0) return plan.paths;
@@ -538,7 +117,7 @@ function lintVerdictSummary(outcomes, repositoryRoot, exhaustedBudgetMs) {
   return rows.join("\n");
 }
 
-function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
+function combinedResult(outcomes, repositoryRoot, { exhaustedBudgetMs, prScoped } = {}) {
   const applicable = outcomes.filter(result => result.status !== "N/A");
   if (applicable.length === 0) return { status: "N/A", summary: "No supported changed source requires linting under the detected project configuration" };
   let status = "PASS";
@@ -550,7 +129,8 @@ function combinedResult(outcomes, repositoryRoot, exhaustedBudgetMs) {
   if (exhaustedBudgetMs !== undefined) {
     summary = lintTimeoutSummary(outcomes, repositoryRoot, exhaustedBudgetMs);
     if (exhaustedBudgetMs < MAX_PROJECT_LINT_BUDGET_MS) {
-      nextCheck = `For \`automatic --full\`, retry the same request and scope from the same checkout (including any base and paths) with a larger \`--lint-budget-ms <milliseconds>\` (maximum ${MAX_PROJECT_LINT_BUDGET_MS} ms). For an applicable handoff, retry \`handoff check <same-handoff-file> --lint-budget-ms <milliseconds>\`. For lint alone, use \`lint --budget-ms <milliseconds>\` with the same lint-selected paths.`;
+      nextCheck = `For \`automatic --full\`, retry the same request and scope from the same checkout (including any base and paths) with a larger \`--lint-budget-ms <milliseconds>\` (maximum ${MAX_PROJECT_LINT_BUDGET_MS} ms). For an applicable handoff, retry \`handoff check <same-handoff-file> --lint-budget-ms <milliseconds>\`.`;
+      if (!prScoped) nextCheck += " For lint alone, use `lint --budget-ms <milliseconds>` with the same lint-selected paths.";
     } else {
       nextCheck = "The lint budget is already at its maximum. Investigate the slow command before retrying the same scope.";
     }
@@ -1050,7 +630,7 @@ async function lintRestartKey(plan) {
         continue;
       }
 
-      if (!identity.isFile && !inside(plan.repositoryRoot, identity.target)) {
+      if (!identity.isFile && !insideLintCheckout(plan.repositoryRoot, identity.target)) {
         return undefined;
       }
 
@@ -1069,7 +649,8 @@ async function lintRestartKey(plan) {
       configuration,
       argumentFiles,
     ]);
-    return `project-lint:${createHash("sha256").update(identity).digest("hex")}`;
+    const scope = plan.prScoped ? "pr-changed-files\0" : "";
+    return `project-lint:${createHash("sha256").update(scope).update(identity).digest("hex")}`;
   } catch {
     return undefined;
   }
@@ -1097,6 +678,7 @@ function lintGroupNotStarted(group, budgetMs) {
 export async function verifyProjectLint({
   cwd,
   changedPaths,
+  prScope,
   env = process.env,
   budgetMs = DEFAULT_PROJECT_LINT_BUDGET_MS,
   restart = currentVerificationRestart(),
@@ -1107,7 +689,7 @@ export async function verifyProjectLint({
   cancellationSignal?.throwIfAborted();
 
   const deadline = Date.now() + budgetMs;
-  const discovery = await discoverProjectLinters({ cwd, changedPaths, env });
+  const discovery = await discoverProjectLinters({ cwd, changedPaths, prScope, env });
   cancellationSignal?.throwIfAborted();
 
   const outcomes = [...discovery.results];
@@ -1164,12 +746,22 @@ export async function verifyProjectLint({
         continue;
       }
 
-      const execution = await executeLint(plan, env, deadline, cancellationSignal);
+      const executionPlan = plan.prScoped && applicable.length !== plan.paths.length
+        ? {
+          ...plan,
+          paths: applicable,
+          command: [
+            ...plan.command.slice(0, -plan.paths.length),
+            ...applicable.map(path => prLintSourceArgument(relative(plan.cwd, join(plan.repositoryRoot, path)))),
+          ],
+        }
+        : plan;
+      const execution = await executeLint(executionPlan, env, deadline, cancellationSignal);
       cancellationSignal?.throwIfAborted();
 
       const { code, signal, failure, streams } = execution;
       const completedSuccessfully = !failure && !signal && code === 0;
-      const { evidence, outputTruncated, reportedFindings } = lintExecutionEvidence(plan, streams, {
+      const { evidence, outputTruncated, reportedFindings } = lintExecutionEvidence(executionPlan, streams, {
         completedSuccessfully,
       });
       if (completedSuccessfully) {
@@ -1242,7 +834,10 @@ export async function verifyProjectLint({
   cancellationSignal?.throwIfAborted();
 
   if (budgetExhausted) {
-    const result = combinedResult(outcomes, discovery.repositoryRoot, budgetMs);
+    const result = combinedResult(outcomes, discovery.repositoryRoot, {
+      exhaustedBudgetMs: budgetMs,
+      prScoped: prScope !== undefined,
+    });
     result.lintBudgetExhaustedMs = budgetMs;
     return markVerificationTimeout(result);
   }
