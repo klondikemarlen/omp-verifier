@@ -25,7 +25,6 @@ function continuationFingerprint(options, requiredContext, batches, captures) {
       modelContext: options.sourceRecovery.modelContext,
     } : undefined,
     automatic: options.automaticScope ?? options.automatic,
-    deferOptionalSource: options.deferOptionalSource || undefined,
   };
   return createHash("sha256").update(JSON.stringify({
     version: 2,
@@ -125,11 +124,10 @@ function partitionEvidence(context) {
 
 export async function captureSemanticContinuation(options, requiredContext) {
   if (!Array.isArray(requiredContext)) throw new TypeError("requiredContext must be an array");
-  const delivery = options.automaticScope?.delivery;
+  const delivery = (options.automaticScope ?? options.automatic)?.delivery;
   let captured = await captureSemanticContext({
     ...options,
     delivery,
-    requiredContext: options.deferOptionalSource ? requiredContext : undefined,
     boundedBatch: true,
     legacyRequest: false,
   });
@@ -146,7 +144,6 @@ export async function captureSemanticContinuation(options, requiredContext) {
     captured = await captureSemanticContext({
       ...options,
       delivery,
-      requiredContext: options.deferOptionalSource ? requiredContext : undefined,
       externalSnapshot: [...externalSnapshots.values()],
       boundedBatch: true,
       continuationBundle: true,
@@ -259,7 +256,6 @@ export async function validateSemanticContinuation(payload) {
       maxContextPaths: scope.maxContextPaths,
       sourceRecovery: scope.sourceRecovery,
       delivery: scope.automatic?.delivery,
-      requiredContext: scope.deferOptionalSource ? standard.requiredContext : undefined,
       boundedBatch: true,
       continuationBundle: capture.partitioned,
     });

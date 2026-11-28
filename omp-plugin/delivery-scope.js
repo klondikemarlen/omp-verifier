@@ -282,7 +282,7 @@ function presentBaseline(path, base, renamed) {
 }
 
 function dirtyOverlay(path) {
-  return new Error(`working source differs from committed delivery at ${path}; restore committed source or explicitly include the path if authored`);
+  return new Error(`working source differs from committed delivery at ${path}; commit or restore it before PR review, or explicitly include the path in a direct manual audit`);
 }
 
 function checkOverlays(head, worktree, selected) {
@@ -301,8 +301,7 @@ function wholeFileSelection(changed, worktree, wholeFilePaths) {
   }
 }
 
-async function capturePaths({ repositoryRoot, mergeBaseCommit, headCommit, candidatePaths, wholeFilePaths }) {
-  const paths = [...new Set([...candidatePaths, ...wholeFilePaths])].sort();
+async function capturePaths({ repositoryRoot, mergeBaseCommit, headCommit, candidatePaths: paths, wholeFilePaths }) {
   checkScopeSize(paths);
   const entries = await changedEntries(repositoryRoot, [mergeBaseCommit, headCommit]);
   const committed = committedScope(entries);
@@ -354,9 +353,12 @@ async function capturePaths({ repositoryRoot, mergeBaseCommit, headCommit, candi
     return pathRanges;
   });
   const lineRanges = Object.fromEntries(changedPaths.filter(path => worktree.get(path)).map(path => [path, ranges.get(path)]));
+  const renames = changedPaths.filter(path => worktree.get(path) && changed.has(candidates.renamed.get(path)))
+    .map(to => ({ from: candidates.renamed.get(to), to }));
   return {
     changedPaths,
     deletedPaths,
+    ...(renames.length ? { renames } : {}),
     lineRanges,
   };
 }

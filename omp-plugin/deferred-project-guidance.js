@@ -5,7 +5,7 @@ const MAX_HEADINGS_PER_GUIDE = 8;
 const MAX_TOTAL_HEADINGS = 24;
 const MAX_HEADING_LENGTH = 120;
 
-export function deferredProjectGuidance({ config, guidancePaths, changedPaths, selectedPaths, availableText }) {
+export function deferredProjectGuidance({ config, guidancePaths, changedPaths, selectedPaths, availableText, includeHeadings = true }) {
   const referenceGuides = declaredReferenceGuides(config);
   if (!referenceGuides?.size) return undefined;
 
@@ -14,6 +14,10 @@ export function deferredProjectGuidance({ config, guidancePaths, changedPaths, s
   let remainingHeadings = MAX_TOTAL_HEADINGS;
   for (const path of guidancePaths) {
     if (!referenceGuides.has(path) || bindingPaths.has(path)) continue;
+    if (!includeHeadings) {
+      guides.set(path, { path });
+      continue;
+    }
 
     const content = availableText.get(path);
     if (content === undefined) continue;

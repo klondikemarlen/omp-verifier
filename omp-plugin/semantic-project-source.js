@@ -31,7 +31,7 @@ async function gitSource(root, reference, maxSourceBytes, env) {
 }
 
 async function deletedProjectSource(root, path, maxSourceBytes, { identifyOversized = true, delivery } = {}) {
-  if (delivery?.deletedPaths?.includes(path)) {
+  if (delivery) {
     const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")));
     const env = {
       ...inherited,
@@ -84,17 +84,24 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, range, maxRangeBytes = MAX_INVENTORY_FILE_BYTES) {
+function readDeliveryProjectText(root, path, maxBytes, range, maxRangeBytes) {
+  return readProjectText(root, path, maxBytes, range, maxRangeBytes, true);
+}
+
+async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, range, maxRangeBytes = MAX_INVENTORY_FILE_BYTES, exactPath = false) {
   const absolutePath = resolve(root, path);
   if (!insideRoot(root, absolutePath)) return { error: "path resolves outside the project" };
   let fileRealPath;
   try {
     fileRealPath = await realpath(absolutePath);
   } catch (error) {
-    if (error?.code === "ENOENT") return { missing: true };
+    if (error.code === "ENOENT" || (exactPath && error.code === "ENOTDIR")) return { missing: true };
     return { error: error.message };
   }
   if (!insideRoot(root, fileRealPath)) return { error: "path resolves outside the project" };
+  if (exactPath && fileRealPath !== absolutePath) {
+    return { error: "delivery evidence cannot follow a symbolic file or directory; select the target explicitly if authorized" };
+  }
 
   let fileStat;
   try {
@@ -131,4 +138,4 @@ async function readProjectText(root, path, maxBytes = MAX_FILE_EVIDENCE_BYTES, r
   };
 }
 
-export { deletedProjectSource, insideRoot, normalizedProjectPath, readProjectText };
+export { deletedProjectSource, insideRoot, normalizedProjectPath, readDeliveryProjectText, readProjectText };

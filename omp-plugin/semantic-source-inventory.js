@@ -8,6 +8,7 @@ import {
   deletedProjectSource,
   insideRoot,
   MAX_INVENTORY_FILE_BYTES,
+  readDeliveryProjectText,
   readProjectText,
   ROOT_REVIEW_CONFIG,
 } from "#root/omp-plugin/semantic-project-source.js";
@@ -24,15 +25,52 @@ const PROJECT_GUIDANCE_NAMES = new Set([
   "README.md", "copilot-instructions.md",
 ]);
 
+export async function deliveryGuidance(root, changedPaths, contextPaths) {
+  const boundaryPaths = [...new Set([...changedPaths, ...contextPaths])];
+  const directories = new Set();
+  for (const path of boundaryPaths) {
+    for (let directory = dirname(path); !directories.has(directory); directory = dirname(directory)) {
+      directories.add(directory);
+      if (directory === ".") break;
+    }
+  }
+
+  // Probe recognized guidance names only. Do not list directory entries or Git trees.
+  const candidates = [...directories].flatMap(directory => Array.from(PROJECT_GUIDANCE_NAMES, name =>
+    directory === "." ? name : `${directory}/${name}`));
+  const guidancePaths = new Set(boundaryPaths.filter(isGuidancePath));
+  for (let offset = 0; offset < candidates.length; offset += 64) {
+    const presentPaths = await Promise.all(candidates.slice(offset, offset + 64).map(async path => {
+      try {
+        await lstat(resolve(root, path));
+        return path;
+      } catch (error) {
+        if (error.code !== "ENOENT" && error.code !== "ENOTDIR") return path;
+        return undefined;
+      }
+    }));
+    for (const path of presentPaths) {
+      if (path !== undefined) guidancePaths.add(path);
+    }
+  }
+
+  const availableText = new Map();
+  if (guidancePaths.has(ROOT_REVIEW_CONFIG)) {
+    const config = await readDeliveryProjectText(root, ROOT_REVIEW_CONFIG, MAX_INVENTORY_FILE_BYTES);
+    if (typeof config.content === "string") {
+      availableText.set(ROOT_REVIEW_CONFIG, config.content);
+    }
+  }
+  return { boundaryPaths, guidancePaths: [...guidancePaths].sort(), availableText };
+}
+
 export async function inventoryProjectSource(root, {
   changedPaths,
   contextPaths,
   requiredSourceLimit,
-  delivery,
-  compactOptionalSource,
 }) {
   const deletedSources = new Map();
-  const siblingInventory = await inventorySiblingDirectories(root, changedPaths, deletedSources, requiredSourceLimit, delivery);
+  const siblingInventory = await inventorySiblingDirectories(root, changedPaths, deletedSources, requiredSourceLimit);
   const paths = [...new Set([
     ...await inventoryPaths(root, [...changedPaths, ...contextPaths]),
     ...siblingInventory.flatMap(inventory => inventory.files),
@@ -46,7 +84,6 @@ export async function inventoryProjectSource(root, {
   const selectedPaths = orderedPaths.slice(0, MAX_INVENTORY_FILES);
   const files = [];
   const availableText = new Map();
-  const sourceHashes = new Map();
   let readBytes = 0;
   let readTruncated = false;
 
@@ -69,7 +106,6 @@ export async function inventoryProjectSource(root, {
     readBytes += result.size;
     if (result.referenceSelectionEligible || codeFile(path)) {
       availableText.set(path, result.content);
-      if (compactOptionalSource) sourceHashes.set(path, result.sha256);
     }
   }
 
@@ -81,7 +117,6 @@ export async function inventoryProjectSource(root, {
     guidancePaths,
     selectedPaths,
     availableText,
-    sourceHashes,
     sourceInventory: {
       files,
       complete: !omittedFiles && !readTruncated,
@@ -195,7 +230,7 @@ async function renamedProjectPaths(root, revision) {
   return renames;
 }
 
-async function inventoryHistoricalSiblings(root, directory, remainingEntries, { changedPaths, deletedSources, maxSourceBytes, delivery }) {
+async function inventoryHistoricalSiblings(root, directory, remainingEntries, { changedPaths, deletedSources, maxSourceBytes }) {
   // Only genuinely absent directories may use history, not links or inaccessible paths.
   let ancestor = resolve(root, directory);
   while (true) {
@@ -216,7 +251,7 @@ async function inventoryHistoricalSiblings(root, directory, remainingEntries, { 
   if (boundaryPaths.length > remainingEntries) throw new Error("sibling directory entry limit reached");
 
   for (const path of boundaryPaths) {
-    const source = await deletedProjectSource(root, path, maxSourceBytes, { delivery });
+    const source = await deletedProjectSource(root, path, maxSourceBytes);
     deletedSources.set(path, source);
     if (typeof source?.content !== "string") {
       throw new Error(`historical sibling inventory cannot authenticate deleted source: ${path}`);
@@ -259,7 +294,7 @@ async function inventoryHistoricalSiblings(root, directory, remainingEntries, { 
   return { files: [...files], snapshots, renames, inspectedEntries };
 }
 
-async function inventorySiblingDirectories(root, changedPaths, deletedSources, maxSourceBytes, delivery) {
+async function inventorySiblingDirectories(root, changedPaths, deletedSources, maxSourceBytes) {
   const directories = [...new Set(changedPaths.map(path => dirname(path)))].sort();
   const inventories = [];
   let inspectedEntries = 0;
@@ -297,7 +332,6 @@ async function inventorySiblingDirectories(root, changedPaths, deletedSources, m
             changedPaths,
             deletedSources,
             maxSourceBytes,
-            delivery,
           });
           inventory.files = historical.files;
           inventory.snapshots = historical.snapshots;

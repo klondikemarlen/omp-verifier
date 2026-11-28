@@ -2,6 +2,7 @@ import { deferredProjectGuidance } from "#root/omp-plugin/deferred-project-guida
 import { sourceEvidenceRecord } from "#root/omp-plugin/semantic-evidence-budget.js";
 import {
   MAX_FILE_EVIDENCE_BYTES,
+  readDeliveryProjectText,
   readProjectText,
   ROOT_REVIEW_CONFIG,
 } from "#root/omp-plugin/semantic-project-source.js";
@@ -23,6 +24,7 @@ export function selectBindingGuidance({ guidancePaths, availableText }, {
       changedPaths: [...changedPaths, ...(delivery?.changedPaths ?? []), ...(delivery?.deletedPaths ?? [])],
       selectedPaths,
       availableText,
+      includeHeadings: !delivery,
     });
   }
   const bindingGuidancePaths = guidancePaths.filter(path => !deferredGuides?.has(path));
@@ -38,7 +40,9 @@ export async function captureProjectGuidance(root, {
   targetedContext,
   requestedContext,
   recovery,
+  deliveryScoped,
 }, budget) {
+  const readText = deliveryScoped ? readDeliveryProjectText : readProjectText;
   // Authenticated deletions remain changed-source evidence, never live instructions.
   const guidanceRequirements = bindingGuidancePaths
     .filter(path => !changedCode.some(record => record.path === path && record.state === "deleted"))
@@ -59,16 +63,16 @@ export async function captureProjectGuidance(root, {
       continue;
     }
     if (recovery && !requestedContext.some(selector => selector.path === path && selector.startLine)) {
-      const reason = await recoverGuidance(root, path, records, recovery, budget);
+      const reason = await recoverGuidance(readText, root, path, records, recovery, budget);
       if (reason !== undefined) {
         requirement.reason = reason;
         missingGuidancePaths.push(path);
       }
       continue;
     }
-    let result = await readProjectText(root, path);
+    let result = await readText(root, path);
     if (result.error === `file exceeds the ${MAX_FILE_EVIDENCE_BYTES}-byte context limit`) {
-      result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });
+      result = await readText(root, path, MAX_FILE_EVIDENCE_BYTES, { startLine: 1 });
     }
     if (result.missing || result.error) {
       requirement.reason = result.error ?? "path is absent";
@@ -82,7 +86,7 @@ export async function captureProjectGuidance(root, {
   }
 
   let projectGuidance = records;
-  if (!records.length && !deferredGuides) {
+  if (!records.length && !deferredGuides && (!deliveryScoped || guidanceRequirements.length === 0)) {
     projectGuidance = {
       status: "none-found",
       explanation: "No recognized project guidance files were found in the inspected inventory.",
@@ -92,14 +96,16 @@ export async function captureProjectGuidance(root, {
   if (deferredGuides) {
     deferredGuidance = {
       guides: [...deferredGuides.values()],
-      recovery: "These unchanged reference guides were not captured as evidence. If material, retrieve the original lines with review --context '<path#Lstart-Lend>' before assessment; do not infer from headings or treat the absent body as evidence for PASS.",
+      recovery: deliveryScoped
+        ? "These unchanged reference guides are not binding evidence and were not read. If the user explicitly authorizes the material guide and range, use review --context; do not treat the absent body as evidence."
+        : "These unchanged reference guides were not captured as evidence. If material, retrieve the original lines with review --context '<path#Lstart-Lend>' before assessment; do not infer from headings or treat the absent body as evidence for PASS.",
     };
   }
   return { projectGuidance, deferredGuidance, guidanceRequirements, missingGuidancePaths };
 }
 
-async function recoverGuidance(root, path, records, recovery, budget) {
-  const result = await readProjectText(root, path, recovery.maxSourceBytes);
+async function recoverGuidance(readText, root, path, records, recovery, budget) {
+  const result = await readText(root, path, recovery.maxSourceBytes);
   if (typeof result.content === "string") {
     const { coverage, error } = recoverCompleteSource(records, budget, {
       path,

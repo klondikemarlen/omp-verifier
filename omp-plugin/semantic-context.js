@@ -9,11 +9,12 @@ import {
   MAX_FILE_EVIDENCE_BYTES,
   MAX_INVENTORY_FILE_BYTES,
   normalizedProjectPath,
+  readDeliveryProjectText,
   readProjectText,
 } from "#root/omp-plugin/semantic-project-source.js";
 import { captureChangedSource, MAX_TARGETED_RANGE_BYTES, validateSourceRecovery } from "#root/omp-plugin/semantic-required-source.js";
 import { discoverSourceCandidates } from "#root/omp-plugin/semantic-source-candidates.js";
-import { inventoryProjectSource, readUnavailableSourceStates } from "#root/omp-plugin/semantic-source-inventory.js";
+import { deliveryGuidance, inventoryProjectSource, readUnavailableSourceStates } from "#root/omp-plugin/semantic-source-inventory.js";
 
 const DEFAULT_MAX_SOURCE_BYTES = MAX_FILE_EVIDENCE_BYTES;
 const MAX_SOURCE_BYTES = MAX_INVENTORY_FILE_BYTES;
@@ -32,7 +33,6 @@ export async function captureSemanticContext({
   maxContextPaths,
   sourceRecovery,
   delivery,
-  requiredContext,
   legacyRequest = false,
   boundedBatch = false,
   continuationBundle = false,
@@ -46,10 +46,7 @@ export async function captureSemanticContext({
     throw new TypeError("continuationBundle requires bounded continuation capture");
   }
 
-  // An omitted contract keeps the default eager discovery behavior.
-  const captureCallerSource = requiredContext?.includes("callers") ?? true;
-  const captureSiblingSource = requiredContext?.includes("siblings") ?? true;
-  const compactOptionalSource = requiredContext != null && Boolean(delivery);
+  const deliveryScoped = Boolean(delivery);
   const recovery = validateSourceRecovery(sourceRecovery);
   const requiredSourceLimit = recovery?.maxSourceBytes ?? sourceByteLimit;
   const root = await realpath(repositoryRoot);
@@ -61,13 +58,21 @@ export async function captureSemanticContext({
     contextPathLimit,
   });
 
-  const inventory = await inventoryProjectSource(root, {
-    changedPaths: normalizedChangedPaths,
-    contextPaths: normalizedContextPaths,
-    requiredSourceLimit,
-    delivery,
-    compactOptionalSource,
-  });
+  let inventory;
+  if (deliveryScoped) {
+    const deliveryPaths = new Set(delivery.changedPaths);
+    const outsideDelivery = normalizedChangedPaths.find(path => !deliveryPaths.has(path));
+    if (outsideDelivery !== undefined) {
+      throw new Error(`changed source is outside the current delivery: ${outsideDelivery}`);
+    }
+    inventory = await deliveryGuidance(root, normalizedChangedPaths, normalizedContextPaths);
+  } else {
+    inventory = await inventoryProjectSource(root, {
+      changedPaths: normalizedChangedPaths,
+      contextPaths: normalizedContextPaths,
+      requiredSourceLimit,
+    });
+  }
   const { bindingGuidancePaths, deferredGuides } = selectBindingGuidance(inventory, {
     changedPaths: normalizedChangedPaths,
     selectedPaths: normalizedContextPaths,
@@ -100,12 +105,9 @@ export async function captureSemanticContext({
     requestedContext,
     recoveredSelectorPaths,
     callerSourcePaths,
+    deliveryScoped,
   }, budget);
-  const nearbyCandidates = discoverSourceCandidates({
-    changedPaths: normalizedChangedPaths,
-    selectedInventoryPaths: inventory.selectedPaths,
-    availableText: inventory.availableText,
-  });
+
   const { projectGuidance, deferredGuidance, guidanceRequirements, missingGuidancePaths } = await captureProjectGuidance(root, {
     bindingGuidancePaths,
     deferredGuides,
@@ -115,16 +117,18 @@ export async function captureSemanticContext({
     targetedContext,
     requestedContext,
     recovery,
+    deliveryScoped,
   }, budget);
   const externalContext = await captureExternalContext(externalSelectors, externalSnapshot, boundedBatch, budget);
-  const nearbyEvidence = captureNearbyEvidence(nearbyCandidates, inventory, { changedCode, targetedContext }, {
-    captureCallerSource,
-    captureSiblingSource,
-    compactOptionalSource,
-  }, budget);
+  const nearbyEvidence = deliveryScoped
+    ? deliveryEvidence(normalizedChangedPaths, normalizedContextPaths)
+    : captureNearbyEvidence(discoverSourceCandidates({
+      changedPaths: normalizedChangedPaths,
+      selectedInventoryPaths: inventory.selectedPaths,
+      availableText: inventory.availableText,
+    }), inventory, { changedCode, targetedContext }, budget);
 
-  const { siblingInventory, sourceInventory, callerInventory } = inventory;
-  const { callers, siblings, deferredCallerPaths, evidenceTruncated, notes } = nearbyEvidence;
+  const { callers, siblings, siblingInventory, sourceInventory, callerInventory, evidenceTruncated } = nearbyEvidence;
   const context = {
     changedPaths: normalizedChangedPaths,
     ...(recovery ? { sourceRecovery: recovery } : {}),
@@ -142,8 +146,9 @@ export async function captureSemanticContext({
     callerContextPaths: [...callerSourcePaths].sort(),
     callerRetrieval: {
       ...callerInventory,
-      ...(deferredCallerPaths.length ? { deferredPaths: deferredCallerPaths } : {}),
-      recovery: "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
+      recovery: deliveryScoped
+        ? "Do not search outside the delivery for candidates. If the user explicitly authorizes more evidence, use review --context, --caller-context or --external-context with only the named selectors. If an unresolved relationship materially prevents assessment, name the missing prerequisite and report BLOCKED; absence here does not establish global caller completeness."
+        : "Use review --context for material source callers, or --caller-context for real runner configuration/discovery source. Assess runtime applicability from captured source; this does not establish global caller completeness.",
     },
     evidenceBudget: budget.snapshot({
       maxSourceBytes: sourceByteLimit,
@@ -151,7 +156,6 @@ export async function captureSemanticContext({
     }),
     evidenceTruncated,
     notes: [
-      ...notes,
       ...(budget.truncated ? ["Some context evidence was omitted within the bounded evidence-size or file-count limit; request material files or ranges explicitly."] : []),
       ...(!sourceInventory.complete ? ["Source inventory is incomplete; callers or siblings may be omitted."] : []),
     ],
@@ -165,6 +169,28 @@ export async function captureSemanticContext({
   }
   context.fingerprint = contextFingerprint(context, !legacyRequest);
   return { context, fingerprint: context.fingerprint };
+}
+
+function deliveryEvidence(changedPaths, contextPaths) {
+  return {
+    callers: {
+      status: "not-searched",
+      explanation: "Assess any applicable caller relationships from the captured changed source and named context. No repository-wide caller search was performed.",
+    },
+    siblings: {
+      status: "not-searched",
+      explanation: "Assess neighboring source only when captured as changed source or named context. Directories were not enumerated for siblings.",
+    },
+    siblingInventory: [],
+    sourceInventory: {
+      scope: "delivery",
+      complete: true,
+      files: [...new Set([...changedPaths, ...contextPaths])].sort(),
+      note: "Only the named source paths in this request were considered; this is not a repository inventory. Governing guidance is listed separately.",
+    },
+    callerInventory: { scope: "delivery" },
+    evidenceTruncated: { callers: false, siblings: false },
+  };
 }
 
 function selectContextPaths({ changedPaths, contextPaths, callerContextPaths, externalContextPaths, contextPathLimit }) {
@@ -194,7 +220,8 @@ function selectContextPaths({ changedPaths, contextPaths, callerContextPaths, ex
   return { normalizedChangedPaths, normalizedContextPaths, callerSourcePaths, requestedContext, externalSelectors };
 }
 
-async function captureTargetedContext(root, { requestedContext, recoveredSelectorPaths, callerSourcePaths }, budget) {
+async function captureTargetedContext(root, { requestedContext, recoveredSelectorPaths, callerSourcePaths, deliveryScoped }, budget) {
+  const readText = deliveryScoped ? readDeliveryProjectText : readProjectText;
   const targetedContext = [];
   const missingContextPaths = [];
   for (const selector of requestedContext) {
@@ -202,7 +229,7 @@ async function captureTargetedContext(root, { requestedContext, recoveredSelecto
     if (recoveredSelectorPaths.has(path)) continue;
 
     const range = selector.startLine ? selector : undefined;
-    const result = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
+    const result = await readText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
     if (result.missing || result.error) {
       targetedContext.push({ path, state: "unavailable", reason: result.error ?? "path is absent" });
       missingContextPaths.push(path);
@@ -299,6 +326,10 @@ function contextFingerprint(context, includeMaxSourceBytes = true) {
     fingerprint.maxContextPaths = context.evidenceBudget.maxContextPaths;
   }
   if (context.sourceRecovery) fingerprint.sourceRecovery = context.sourceRecovery;
+  if (context.sourceInventory.scope === "delivery" && !context.evidenceBudget.boundedBatch) {
+    fingerprint.guidanceRequirements = context.guidanceRequirements;
+    fingerprint.missingGuidancePaths = context.missingGuidancePaths;
+  }
   if (context.evidenceBudget.boundedBatch) {
     fingerprint.evidenceBudget = context.evidenceBudget;
     fingerprint.guidanceRequirements = context.guidanceRequirements;
