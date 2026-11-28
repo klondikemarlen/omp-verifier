@@ -11,7 +11,7 @@ import { createRequestIntent, openRequestWaiverAuthority } from "#root/omp-plugi
 const REPOSITORY_ROOT = process.cwd();
 const CLI = join(REPOSITORY_ROOT, "bin/omp-verifier.js");
 
-async function fixture(t) {
+async function fixture(t, { optionalExecutionScope, requiredExecutionScope } = {}) {
   const root = await mkdtemp(join(tmpdir(), "verifier-request-selection-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const project = join(root, "project");
@@ -22,8 +22,21 @@ async function fixture(t) {
   await writeFile(join(provider, "package.json"), JSON.stringify({
     name: "publisher",
     omp: { extensions: ["./index.js"], verifications: [
-      { id: "publisher:optional", label: "Optional", description: "Optional source check", pathTriggers: ["**/*.js"], entry: "./optional.mjs" },
-      { id: "publisher:required", label: "Required", description: "Required source check", entry: "./required.mjs" },
+      {
+        id: "publisher:optional",
+        label: "Optional",
+        description: "Optional source check",
+        pathTriggers: ["**/*.js"],
+        entry: "./optional.mjs",
+        executionScope: optionalExecutionScope,
+      },
+      {
+        id: "publisher:required",
+        label: "Required",
+        description: "Required source check",
+        entry: "./required.mjs",
+        executionScope: requiredExecutionScope,
+      },
     ] },
   }));
   for (const name of ["optional", "required"]) {
@@ -64,6 +77,19 @@ async function fixture(t) {
     run,
     intent,
   };
+}
+
+function commitSources(cwd, message, paths = ["source.js"]) {
+  const git = (...args) => execFileSync("git", [
+    "-c", "user.name=Provider scope fixture",
+    "-c", "user.email=provider-scope@example.invalid",
+    "-c", "commit.gpgsign=false",
+    "-c", "core.hooksPath=/dev/null",
+    ...args,
+  ], { cwd, encoding: "utf8" }).trim();
+  git("add", ...paths);
+  git("commit", "--quiet", "-m", message);
+  return git("rev-parse", "HEAD");
 }
 
 test("when a quick request selects changed source, optional checks do not run but project requirements do", async t => {
@@ -138,6 +164,124 @@ test("when a quick request has no requirements, skipping optional checks is an e
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(JSON.parse(result.stdout), []);
   await assert.rejects(readFile(join(f.project, "executed.txt")), { code: "ENOENT" });
+});
+
+test("when PR verification selects opaque executables, neither ordinary nor full execution launches them", async t => {
+  // Arrange
+  const { project, run, intent } = await fixture(t, { requiredExecutionScope: "whole-project" });
+  const base = commitSources(project, "Baseline");
+  await writeFile(join(project, "source.js"), "export const value = 2;\n");
+  commitSources(project, "PR change");
+
+  const requirements = [{ id: "publisher:required", path: "source.js" }];
+  const policyPath = join(project, ".omp-verifier.json");
+  await writeFile(policyPath, JSON.stringify({ requirements }));
+  const request = await intent("Review the delivery.");
+  const scope = ["automatic", "--base", base, "source.js", "--request", request.handle];
+
+  // Act / Assert
+  for (const result of [run(...scope), run(...scope, "--full")]) {
+    assert.equal(result.status, 1, result.stderr);
+    const results = JSON.parse(result.stdout);
+    assert.equal(results.length, 2);
+    const [optional, required] = results;
+    assert.deepEqual([optional.id, optional.status], ["publisher:optional", "SUPPRESSED"]);
+    assert.match(optional.evidence, /executionScope: "changed-files"; .*none/);
+    assert.deepEqual(optional.matches, [{ path: "source.js", trigger: "**/*.js" }]);
+    assert.deepEqual([required.id, required.status], ["publisher:required", "BLOCKED"]);
+    assert.match(required.evidence, /executionScope: "changed-files"; .*"whole-project"/);
+    assert.deepEqual(required.matches, [{ path: "source.js", trigger: "source.js" }]);
+  }
+
+  // A real project suppression takes precedence over the incompatible-scope blocker.
+  await writeFile(policyPath, JSON.stringify({
+    requirements,
+    suppressions: [{
+      ...requirements[0],
+      reason: "The retained project policy exempts this migration.",
+    }],
+  }));
+  const suppressed = run(...scope);
+  assert.equal(suppressed.status, 0, suppressed.stderr);
+  const [, exempt] = JSON.parse(suppressed.stdout);
+  assert.equal(exempt.status, "SUPPRESSED");
+  assert.match(exempt.evidence, /The retained project policy exempts this migration/);
+  await assert.rejects(readFile(join(project, "executed.txt")), { code: "ENOENT" });
+});
+
+test("when a user waives an opaque required PR check, it is waived without execution", async t => {
+  // Arrange
+  const { project, run, intent } = await fixture(t);
+  const base = commitSources(project, "Baseline");
+  await writeFile(join(project, "source.js"), "export const value = 2;\n");
+  commitSources(project, "PR change");
+  await writeFile(join(project, ".omp-verifier.json"), JSON.stringify({
+    requirements: [{ id: "publisher:required", path: "source.js" }],
+  }));
+  const request = await intent("/verifier waive publisher:required", "publisher:required");
+
+  // Act
+  const result = run("automatic", "--base", base, "source.js", "--request", request.handle, "--full");
+
+  // Assert
+  assert.equal(result.status, 0, result.stderr);
+  const [, required] = JSON.parse(result.stdout);
+  assert.deepEqual([required.id, required.status], ["publisher:required", "WAIVED"]);
+  await assert.rejects(readFile(join(project, "executed.txt")), { code: "ENOENT" });
+});
+
+test("when host-bound PR review is given draft paths, only committed delivery files can be reviewed", async t => {
+  // Arrange
+  const { project, provider, run, intent } = await fixture(t, { optionalExecutionScope: "changed-files" });
+  const trackedPath = join(project, "tracked.js");
+  await writeFile(trackedPath, "export const unchanged = true;\n");
+  const base = commitSources(project, "Baseline", ["source.js", "tracked.js"]);
+  await writeFile(join(project, "source.js"), "export const value = 2;\n");
+  const head = commitSources(project, "PR change");
+  await writeFile(trackedPath, "export const unsaved = true;\n");
+  await writeFile(join(project, "untracked.js"), "export const draft = true;\n");
+  await writeFile(join(provider, "optional.mjs"), `
+const { wholeFilePaths } = JSON.parse(process.env.OMP_VERIFIER_PR_SCOPE);
+const changedPaths = JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
+console.log(JSON.stringify({
+  status: "PASS",
+  summary: "Inspected selected source paths.",
+  evidence: JSON.stringify({ changedPaths, wholeFilePaths }),
+}));
+`);
+  const request = await intent("Review the committed delivery.");
+  const delivery = ["automatic", "--base", base];
+  const hostScope = [...delivery, "source.js", "tracked.js", "untracked.js", "--request", request.handle];
+
+  // Act
+  const hostReview = run(...hostScope, "--whole-file", "source.js");
+  const manualAudit = run(...delivery, "tracked.js", "--whole-file", "untracked.js");
+  const draftCleanup = run(...hostScope, "--whole-file", "untracked.js");
+  await writeFile(join(project, "source.js"), "export const value = 3;\n");
+  const dirtyDelivery = run(...hostScope, "--whole-file", "source.js");
+
+  // Assert
+  assert.equal(hostReview.status, 0, hostReview.stderr);
+  const [reviewed] = JSON.parse(hostReview.stdout);
+  assert.equal(reviewed.status, "PASS");
+  assert.equal(reviewed.scope.headCommit, head);
+  assert.deepEqual(JSON.parse(reviewed.evidence), { changedPaths: ["source.js"], wholeFilePaths: ["source.js"] });
+
+  assert.equal(manualAudit.status, 0, manualAudit.stderr);
+  const [audited] = JSON.parse(manualAudit.stdout);
+  assert.deepEqual(JSON.parse(audited.evidence), {
+    changedPaths: ["source.js", "tracked.js", "untracked.js"], wholeFilePaths: ["untracked.js"],
+  });
+
+  assert.equal(draftCleanup.status, 1, draftCleanup.stderr);
+  const [cleanupBlocker] = JSON.parse(draftCleanup.stdout);
+  assert.equal(cleanupBlocker.status, "BLOCKED");
+  assert.match(cleanupBlocker.evidence, /whole-file cleanup must target a changed delivery path with present text: untracked\.js/);
+
+  assert.equal(dirtyDelivery.status, 1, dirtyDelivery.stderr);
+  const [overlayBlocker] = JSON.parse(dirtyDelivery.stdout);
+  assert.equal(overlayBlocker.status, "BLOCKED");
+  assert.match(overlayBlocker.evidence, /working source differs from committed delivery at source\.js/);
 });
 
 for (const mode of ["escalated", "manual", "default", "rearchitecture"]) {

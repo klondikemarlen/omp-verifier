@@ -101,6 +101,7 @@ await writeVerificationPackage(
     label: "Scoped check",
     description: "A check that records automatic paths",
     entry: "./scoped.mjs",
+    executionScope: "changed-files",
     pathTriggers: ["tests/**"],
   }],
   {
@@ -177,6 +178,16 @@ await writeVerificationPackage(
   [{ id: "publisher-traversal:check", label: "Traversal check", description: "Unsafe entry", entry: "./../escape.mjs" }],
 );
 await writeVerificationPackage(
+  "publisher-invalid-scope",
+  [{
+    id: "publisher-invalid-scope:check",
+    label: "Invalid execution scope",
+    description: "An execution scope must be a string.",
+    entry: "./check.mjs",
+    executionScope: ["changed-files"],
+  }],
+);
+await writeVerificationPackage(
   "publisher-missing-entry",
   [{ id: "publisher-missing-entry:check", label: "Missing entry", description: "Missing entry", entry: "./missing.mjs" }],
 );
@@ -243,6 +254,9 @@ assert.equal(discovered.blockedResults.filter(result => result.id === "publisher
 assert.equal(discovered.blockedResults.find(result => result.id === "publisher-traversal:check").status, "BLOCKED");
 assert.equal(discovered.blockedResults.find(result => result.id === "manifest:publisher-malformed").status, "BLOCKED");
 assert.equal(discovered.blockedResults.find(result => result.id === "publisher-symlink:check").status, "BLOCKED");
+const invalidScope = discovered.blockedResults.find(result => result.id === "publisher-invalid-scope:check");
+assert.equal(invalidScope.status, "BLOCKED");
+assert.match(invalidScope.evidence, /executionScope must be a non-empty string/);
 
 const verificationResults = await runVerificationChecks(discovered.checks, verificationCwd, ["publisher-pass:check", "publisher-pass:check", "publisher-missing:check"]);
 assert.deepEqual(verificationResults.map(result => result.id), ["publisher-missing:check", "publisher-pass:check"]);

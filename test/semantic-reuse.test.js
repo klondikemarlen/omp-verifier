@@ -400,6 +400,7 @@ for (const difference of [
       nextDelivery.baseRef = "HEAD~2";
     } else if (difference === "selected paths") {
       nextOptions.changedPaths = ["src/helper.js", "src/caller.js"];
+      nextDelivery.changedPaths = [...new Set([...nextDelivery.changedPaths, "src/caller.js"])];
     } else if (difference === "eligible lines") {
       nextDelivery.lineRanges = {
         "src/helper.js": [[1, 2]],

@@ -223,6 +223,7 @@ test("when a committed rename edits source, only changed destination lines are e
   // Assert
   assert.deepEqual(scope.changedPaths, [newPath, oldPath]);
   assert.deepEqual(scope.deletedPaths, []);
+  assert.deepEqual(scope.renames, [{ from: oldPath, to: newPath }]);
   assert.deepEqual(scope.lineRanges, {
     [newPath]: [[4, 4], [10, 10]],
   });
@@ -253,7 +254,7 @@ test("when a committed file has a dirty noncandidate overlay, capture rejects mi
 
   // Assert
   assert.equal(unowned.status, "rejected");
-  assert.match(unowned.reason.message, /restore committed source or explicitly include the path/);
+  assert.match(unowned.reason.message, /commit or restore it before PR review/);
   assert.equal(authored.status, "fulfilled");
   assert.deepEqual(authored.value.lineRanges, {
     [path]: [[1, 1], [3, 3]],
@@ -344,6 +345,7 @@ test("when cleanup paths are selected, only changed delivery files can be opted 
   const scope = await captureDeliveryScope({
     repositoryRoot,
     baseRef: "delivery-base",
+    candidatePaths: ["tracked.txt", "fresh.txt"],
     wholeFilePaths: ["./tracked.txt", "fresh.txt", "tracked.txt"],
   });
 
@@ -405,6 +407,7 @@ test("when a candidate restores committed source to its base, whole-file cleanup
     captureDeliveryScope({
       repositoryRoot,
       baseRef: "delivery-base",
+      candidatePaths: [path],
       wholeFilePaths: [path],
     }),
   ]);

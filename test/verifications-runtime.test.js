@@ -248,6 +248,7 @@ async function baseScopeFixture(t) {
       label: "Source syntax",
       description: "Checks the syntax of selected existing JavaScript sources",
       entry: "./check.mjs",
+      executionScope: "changed-files",
       pathTriggers: ["**/*.js"],
     }] },
   }));

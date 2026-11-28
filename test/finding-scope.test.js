@@ -406,14 +406,19 @@ test("when a finding is outside eligible lines, checkpoints and final aggregatio
   assert.deepEqual(accepted.findings, [changedFinding]);
 });
 
-test("when unrelated dirty files exist, the CLI selects only delivery paths and labels opaque findings as provider owned", async t => {
+test("when a provider declares scoped execution, it receives only matching delivery paths and owns its findings", async t => {
   // Arrange
   const f = await fixture(t);
   await writeFile(join(f.root, "src/saved.js"), "BROKEN saved work\n");
+  await writeFile(join(f.root, "notes.txt"), "An unmatched delivery path.\n");
+  f.git("add", "notes.txt");
+  f.git("commit", "--quiet", "-m", "Add delivery notes");
+  const headCommit = f.git("rev-parse", "HEAD");
   await writeFile(join(f.provider, "package.json"), JSON.stringify({
     name: "publisher", version: "1.0.0", omp: {
       extensions: ["./index.js"], verifications: [{
         id: ID, label: "Values", description: "Check selected files.", entry: "./check.mjs", pathTriggers: ["src/*.js"],
+        executionScope: "changed-files",
       }],
     },
   }));
@@ -435,5 +440,5 @@ console.log(JSON.stringify({ status: broken.length ? "FAIL" : "PASS", summary: b
   assert.equal(result.evidence, "src/value.js");
   assert.deepEqual(result.scope.changedPaths, ["src/value.js"]);
   assert.equal(result.scope.attribution, "provider-owned");
-  assert.equal(result.scope.headCommit, f.headCommit);
+  assert.equal(result.scope.headCommit, headCommit);
 });

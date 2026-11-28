@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -71,7 +71,7 @@ function assessment(requestId) {
   return { requestId, status: "PASS", summary: "The live value equals one.", rationale: "The current source exports one; the other delivery path is an allowed deletion.", citations: [{ path: "src/live.js", line: 1, quote: SOURCE.trim() }] };
 }
 
-test("when a contract does not request nearby source, exact-base review lists candidates in fewer pages", async t => {
+test("when a delivery base is supplied, unchanged candidates available to no-base review are excluded", async t => {
   // Arrange
   const f = await fixture({
     optionalSourcePadding: `// ${"optional project source ".repeat(4)}\n`.repeat(140),
@@ -95,10 +95,10 @@ test("when a contract does not request nearby source, exact-base review lists ca
 
   // Assert
   assert.deepEqual(missingContext, []);
-  assert.equal(context.callers.status, "not-captured");
-  assert.equal(context.siblings.status, "not-captured");
-  assert.deepEqual(context.callerRetrieval.deferredPaths, ["caller.js"]);
-  assert.deepEqual(context.siblingInventory[0].files, ["src/restored.js"]);
+  assert.equal(context.callers.status, "not-searched");
+  assert.equal(context.siblings.status, "not-searched");
+  assert.deepEqual(context.sourceInventory.files, ["src/live.js", "src/removed.js"]);
+  assert.deepEqual(context.siblingInventory, []);
   assert.deepEqual(withoutBase.reviewRequest.scope.changedPaths, scope.changedPaths);
   assert.ok(withoutBase.reviewRequest.context.callers.some(record => record.path === "caller.js"));
   assert.ok(withoutBase.reviewRequest.context.siblings.some(record => record.path === "src/restored.js"));
@@ -106,7 +106,7 @@ test("when a contract does not request nearby source, exact-base review lists ca
   assert.ok(pageView.totalBytes < eagerView.totalBytes);
 });
 
-test("when a reviewer selects deferred source, its excerpts can support a complete continuation verdict", async t => {
+test("when explicit context is named, continuation admits it without capturing other unchanged source", async t => {
   // Arrange
   const f = await fixture();
   t.after(() => rm(f.root, {
@@ -159,6 +159,8 @@ test("when a reviewer selects deferred source, its excerpts can support a comple
   });
 
   // Assert
+  assert.deepEqual(resumed.reviewRequest.context.sourceInventory.files, ["src/live.js", "src/removed.js"]);
+  assert.deepEqual(batch.context.sourceInventory.files, ["caller.js", "src/live.js", "src/removed.js", "src/restored.js"]);
   assert.equal(resumed.reviewRequest.requestId, requestId);
   assert.notEqual(batch.requestId, requestId);
   assert.deepEqual(batch.scope.changedPaths, scope.changedPaths);
@@ -172,7 +174,7 @@ test("when a reviewer selects deferred source, its excerpts can support a comple
 });
 
 for (const requiredCategory of ["callers", "siblings"]) {
-  test(`when the contract requires ${requiredCategory}, review captures that source and defers the other category`, async t => {
+  test(`when a contract requires ${requiredCategory}, the requirement does not trigger out-of-diff discovery`, async t => {
     // Arrange
     const f = await fixture({
       requiredContext: ["changed-code", requiredCategory],
@@ -188,25 +190,22 @@ for (const requiredCategory of ["callers", "siblings"]) {
     // Assert
     assert.equal(automatic.status, "PENDING", automatic.evidence);
     assert.deepEqual(automatic.reviewRequest.missingContext, []);
-    const { callers, siblings, projectGuidance } = automatic.reviewRequest.context;
+    const { context: { callers, siblings, projectGuidance }, standard, path, requestId } = automatic.reviewRequest;
     assert.ok(projectGuidance.some(record => record.path === "AGENTS.md"));
-    if (requiredCategory === "callers") {
-      assert.deepEqual(callers.map(record => record.path), ["caller.js"]);
-      assert.equal(siblings.status, "not-captured");
-    } else {
-      assert.deepEqual(siblings.map(record => record.path), ["src/restored.js"]);
-      assert.equal(callers.status, "not-captured");
-    }
+    assert.ok(standard.requiredContext.includes(requiredCategory));
+    assert.equal(callers.status, "not-searched");
+    assert.equal(siblings.status, "not-searched");
+    const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: assessment(requestId) });
+    assert.equal(accepted.status, "PASS", accepted.evidence);
   });
 }
 
-test("when an exact-base caller has multiple matches, review shows the first original match and requires explicit recovery of other lines", async t => {
+test("when a caller is unchanged, base-backed review requires explicit selection before it can be cited", async t => {
   // Arrange
-  const firstMatch = "// The removed endpoint stays retired.";
   const unchangedLine = "export const stable = true;";
   const f = await fixture({
     requiredContext: ["changed-code", "callers"],
-    callerSource: ["// Local notes.", firstMatch, CALLER_SOURCE, UNRELATED_CALLER_LINE].join("\n"),
+    callerSource: ["// Local notes.", "// The removed endpoint stays retired.", CALLER_SOURCE, UNRELATED_CALLER_LINE].join("\n"),
     unchangedLiveSource: `${unchangedLine}\n`,
   });
   t.after(() => rm(f.root, { recursive: true, force: true }));
@@ -234,11 +233,13 @@ test("when an exact-base caller has multiple matches, review shows the first ori
     assessment: { ...draft, requestId: reviewed.requestId },
   });
 
+  await writeFile(join(f.cwd, "caller.js"), `\n\n\n${CALLER_SOURCE}\n`);
+  const renewed = await readSemanticEvaluation({ cwd: f.cwd, requestPath: reviewed.path, resume: true });
+
   // Assert
   assert.deepEqual(missingContext, []);
-  assert.deepEqual(context.callers.map(({ path, startLine, content }) => [path, startLine, content]), [
-    ["caller.js", 2, firstMatch],
-  ]);
+  assert.equal(context.callers.status, "not-searched");
+  assert.ok(!context.sourceInventory.files.includes("caller.js"));
   assert.deepEqual(scope.changedPaths, ["src/live.js", "src/removed.js"]);
   assert.deepEqual(context.changedCode.map(({ path, state, content }) => [path, state, content]), [
     ["src/live.js", "present", `${SOURCE}${unchangedLine}\n`],
@@ -251,9 +252,13 @@ test("when an exact-base caller has multiple matches, review shows the first ori
   assert.deepEqual(reviewed.scope.automatic.delivery, scope.automatic.delivery);
   assert.deepEqual(reviewed.context.changedCode, context.changedCode);
   assert.equal(accepted.status, "PASS", accepted.evidence);
+
+  assert.equal(renewed.status, "PENDING", renewed.evidence);
+  assert.notEqual(renewed.reviewRequest.requestId, reviewed.requestId);
+  assert.equal(renewed.reviewRequest.context.targetedContext[0].content, CALLER_SOURCE);
 });
 
-test("when an exact-base contract requires siblings, review captures a representative without backfilling other sibling bodies", async t => {
+test("when a sibling caller changed, it is citable but unchanged neighbors are excluded", async t => {
   // Arrange
   const neighborMatch = 'import { live } from "./live.js";';
   const f = await fixture({
@@ -264,32 +269,31 @@ test("when an exact-base contract requires siblings, review captures a represent
     },
   });
   t.after(() => rm(f.root, { recursive: true, force: true }));
+  await writeFile(join(f.cwd, "src/zone.js"), `// Changed zone configuration.\n${neighborMatch}\n${UNRELATED_CALLER_LINE}\n`);
+  f.git("add", "src/zone.js");
+  f.git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "-qm", "change one caller");
 
   // Act
   const automatic = await f.prepare();
   assert.equal(automatic.status, "PENDING", automatic.evidence);
   const { context, missingContext, path, requestId } = automatic.reviewRequest;
   const draft = assessment(requestId);
-  draft.citations.push(
-    { path: "src/restored.js", line: 1, quote: SIBLING_SOURCE },
-    { path: "src/zone.js", line: 2, quote: neighborMatch },
-  );
+  draft.citations.push({ path: "src/restored.js", line: 1, quote: SIBLING_SOURCE });
+  const rejected = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
+  draft.citations.pop();
+  draft.citations.push({ path: "src/zone.js", line: 2, quote: neighborMatch });
   const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
 
   // Assert
   assert.deepEqual(missingContext, []);
-  assert.deepEqual(context.siblingInventory[0].files, ["src/restored.js", "src/worker.js", "src/zone.js"]);
-  assert.deepEqual(context.siblings.map(({ path, content }) => [path, content]), [
-    ["src/restored.js", `${SIBLING_SOURCE}\n`],
-  ]);
-  assert.deepEqual(context.callers.filter(record => record.path.startsWith("src/"))
-    .map(({ path, startLine, content }) => [path, startLine, content]), [
-    ["src/zone.js", 2, neighborMatch],
-  ]);
+  assert.deepEqual(context.sourceInventory.files, ["src/live.js", "src/removed.js", "src/zone.js"]);
+  assert.deepEqual(context.siblingInventory, []);
+  assert.equal(rejected.status, "BLOCKED", rejected.evidence);
+  assert.match(rejected.evidence, /src\/restored\.js:1 is not in the captured evidence/);
   assert.equal(accepted.status, "PASS", accepted.evidence);
 });
 
-test("when the first exact-base caller match is oversized, review leaves it for explicit recovery", async t => {
+test("when a named caller has a long line, the explicit selection recovers it without a preliminary search", async t => {
   // Arrange
   const oversizedMatch = `// live ${"é".repeat(350)}`;
   const f = await fixture({
@@ -314,9 +318,9 @@ test("when the first exact-base caller match is oversized, review leaves it for 
   const accepted = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: reviewed.path, assessment: draft });
 
   // Assert
-  assert.equal(context.callers.status, "not-captured");
-  assert.ok(context.sourceInventory.files.some(record => record.path === "caller.js"));
-  assert.ok(missingContext.length > 0);
+  assert.equal(context.callers.status, "not-searched");
+  assert.ok(!context.sourceInventory.files.includes("caller.js"));
+  assert.deepEqual(missingContext, []);
   assert.deepEqual(reviewed.missingContext, []);
   assert.equal(accepted.status, "PASS", accepted.evidence);
 });
@@ -374,8 +378,6 @@ for (const mutation of [
   "restored source",
   "temporary cleanup",
   "provider update",
-  "inventory change",
-  "deferred caller source change",
   "changed source",
   "guidance change",
 ]) {
@@ -389,10 +391,6 @@ for (const mutation of [
       if (mutation === "restored source") f.git("checkout", "HEAD", "--", "src/restored.js");
       if (mutation === "temporary cleanup") await rm(join(f.cwd, "src/temporary.js"));
       if (mutation === "provider update") await writeFile(join(f.provider, "package.json"), JSON.stringify({ ...f.manifest, version: "2.0.0" }));
-      if (mutation === "inventory change") await writeFile(join(f.cwd, "src/diagnostic.js"), "export const extra = 1;\n");
-      if (mutation === "deferred caller source change") {
-        await writeFile(join(f.cwd, "caller.js"), `${CALLER_SOURCE}\nconsole.log(live);\n`);
-      }
       if (mutation === "changed source") await writeFile(join(f.cwd, "src/live.js"), "export const live = -1;\n");
       if (mutation === "guidance change") await writeFile(join(f.cwd, "AGENTS.md"), "Live exports must now equal two.\n");
       // Act
@@ -408,15 +406,154 @@ for (const mutation of [
       if (mutation === "provider update") assert.equal(result.reviewRequest.standard.sourceDetails.version, "2.0.0");
       if (mutation === "changed source") assert.equal(result.reviewRequest.context.changedCode.find(record => record.path === "src/live.js").content, "export const live = -1;\n");
       if (mutation === "guidance change") assert.equal(result.reviewRequest.context.projectGuidance.find(record => record.path === "AGENTS.md").content, "Live exports must now equal two.\n");
-      if (mutation === "inventory change") assert.ok(result.reviewRequest.context.sourceInventory.files.some(record => record.path === "src/diagnostic.js"));
-      if (mutation === "deferred caller source change") {
-        assert.deepEqual(result.reviewRequest.scope.automatic.delivery, original.reviewRequest.scope.automatic.delivery);
-        assert.equal(result.reviewRequest.context.callers.status, "not-captured");
-        assert.notEqual(result.reviewRequest.context.fingerprint, original.reviewRequest.context.fingerprint);
-      }
     } finally { await rm(f.root, { recursive: true, force: true }); }
   });
 }
+
+test("when unselected source changes, base-backed review and continuation retain their evidence", async t => {
+  // Arrange
+  const f = await fixture({ requiredContext: ["changed-code", "callers", "siblings"] });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  const original = await f.prepare();
+  const { path, requestId } = original.reviewRequest;
+
+  // Act
+  await writeFile(join(f.cwd, "caller.js"), `${CALLER_SOURCE}\nconsole.log(live);\n`);
+  await writeFile(join(f.cwd, "src/diagnostic.js"), CALLER_SOURCE);
+  const resumed = await readSemanticEvaluation({ cwd: f.cwd, requestPath: path, resume: true });
+
+  const continued = await readSemanticEvaluation({ cwd: f.cwd, requestPath: path, continuation: true });
+  const batch = continued.reviewRequest;
+  await writeFile(join(f.cwd, "src/restored.js"), "export const restored = false;\n");
+  const checkpoint = await completeSemanticEvaluation({
+    cwd: f.cwd,
+    requestPath: batch.path,
+    assessment: { ...assessment(batch.requestId), batchIndex: 0, crossBatchNotes: "No material cross-batch relationships." },
+  });
+
+  // Assert
+  assert.equal(resumed.reviewRequest.requestId, requestId);
+  assert.equal(resumed.reviewRequest.context.fingerprint, original.reviewRequest.context.fingerprint);
+  assert.deepEqual(batch.context.sourceInventory.files, ["src/live.js", "src/removed.js"]);
+  assert.equal(checkpoint.reviewRequest.requestId, batch.requestId);
+  assert.equal(checkpoint.reviewRequest.continuation.phase, "aggregate");
+});
+
+test("when a changed file is a symlink, review does not admit its unchanged target as changed source", async t => {
+  // Arrange
+  const f = await fixture();
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  await symlink("restored.js", join(f.cwd, "src/linked.js"));
+  f.git("add", "src/linked.js");
+  f.git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "-qm", "add link");
+
+  // Act
+  const prepared = await f.prepare();
+
+  // Assert
+  assert.equal(prepared.status, "PENDING", prepared.evidence);
+  const { context, missingContext } = prepared.reviewRequest;
+  assert.ok(missingContext.some(reason => reason.includes("src/linked.js")));
+  const linked = context.changedCode.find(record => record.path === "src/linked.js");
+  assert.equal(linked.state, "unavailable");
+  assert.match(linked.reason, /cannot follow a symbolic file/);
+  assert.ok(!JSON.stringify(context).includes(SIBLING_SOURCE));
+});
+
+test("when a committed rename removes the old directory, review preserves the old source from the merge base", async t => {
+  // Arrange
+  const f = await fixture();
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  f.manifest.omp.verifications[0].pathTriggers = ["**/*.js"];
+  await writeFile(join(f.provider, "package.json"), JSON.stringify(f.manifest));
+  f.git("mv", "src", "moved");
+  f.git("-c", "user.name=QA", "-c", "user.email=qa@example.invalid", "commit", "-qm", "move source");
+
+  // Act
+  const prepared = await f.prepare();
+
+  // Assert
+  assert.equal(prepared.status, "PENDING", prepared.evidence);
+  const { context, missingContext, scope } = prepared.reviewRequest;
+  const byPath = new Map(context.changedCode.map(record => [record.path, record]));
+  assert.deepEqual(missingContext, []);
+  assert.equal(byPath.get("src/restored.js").content, `${SIBLING_SOURCE}\n`);
+  assert.equal(byPath.get("src/restored.js").reference, `${scope.automatic.delivery.mergeBaseCommit}:src/restored.js`);
+  assert.equal(byPath.get("src/restored.js").state, "deleted");
+  assert.equal(byPath.get("moved/restored.js").state, "present");
+  assert.equal(byPath.get("src/removed.js").state, "deleted");
+  assert.ok(!context.sourceInventory.files.includes("caller.js"));
+  assert.deepEqual(context.siblingInventory, []);
+});
+
+test("when a reference guide is declared, review captures binding ancestor instructions and defers the reference body", async t => {
+  // Arrange
+  const ancestorGuidance = "Keep the live export at one.";
+  const guideSource = "# Reference examples\nExample: export one from live.js.\n";
+  const f = await fixture({
+    extraSourceFiles: {
+      ".omp-verifier.json": JSON.stringify({ review: { referenceGuides: ["README.md"] } }),
+      "README.md": guideSource,
+      "src/AGENTS.md": `${ancestorGuidance}\n`,
+    },
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  const prepared = await f.prepare();
+  const { context, path, requestId } = prepared.reviewRequest;
+  const draft = assessment(requestId);
+  draft.citations.push({ path: "src/AGENTS.md", line: 1, quote: ancestorGuidance });
+  draft.citations.push({ path: "README.md", line: 2, quote: "Example: export one from live.js." });
+
+  // Act
+  await writeFile(join(f.cwd, "README.md"), `${guideSource}\n# New reference material\n`);
+  const resumed = await readSemanticEvaluation({ cwd: f.cwd, requestPath: path, resume: true });
+  const rejected = await completeSemanticEvaluation({ cwd: f.cwd, requestPath: path, assessment: draft });
+  const recovered = await readSemanticEvaluation({ cwd: f.cwd, requestPath: path, contextPaths: ["README.md#L2"] });
+  const accepted = await completeSemanticEvaluation({
+    cwd: f.cwd,
+    requestPath: recovered.reviewRequest.path,
+    assessment: { ...draft, requestId: recovered.reviewRequest.requestId },
+  });
+
+  // Assert
+  assert.equal(resumed.reviewRequest.requestId, requestId);
+  assert.deepEqual(context.deferredGuidance.guides, [{ path: "README.md" }]);
+  assert.ok(context.projectGuidance.some(record => record.path === "src/AGENTS.md" && record.content === `${ancestorGuidance}\n`));
+  assert.ok(!context.sourceInventory.files.includes("src/AGENTS.md"));
+  assert.equal(rejected.status, "BLOCKED", rejected.evidence);
+  assert.match(rejected.evidence, /README\.md:2 is not in the captured evidence/);
+  assert.equal(accepted.status, "PASS", accepted.evidence);
+});
+
+test("when a required semantic provider is replaced by an unscoped executable, resume reports the blocker without executing it", async t => {
+  // Arrange
+  const f = await fixture({
+    extraSourceFiles: {
+      ".omp-verifier.json": JSON.stringify({ requirements: [{ id: ID, path: "src/*.js" }] }),
+    },
+  });
+  t.after(() => rm(f.root, { recursive: true, force: true }));
+  const prepared = await f.prepare();
+  const marker = join(f.root, "provider-ran");
+  f.manifest.omp.verifications[0] = {
+    id: ID,
+    label: "Executable replacement",
+    description: "A provider that has not declared changed-file support.",
+    pathTriggers: ["src/*.js"],
+    entry: "./verify.mjs",
+  };
+  await writeFile(join(f.provider, "package.json"), JSON.stringify(f.manifest));
+  await writeFile(join(f.provider, "verify.mjs"), `import { writeFile } from "node:fs/promises";\nawait writeFile(${JSON.stringify(marker)}, "ran");\n`);
+
+  // Act
+  const result = await readSemanticEvaluation({ cwd: f.cwd, requestPath: prepared.reviewRequest.path, resume: true });
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /Required verification provider does not support changed-file execution/);
+  assert.equal(result.reviewRequest, undefined);
+  await assert.rejects(readFile(marker), { code: "ENOENT" });
+});
 
 test("when completed automatic evidence changes, exact recovery cannot reuse its prior PASS", async () => {
   // Arrange
