@@ -135,7 +135,7 @@ Verifier includes `verifier:project-lint`, a bounded catalog for JavaScript/Type
 
 For lint-only notes, enable OMP’s `extensionRenderers.transcriptPresenters` setting (off by default in OMP 19.2.1) to use Ctrl+O. It switches between the compact lint verdict and the original card with its retained evidence, without rerunning lint or recovering discarded output. Combined findings notes do not depend on transcript presenters.
 
-In an open PR or MR, ordinary verification checks the tip commit’s hunks against its first parent. It does not recheck earlier-only files on each correction. Before merge, `--final-review` checks the accumulated diff against the PR merge base. Stacked PRs use their actual target branch. Both modes retain the published base and head; a commit verdict is not a final-review verdict.
+For an open PR or MR, use the actual target branch as the base. See [review scope and proof reuse](docs/references/verifier-concepts-reference.md#request-intent-and-proof-reuse) for the comparison used by the coordinator. A check on a local working tree is not approval of the published head.
 
 Required PR verification belongs **before merge**. Immediately before starting or resuming automatic review, the advisor checks the hosting service for an open PR or MR with the expected base and head. If it has merged or closed, the advisor skips the old request; that is not a PASS. You can explicitly request a retrospective check on the pinned revisions. Post-merge CI is independent.
 
@@ -157,7 +157,6 @@ The `bash`-only advisor can discover and run named checks using the packaged CLI
 omp-verifier checks
 omp-verifier verify <check-id...> [--max-source-bytes <bytes>]
 omp-verifier automatic [--progress] [--base <actual-PR-base>] [<changed-path>...] [--whole-file <cleanup-path>...] [--max-source-bytes <bytes>]
-omp-verifier automatic --request <current-handle> --final-review --base <actual-PR-base>
 omp-verifier lint --budget-ms <milliseconds> <changed-path>... [--reporter json|text] [--failures-only]
 omp-verifier review <request-file> [--continue|--batch <index>] [--max-context-paths <30-256>] [--context <path[#Lstart-Lend]>...] [--caller-context <path[#Lstart-Lend]>...] [--external-context <pinned-source-URL[#Lstart-Lend]>...] [--remove-context <retained-selector>...] [--reporter json|text] [--page <index>]
 omp-verifier evaluate <request-file> --assessment <JSON|->
@@ -189,7 +188,7 @@ If the reviewer is nearing its context limit after an accepted checkpoint, use `
 
 For an explicitly authorized one-off larger changed-source capture, start `automatic` or `verify` with `--max-source-bytes`; see the [capture-limit contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for supported bounds and request-local behavior.
 
-Project lint tools that require complete files are not run in a hunk review. Increasing a budget or passing `--full` does not change that. Run documented release checks separately, or request a manual lint audit with its own scope.
+A longer timeout is not permission to check more source. Keep the same scope when retrying a verification; run independently required release checks through the project’s documented commands.
 
 For a PR targeting `origin/main`, the advisor runs, for example:
 
@@ -223,7 +222,6 @@ An installed OMP plugin can opt in through `package.json`:
       "label": "Human label",
       "description": "What the check proves",
       "entry": "./verifications/check-id.mjs",
-      "executionScope": "changed-lines",
       "pathTriggers": ["tests/**", "**/*.test.js"],
       "timeoutMs": 30000
     }]
@@ -233,7 +231,7 @@ An installed OMP plugin can opt in through `package.json`:
 
 Without `mode`, an entry is a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. Valid `FAIL` and `BLOCKED` results may exit nonzero when stderr is empty; the verifier preserves their summary, evidence, and next check. A `PASS` paired with a nonzero exit is `BLOCKED`, not successful verification. Automatic executable entries receive `OMP_VERIFIER_CHANGED_PATHS` as a JSON array of their matching project-relative paths; manual `/verifier verify` removes it. The package must expose an `omp.extensions` or `pi.extensions` entry; executable checks run without a shell in the active project directory. `pathTriggers` is an optional non-empty array of project-relative glob patterns. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and other non-zero exits fail closed as `BLOCKED`; model-supplied executable paths are never accepted.
 
-For commit and final PR review, an executable must declare `"executionScope": "changed-lines"`. It promises to check only the ranges delivered in `OMP_VERIFIER_PR_SCOPE` (also when invoking subprocesses), not to check entire files and filter diagnostics afterward. `lineRanges` are head-side lines; `removedLineRanges` are comparison-side lines. Both use inclusive, one-based coordinates. Use `comparisonCommit`, `headCommit` and `renames` to locate the two sources. A file-only or undeclared executable is suppressed if optional and blocked if required. Neither is a pass. These are contracts for trusted providers, not an operating-system sandbox. A direct manual file-scoped audit still accepts `"changed-files"`.
+Before enabling automatic PR execution, read the [manifest contract](docs/references/verifier-concepts-reference.md#manifest-contract). A filename trigger selects a check; it does not prove the provider limits its execution or findings to the selected changes.
 
 A deterministic entry may instead return `N/A` with a non-empty summary and exit `0` when it has no applicable work. The coordinator removes that non-verdict from manual and automatic result arrays; it is not `PASS`. A nonzero exit cannot hide behind `N/A`. Semantic assessments still require `PASS`, `FAIL`, or `BLOCKED`.
 
