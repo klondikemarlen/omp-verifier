@@ -1,7 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { validateFindings, verificationScope } from "#root/omp-plugin/finding-scope.js";
-import { validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
+import { validateSemanticCitations } from "#root/omp-plugin/semantic-citations.js";
 import { continuationAssessmentPayload, validateContinuationAssessment } from "#root/omp-plugin/semantic-continuation-review.js";
 
 const VERDICTS = new Set(["PASS", "FAIL", "BLOCKED"]);

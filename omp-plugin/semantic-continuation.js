@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { captureSemanticContext, semanticContextMissing } from "#root/omp-plugin/semantic-context.js";
+
+import { captureSemanticContext } from "#root/omp-plugin/semantic-context.js";
+import { semanticContextMissing } from "#root/omp-plugin/semantic-context-missing.js";
 
 const LIMITS = Object.freeze({ maxBatchBytes: 256_000, maxBatchFiles: 256, maxBatches: 32 });
 const SOURCE_GROUPS = ["changedCode", "projectGuidance", "targetedContext", "externalContext", "callers", "siblings"];
