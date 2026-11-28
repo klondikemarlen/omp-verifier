@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.39.1 - 2026-11-28
+
+- This repository now requires the installed module-boundary check for edits to `omp-plugin/semantic-*.js`. Missing standards are reported as `BLOCKED`; nothing changes in consumer repositories.
+- Separated evidence discovery, capture, and assessment validation. Existing requests keep the same evidence and freshness checks.
+
 ## 1.39.0 - 2026-11-27
 
 - Automatic PR reviews show where a possible caller mentions a changed filename instead of sending the entire file. Reviewers can retrieve the surrounding code and additional siblings when those relationships matter.

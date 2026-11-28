@@ -12,10 +12,10 @@ import { deliveryFindingEligibility, deliveryFindingMode } from "#root/omp-plugi
 import { finalAssessmentResult, isSemanticVerdict, normalizeSemanticAssessment, validSemanticText } from "#root/omp-plugin/semantic-assessment.js";
 import {
   captureSemanticContext,
-  semanticContextMissing,
   validateContextPathLimit,
   validateSourceByteLimit,
 } from "#root/omp-plugin/semantic-context.js";
+import { semanticContextMissing } from "#root/omp-plugin/semantic-context-missing.js";
 import { captureSemanticContinuation, validateSemanticContinuation } from "#root/omp-plugin/semantic-continuation.js";
 import { continuationBatch, continuationReviewPayload } from "#root/omp-plugin/semantic-continuation-review.js";
 import { buildSemanticReviewPage, paginateSemanticReview } from "#root/omp-plugin/semantic-review-pages.js";

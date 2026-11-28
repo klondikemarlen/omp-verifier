@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { captureSemanticContext, semanticContextMissing, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
+import { validateSemanticCitations } from "#root/omp-plugin/semantic-citations.js";
+import { semanticContextMissing } from "#root/omp-plugin/semantic-context-missing.js";
+
+import { captureSemanticContext } from "#root/omp-plugin/semantic-context.js";
 
 const sourceRecovery = { chunkBytes: 16_000, maxSourceBytes: 256_000, modelContext: "unavailable" };
 const hash = content => createHash("sha256").update(content).digest("hex");
