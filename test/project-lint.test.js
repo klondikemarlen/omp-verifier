@@ -1,46 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { access, chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { discoverProjectLinters } from "#root/omp-plugin/project-lint-discovery.js";
+import { verifyProjectLint } from "#root/omp-plugin/project-lint.js";
 import { runAutomaticVerification, runInstalledVerificationChecks } from "#root/omp-plugin/verifications.js";
-import { discoverProjectLinters, verifyProjectLint } from "#root/omp-plugin/project-lint.js";
-
-async function projectFixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "omp-verifier-project-lint-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  execFileSync("git", ["init", "--quiet", root]);
-  execFileSync("git", ["-C", root, "config", "user.email", "lint-test@example.invalid"]);
-  execFileSync("git", ["-C", root, "config", "user.name", "Project lint test"]);
-  await writeFile(join(root, "README.md"), "fixture\n");
-  execFileSync("git", ["-C", root, "add", "."]);
-  execFileSync("git", ["-C", root, "commit", "--quiet", "-m", "fixture"]);
-  return root;
-}
-
-async function writeProjectFile(root, path, content) {
-  const file = join(root, path);
-  await mkdir(join(file, ".."), { recursive: true });
-  await writeFile(file, content);
-}
-
-async function bindLint(root, language, command, options = {}) {
-  const manifestPath = join(root, ".omp-verifier.json");
-  let manifest = {};
-  try {
-    manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  const tool = { javascript: "eslint", ruby: "rubocop", go: "golangci-lint", python: "ruff", shell: "shellcheck" }[language];
-  manifest.lint = { ...manifest.lint, commands: { ...manifest.lint?.commands, [language]: { tool, command, ...options } } };
-  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
-}
-
-const projectLintAdapter = pathToFileURL(fileURLToPath(new URL("../omp-plugin/project-lint-check.mjs", import.meta.url))).href;
+import { bindLint, installProjectEslint, makeTool, projectFixture, projectLintAdapter, writeProjectFile } from "#root/test/project-lint-fixture.js";
 
 async function verificationPackage(t, source) {
   const packageDirectory = await mkdtemp(join(tmpdir(), "omp-verifier-project-lint-checks-"));
@@ -66,12 +35,6 @@ async function verificationPackage(t, source) {
 
 function projectLintCheckSource() {
   return `await import(${JSON.stringify(projectLintAdapter)});\n`;
-}
-
-async function installProjectEslint(root) {
-  const bin = join(root, "node_modules", ".bin");
-  await mkdir(bin, { recursive: true });
-  await symlink(join(fileURLToPath(new URL("..", import.meta.url)), "node_modules", ".bin", "eslint"), join(bin, "eslint"));
 }
 
 test("when lint has no applicable project paths, automatic and manual consumers omit N/A", async t => {
@@ -127,15 +90,6 @@ test("when a lint check returns N/A but exits unsuccessfully, consumers preserve
   assert.equal(manual[0].status, "BLOCKED");
   assert.match(manual[0].summary, /exited with code 1/i);
 });
-
-async function makeTool(root, name, { exitCode = 0, marker = "", stdout = "", stderr = "" } = {}) {
-  const bin = join(root, "tools");
-  await mkdir(bin, { recursive: true });
-  const tool = join(bin, name);
-  await writeFile(tool, `#!/bin/sh\nprintf '%b' ${JSON.stringify(marker)} >> ${JSON.stringify(join(root, "invocations.log"))}\nprintf '%b' ${JSON.stringify(stdout)}\nprintf '%b' ${JSON.stringify(stderr)} >&2\nexit ${exitCode}\n`);
-  await chmod(tool, 0o755);
-  return tool;
-}
 
 test("when changed untracked JavaScript has no supported lint configuration, verification returns BLOCKED", async t => {
   // Arrange

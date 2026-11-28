@@ -213,6 +213,10 @@ async function manifestCheck(packageName, packagePath, manifestPath, packageVers
 
   if (entry.mode === "agentic") {
     if (entry.entry !== undefined) throw new Error("agentic checks must not declare a deterministic entry");
+    if (entry.executionScope !== undefined) {
+      throw new Error("agentic checks must not declare executionScope");
+    }
+
     const contract = await loadSemanticContract({
       checkId: id,
       packageName,
@@ -224,6 +228,11 @@ async function manifestCheck(packageName, packagePath, manifestPath, packageVers
   }
 
   if (entry.mode !== undefined) throw new Error(`unsupported verification mode: ${String(entry.mode)}`);
+
+  let executionScope;
+  if (entry.executionScope !== undefined) {
+    executionScope = validString(entry.executionScope, "executionScope");
+  }
 
   const moduleEntry = validString(entry.entry, "entry");
   if (
@@ -252,7 +261,7 @@ async function manifestCheck(packageName, packagePath, manifestPath, packageVers
     throw new Error(`timeoutMs must be an integer between 1 and ${MAX_TIMEOUT_MS}`);
   }
 
-  return { id, label, description, entryPath, packageName, packagePath, manifestPath, pathTriggers, timeoutMs };
+  return { id, label, description, entryPath, packageName, packagePath, manifestPath, pathTriggers, timeoutMs, executionScope };
 }
 
 export async function discoverVerificationChecks({ packageDirectory = defaultPackageDirectory() } = {}) {
@@ -333,7 +342,13 @@ export async function discoverVerificationChecks({ packageDirectory = defaultPac
   return { checks, blockedResults };
 }
 
-export async function discoverAutomaticVerification({ repositoryRoot, changedPaths, packageDirectory = defaultPackageDirectory(), workLevel = "normal" }) {
+export async function discoverAutomaticVerification({
+  repositoryRoot,
+  changedPaths,
+  packageDirectory = defaultPackageDirectory(),
+  workLevel = "normal",
+  isDelivery = false,
+}) {
   packageDirectory = resolve(packageDirectory);
   let paths;
   try {
@@ -357,6 +372,7 @@ export async function discoverAutomaticVerification({ repositoryRoot, changedPat
     suppressions,
     blockedResults,
     workLevel,
+    isDelivery,
   });
   return {
     results: [...blockedResults, ...policyBlocks, ...plan.results],

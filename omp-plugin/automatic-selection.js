@@ -44,6 +44,51 @@ function suppressedResult(id, match, suppression) {
   };
 }
 
+function unscopedProviderResult(check, matches, required) {
+  const declaredScope = check.executionScope === undefined ? "none" : JSON.stringify(check.executionScope);
+  return {
+    id: check.id,
+    status: required ? "BLOCKED" : "SUPPRESSED",
+    summary: required
+      ? "Required verification provider does not support changed-file execution"
+      : "Automatic verification skipped: provider does not support changed-file execution",
+    evidence: `Delivery execution requires executionScope: "changed-files"; the provider declares ${declaredScope}.`,
+    matches,
+  };
+}
+
+function selectCheckMatches({ check, matches }, { repositoryRoot, suppressions, requiredPathKeys, isDelivery }) {
+  const lacksDeliveryScope = isDelivery && check.mode !== "agentic" && check.executionScope !== "changed-files";
+  const runnableMatches = [];
+  const skippedResults = [];
+  const optionalUnscopedMatches = [];
+  const requiredUnscopedMatches = [];
+
+  for (const match of matches) {
+    const suppression = suppressionFor(check.id, repositoryRoot, match.path, suppressions);
+    if (suppression) {
+      skippedResults.push(suppressedResult(check.id, match, suppression));
+    } else if (!lacksDeliveryScope) {
+      runnableMatches.push(match);
+    } else if (requiredPathKeys.has(`${check.id}\\0${match.path}`)) {
+      requiredUnscopedMatches.push(match);
+    } else {
+      optionalUnscopedMatches.push(match);
+    }
+  }
+
+  if (optionalUnscopedMatches.length) {
+    skippedResults.push(unscopedProviderResult(check, optionalUnscopedMatches, false));
+  }
+
+  if (requiredUnscopedMatches.length) {
+    skippedResults.push(unscopedProviderResult(check, requiredUnscopedMatches, true));
+  }
+
+  // Keep these results beside their check so execution preserves reporting order and waivers.
+  return { check, matches: runnableMatches, skippedResults };
+}
+
 // Inputs are already validated by manifest/project discovery and path normalization.
 // Planning never runs a provider or prepares a semantic request.
 export function planAutomaticVerification({
@@ -54,6 +99,7 @@ export function planAutomaticVerification({
   suppressions,
   blockedResults,
   workLevel = "normal",
+  isDelivery = false,
 }) {
   const checksById = new Map(checks.map(check => [check.id, check]));
   const declaredRequirementIds = new Set(requirements.map(requirement => requirement.id));
@@ -68,7 +114,7 @@ export function planAutomaticVerification({
     }));
   const selectedById = new Map();
   const missingProviders = new Map();
-  const seenRequirementPaths = new Set();
+  const requiredPathKeys = new Set();
   const addSelection = (check, match) => {
     const selected = selectedById.get(check.id) || { check, matches: [] };
     if (!selected.matches.some(existing => existing.path === match.path)) selected.matches.push(match);
@@ -87,8 +133,8 @@ export function planAutomaticVerification({
     for (const path of changedPaths) {
       if (!matchesProjectRule(requirement, repositoryRoot, path)) continue;
       const dedupeKey = `${requirement.id}\\0${path}`;
-      if (seenRequirementPaths.has(dedupeKey)) continue;
-      seenRequirementPaths.add(dedupeKey);
+      if (requiredPathKeys.has(dedupeKey)) continue;
+      requiredPathKeys.add(dedupeKey);
       const match = { path, trigger: requirement.path };
       const check = checksById.get(requirement.id);
       if (check) {
@@ -119,20 +165,8 @@ export function planAutomaticVerification({
     });
   }
 
-  const selections = [];
-  for (const { check, matches } of selectedById.values()) {
-    const runnableMatches = [];
-    const suppressedResults = [];
-    for (const match of matches) {
-      const suppression = suppressionFor(check.id, repositoryRoot, match.path, suppressions);
-      if (suppression) {
-        suppressedResults.push(suppressedResult(check.id, match, suppression));
-      } else {
-        runnableMatches.push(match);
-      }
-    }
-    // Keep these results beside their check so execution preserves reporting order.
-    selections.push({ check, matches: runnableMatches, suppressedResults });
-  }
+  const selections = Array.from(selectedById.values(), selection => selectCheckMatches(selection, {
+    repositoryRoot, suppressions, requiredPathKeys, isDelivery,
+  }));
   return { results, selections };
 }

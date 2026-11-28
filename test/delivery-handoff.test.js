@@ -298,6 +298,7 @@ test("when a bound deterministic check is running, release preserves the checkou
     label: "Delivery runtime",
     description: "Checks the retained checkout's runtime prerequisite.",
     entry: "./check.mjs",
+    executionScope: "changed-files",
     pathTriggers: ["src/*.js"],
   });
   await writeFile(join(provider, "check.mjs"), `

@@ -34,6 +34,7 @@ async function reportFixture(t) {
         label: "Fixture Test Alignment",
         description: "Returns the provider's diagnostic without machine attribution",
         entry: "./alignment.mjs",
+        executionScope: "changed-files",
         pathTriggers: [SOURCE_PATH],
       }, {
         id: "publisher:focus",
@@ -46,13 +47,18 @@ async function reportFixture(t) {
     },
   }));
   await writeFile(join(provider, "alignment.mjs"), `
-process.stdout.write(JSON.stringify({
-  status: "FAIL",
-  summary: "Test alignment reported 2 violations.",
-  evidence: ${JSON.stringify(ALIGNMENT_EVIDENCE)},
-  nextCheck: "Check the expectation count and ordered comment markers.",
-}));
-process.exitCode = 1;
+const paths = JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS ?? "null");
+if (paths === null || paths.includes(${JSON.stringify(SOURCE_PATH)})) {
+  process.stdout.write(JSON.stringify({
+    status: "FAIL",
+    summary: "Test alignment reported 2 violations.",
+    evidence: ${JSON.stringify(ALIGNMENT_EVIDENCE)},
+    nextCheck: "Check the expectation count and ordered comment markers.",
+  }));
+  process.exitCode = 1;
+} else {
+  process.stdout.write(JSON.stringify({ status: "N/A", summary: "No applicable test source." }));
+}
 `);
   await writeFile(join(provider, "focus.md"), "Assertions should protect the workflow outcome.\n");
   await writeFile(join(provider, "focus.json"), JSON.stringify({

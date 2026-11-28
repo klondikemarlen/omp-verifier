@@ -5,6 +5,7 @@ import {
   deletedProjectSource,
   MAX_FILE_EVIDENCE_BYTES,
   MAX_INVENTORY_FILE_BYTES,
+  readDeliveryProjectText,
   readProjectText,
 } from "#root/omp-plugin/semantic-project-source.js";
 
@@ -14,7 +15,7 @@ export async function captureChangedSource(root, {
   changedPaths,
   requestedContext,
   previousContext,
-  deletedSources,
+  deletedSources = new Map(),
   sourceByteLimit,
   recovery,
   delivery,
@@ -24,6 +25,9 @@ export async function captureChangedSource(root, {
   const missingChangedPaths = [];
   const changedCodeCoverage = [];
   const recoveredSelectorPaths = new Set();
+  const readText = delivery ? readDeliveryProjectText : readProjectText;
+  const deletedPaths = new Set(delivery?.deletedPaths);
+  const renamedSources = new Set(delivery?.renames?.map(rename => rename.from));
 
   function markUnavailable(path, reason, rangeRecovery = false) {
     changedCode.push({ path, state: "unavailable", reason, ...(rangeRecovery ? { rangeRecovery: true } : {}) });
@@ -48,11 +52,16 @@ export async function captureChangedSource(root, {
     const selectedRanges = requestedContext.filter(selector => selector.path === path && selector.startLine);
     const recoverWholeSource = recovery && !selectedRanges.length;
     const changedSourceLimit = recoverWholeSource ? recovery.maxSourceBytes : sourceByteLimit;
-    const result = await readProjectText(root, path, changedSourceLimit);
+    const deleted = deletedPaths.has(path);
+    const result = deleted ? { missing: true } : await readText(root, path, changedSourceLimit);
     if (result.missing) {
-      // Cite true delivery deletions from the merge base, not a transient earlier request.
+      // Manual evidence can use a prior request; a delivery deletion needs a merge-base blob.
+      if (delivery && !deleted && !renamedSources.has(path)) {
+        markUnavailable(path, "path is absent from the working source and is not an authenticated delivery deletion or rename");
+        continue;
+      }
       let cachedSource;
-      if (!delivery?.deletedPaths?.includes(path)) {
+      if (!delivery) {
         cachedSource = previousSource(previousContext, path);
       }
       let priorSource;
@@ -111,7 +120,7 @@ export async function captureChangedSource(root, {
       }
       recoveredSelectorPaths.add(path);
       const { coverage, reason, rangeRecovery } = await captureSelectedRanges(
-        root, path, selectedRanges, changedCode, budget,
+        readText, root, path, selectedRanges, changedCode, budget,
       );
       if (reason !== undefined) {
         markUnavailable(path, reason, rangeRecovery);
@@ -192,14 +201,14 @@ export function recoverCompleteSource(records, budget, { path, content, source, 
   return { coverage: { lineCount: lines.length, ...lineCoverage(admittedRanges, lines.length) } };
 }
 
-async function captureSelectedRanges(root, path, selectors, changedCode, budget) {
+async function captureSelectedRanges(readText, root, path, selectors, changedCode, budget) {
   const chunks = [];
   let identity;
 
   // Establish one full-source identity before admitting any of the selected ranges.
   for (const [startLine, endLine] of disjointLineRanges(selectors)) {
     const range = { startLine, endLine };
-    const chunk = await readProjectText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
+    const chunk = await readText(root, path, MAX_FILE_EVIDENCE_BYTES, range, MAX_TARGETED_RANGE_BYTES);
     if (chunk.error || chunk.missing) {
       return {
         coverage: incompleteCoverage(identity),

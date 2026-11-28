@@ -15,6 +15,9 @@ try {
   const changedPaths = process.env.OMP_VERIFIER_CHANGED_PATHS === undefined
     ? undefined
     : JSON.parse(process.env.OMP_VERIFIER_CHANGED_PATHS);
+  const prScope = process.env.OMP_VERIFIER_PR_SCOPE === undefined
+    ? undefined
+    : JSON.parse(process.env.OMP_VERIFIER_PR_SCOPE);
   const cwd = process.cwd();
   const restartDirectory = process.env.OMP_VERIFIER_LINT_RESTART_DIRECTORY;
   delete process.env.OMP_VERIFIER_LINT_RESTART_DIRECTORY;
@@ -25,6 +28,7 @@ try {
   const result = await verifyProjectLint({
     cwd,
     changedPaths,
+    prScope,
     budgetMs,
     restart,
   });

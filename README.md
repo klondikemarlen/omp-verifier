@@ -139,7 +139,7 @@ For current PR or MR changes, the advisor passes `--base <actual-base>` to `auto
 
 Required PR verification belongs **before merge**. Immediately before starting or resuming automatic review, the advisor checks the hosting service for an open PR or MR with the expected base and head. If it has merged or closed, the advisor skips the old request; that is not a PASS. You can explicitly request a retrospective check on the pinned revisions. Post-merge CI is independent.
 
-The proposed diff is the review target, not every file in the checkout. A check may need related source or a project-wide command to judge that diff. Status, exit, and post-merge housekeeping do not start a source review.
+The proposed diff is the review target, not every file in the checkout. Status, exit, and post-merge housekeeping do not start a source review.
 
 Automatic selection reconciles later reversals before invocation. When a candidate was restored or its delivery completed, a targeted comparison against the evidenced run/delivery base establishes whether it still belongs. A `HEAD`-only comparison must not discard committed changes or authenticated deletions. Compaction replay and historical diagnostics are not fresh edit triggers. Obsolete-scope failures remain historical evidence rather than current blockers; a different scope's PASS does not rewrite them. These are advisor selection/reporting instructions, not a runtime freshness gate; direct CLI callers remain responsible for the explicit paths they supply.
 
@@ -189,7 +189,7 @@ If the reviewer is nearing its context limit after an accepted checkpoint, use `
 
 For an explicitly authorized one-off larger changed-source capture, start `automatic` or `verify` with `--max-source-bytes`; see the [capture-limit contract](docs/references/verifier-concepts-reference.md#agentic-standards-contract) for supported bounds and request-local behavior.
 
-If a project's lint wrapper needs more time, pass `--lint-budget-ms` on the full verification run to get lint and the other selected checks together. To retry just lint, use `lint --budget-ms` with the original lint-selected paths. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint).
+If PR lint needs more time, retry the same full verification with its actual base and `--lint-budget-ms`. Do not substitute standalone lint: without the PR boundary it can run a whole-project command. See [bounded lint recovery](docs/references/verifier-concepts-reference.md#recovering-slow-whole-project-lint).
 
 For a PR targeting `origin/main`, the advisor runs, for example:
 
@@ -208,6 +208,8 @@ FAIL marlens-rules:test-alignment
 
 Evidence and next-check text come from the check, not a model rewrite. Multiline fields retain line breaks and indentation. Selection metadata remains available through JSON.
 
+**PR verification targets changed files.** `--full` selects all applicable checks, not all files. An unchanged caller, sibling or test is not an automatic target. Verifier may read the rules and tool configuration governing a changed file. If the verdict requires other source, identify the missing file rather than silently adding it. A user-requested file, directory or repository cleanup is a separate, explicitly scoped audit. Independent CI and a project's release commands are not PR-scoped Verifier runs.
+
 ## Verification manifests
 
 An installed OMP plugin can opt in through `package.json`:
@@ -221,6 +223,7 @@ An installed OMP plugin can opt in through `package.json`:
       "label": "Human label",
       "description": "What the check proves",
       "entry": "./verifications/check-id.mjs",
+      "executionScope": "changed-files",
       "pathTriggers": ["tests/**", "**/*.test.js"],
       "timeoutMs": 30000
     }]
@@ -229,6 +232,8 @@ An installed OMP plugin can opt in through `package.json`:
 ```
 
 Without `mode`, an entry is a package-relative `.mjs` module that writes one JSON result with `PASS`, `FAIL`, or `BLOCKED`. Valid `FAIL` and `BLOCKED` results may exit nonzero when stderr is empty; the verifier preserves their summary, evidence, and next check. A `PASS` paired with a nonzero exit is `BLOCKED`, not successful verification. Automatic executable entries receive `OMP_VERIFIER_CHANGED_PATHS` as a JSON array of their matching project-relative paths; manual `/verifier verify` removes it. The package must expose an `omp.extensions` or `pi.extensions` entry; executable checks run without a shell in the active project directory. `pathTriggers` is an optional non-empty array of project-relative glob patterns. Invalid manifests, traversal, duplicate IDs, timeouts, malformed output, missing entries, and other non-zero exits fail closed as `BLOCKED`; model-supplied executable paths are never accepted.
+
+For automatic PR execution, a deterministic provider must declare `"executionScope": "changed-files"`. This promises that every verification target, including targets passed to child processes, comes from `OMP_VERIFIER_CHANGED_PATHS`. Reading a tool configuration is not checking the configuration as source. `pathTriggers` alone only selects a provider; it says nothing about the files its command will check. Without the declaration, an optional executable is suppressed and an applicable required executable is blocked. Neither is a pass. This is a contract for trusted providers, not an operating-system sandbox.
 
 A deterministic entry may instead return `N/A` with a non-empty summary and exit `0` when it has no applicable work. The coordinator removes that non-verdict from manual and automatic result arrays; it is not `PASS`. A nonzero exit cannot hide behind `N/A`. Semantic assessments still require `PASS`, `FAIL`, or `BLOCKED`.
 

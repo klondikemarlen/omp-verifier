@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.40.0 - 2026-11-28
+
+- Automatic PR review limits source discovery and lint targets to changed files. Governing instructions and tool configuration remain inputs, not audit targets. Broader audits require an explicit request.
+- Executable checks must declare changed-file support to run automatically against a PR. An incompatible optional check is suppressed; an incompatible required check blocks instead of running on the repository.
+
 ## 1.39.1 - 2026-11-28
 
 - This repository now requires the installed module-boundary check for edits to `omp-plugin/semantic-*.js`. Missing standards are reported as `BLOCKED`; nothing changes in consumer repositories.

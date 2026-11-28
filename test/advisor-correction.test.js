@@ -52,7 +52,8 @@ test("when startup finds stale guidance in a shell-sensitive install, first-sess
           label: "Failing check",
           description: "Fails for advisor correction",
           entry: "./fail.mjs",
-          pathTriggers: ["src/**"],
+          executionScope: "changed-files",
+          pathTriggers: ["src/changed.txt"],
         }],
       },
     }));

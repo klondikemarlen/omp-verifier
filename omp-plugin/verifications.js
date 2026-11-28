@@ -316,7 +316,7 @@ export async function runAutomaticVerification({
   }
 
   const { results, selections, packageDirectory: selectedDirectory } = await discoverAutomaticVerification({
-    repositoryRoot, changedPaths, packageDirectory, workLevel,
+    repositoryRoot, changedPaths, packageDirectory, workLevel, isDelivery: Boolean(delivery),
   });
   const automaticScope = delivery ? {
     packageDirectory: selectedDirectory,
@@ -325,13 +325,13 @@ export async function runAutomaticVerification({
   } : undefined;
   const sourceRecovery = maxSourceBytes === undefined ? AUTOMATIC_SOURCE_RECOVERY : undefined;
 
-  for (const { check, matches, suppressedResults } of selections) {
+  for (const { check, matches, skippedResults } of selections) {
     if (check.id === waiver?.id) {
       results.push(waivedVerificationResult(waiver));
       continue;
     }
 
-    results.push(...suppressedResults);
+    results.push(...skippedResults);
     if (matches.length === 0) continue;
     const selectedPaths = matches.map(match => match.path);
     const projectLint = isInstalledProjectLint(check, selectedDirectory);

@@ -205,6 +205,14 @@ async function verifyAutomatic(paths, options) {
     return;
   }
 
+  let selectedPaths = paths;
+  if (options.base !== undefined && intent) {
+    // Host-supplied paths describe the transcript; they do not authorize a draft audit.
+    selectedPaths = [];
+  } else if (options.wholeFile) {
+    selectedPaths = [...paths, ...options.wholeFile];
+  }
+
   const cwd = process.cwd();
   let progress;
   if (options.progress || (process.stdout.isTTY && process.stderr.isTTY)) {
@@ -212,7 +220,7 @@ async function verifyAutomatic(paths, options) {
   }
 
   const scope = {
-    paths,
+    paths: selectedPaths,
     worktree: options.worktree,
     base: options.base,
     wholeFile: options.wholeFile,
@@ -227,7 +235,7 @@ async function verifyAutomatic(paths, options) {
     "automatic",
     scope,
     options,
-    () => automaticResults(cwd, paths, options, intent, waiver),
+    () => automaticResults(cwd, selectedPaths, options, intent, waiver),
     progress,
   );
   await writeResults(results, options);
