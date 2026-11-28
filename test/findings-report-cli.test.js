@@ -34,7 +34,7 @@ async function reportFixture(t) {
         label: "Fixture Test Alignment",
         description: "Returns the provider's diagnostic without machine attribution",
         entry: "./alignment.mjs",
-        executionScope: "changed-files",
+        executionScope: "changed-lines",
         pathTriggers: [SOURCE_PATH],
       }, {
         id: "publisher:focus",
@@ -181,7 +181,7 @@ test("when an automatic failure and an accepted semantic failure share a PR, the
   assert.equal(report.groups[0].target.headCommit, target.headCommit);
   assert.equal(report.groups[0].target.targetBranch, "main");
   assert.deepEqual(report.groups[0].checks.map(check => check.result), [alignment, JSON.parse(evaluation.stdout)[0]]);
-  assert.deepEqual(report.groups[0].checks[1].result.citations, [citation]);
+  assert.deepEqual(report.groups[0].checks[1].result.citations, [{ ...citation, reference: `${target.headCommit}:${SOURCE_PATH}` }]);
   assert.equal(report.groups[0].locations.length, 1);
   assert.equal(report.groups[0].locations[0].findings[0].capture, focusCapture);
   assert.equal(detail.status, 0, detail.stderr);

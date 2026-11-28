@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import { captureDeliveryScope } from "#root/omp-plugin/delivery-scope.js";
+import { formatVerificationResults } from "#root/omp-plugin/reporters.js";
+import { captureSemanticContext } from "#root/omp-plugin/semantic-context.js";
 import { completeSemanticEvaluation, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { runAutomaticVerificationForPaths } from "#root/omp-plugin/verifications.js";
-import { formatVerificationResults } from "#root/omp-plugin/reporters.js";
 
 const CLI = fileURLToPath(new URL("../bin/omp-verifier.js", import.meta.url));
 const ID = "publisher:values";
@@ -27,7 +29,14 @@ const UNCHANGED_CALCULATION = {
   line: 3,
   quote: "export const computed = Math.sqrt(value);",
 };
-const UNCHANGED_SOURCE = `${UNCHANGED.quote}\n${UNCHANGED_CALCULATION.quote}\n`;
+const LATE_LINE = 49;
+const UNCHANGED_SOURCE = [
+  UNCHANGED.quote,
+  UNCHANGED_CALCULATION.quote,
+  ...Array.from({ length: 45 }, (_, index) => `// unchanged context ${index + 4}`),
+  "export const late = 1;",
+  "",
+].join("\n");
 const CALLER = {
   path: "src/caller.js",
   line: 2,
@@ -429,7 +438,7 @@ console.log(JSON.stringify({ status: broken.length ? "FAIL" : "PASS", summary: b
 `);
 
   // Act
-  const run = spawnSync(process.execPath, [CLI, "automatic", "--base", f.baseRef], {
+  const run = spawnSync(process.execPath, [CLI, "automatic", "--base", f.baseRef, "src/value.js"], {
     cwd: f.root, encoding: "utf8", env: { ...process.env, PI_CODING_AGENT_DIR: join(f.root, "agent") },
   });
   const [result] = JSON.parse(run.stdout);
@@ -441,4 +450,325 @@ console.log(JSON.stringify({ status: broken.length ? "FAIL" : "PASS", summary: b
   assert.deepEqual(result.scope.changedPaths, ["src/value.js"]);
   assert.equal(result.scope.attribution, "provider-owned");
   assert.equal(result.scope.headCommit, headCommit);
+});
+
+test("when a pull request spans several commits, commit review captures tip hunks and final review includes earlier changes", async t => {
+  // Arrange
+  const f = await fixture(t);
+  await writeFile(join(f.root, LEGACY.path), "export const legacy = -11;\n");
+  f.git("add", LEGACY.path);
+  f.git("commit", "--quiet", "-m", "change the earlier-only file");
+  const parent = f.git("rev-parse", "HEAD");
+  const lateQuote = "export const late = -3;";
+  await writeFile(join(f.root, CHANGED.path), `${CHANGED.quote}\n${UNCHANGED_SOURCE.replace("export const late = 1;", lateQuote)}`);
+  f.git("add", CHANGED.path);
+  f.git("commit", "--quiet", "-m", "change a distant line in the value file");
+  const head = f.git("rev-parse", "HEAD");
+
+  // Act
+  const current = await f.prepare({ reviewScope: "commit" });
+  const final = await f.prepare({ reviewScope: "final" });
+
+  // Assert
+  assert.equal(current.status, "PENDING", current.evidence);
+  assert.equal(final.status, "PENDING", final.evidence);
+  assert.deepEqual(current.reviewRequest.scope.changedPaths, [CHANGED.path]);
+  assert.deepEqual(current.reviewRequest.context.changedCode, [{
+    path: CHANGED.path,
+    state: "present",
+    reference: `${head}:${CHANGED.path}`,
+    source: "changed-code",
+    partial: true,
+    startLine: LATE_LINE,
+    endLine: LATE_LINE,
+    content: lateQuote,
+  }, {
+    path: CHANGED.path,
+    state: "deleted",
+    reference: `${parent}:${CHANGED.path}`,
+    source: "changed-code",
+    partial: true,
+    startLine: LATE_LINE,
+    endLine: LATE_LINE,
+    content: "export const late = 1;",
+  }]);
+  assert.equal(current.scope.baseCommit, f.baseRef);
+  assert.equal(current.scope.comparisonCommit, parent);
+  assert.deepEqual(final.reviewRequest.scope.changedPaths, [LEGACY.path, CHANGED.path]);
+  assert.equal(final.scope.comparisonCommit, f.baseRef);
+  assert.deepEqual(final.scope.lineRanges[CHANGED.path], [[1, 1], [LATE_LINE, LATE_LINE]]);
+  assert.doesNotMatch(JSON.stringify(final.reviewRequest.context), /unchanged context|export const untouched/);
+});
+
+test("when a rename also removes a line, the citation authenticates the old source path and coordinates", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const renamedPath = "src/renamed.js";
+  f.git("mv", CHANGED.path, renamedPath);
+  await writeFile(join(f.root, renamedPath), `${CHANGED.quote}\n${UNCHANGED_SOURCE.replace(`${UNCHANGED.quote}\n`, "")}`);
+  f.git("add", renamedPath);
+  f.git("commit", "--quiet", "-m", "rename source and remove an export");
+  const prepared = await f.prepare({ reviewScope: "commit" });
+  const deletion = {
+    ...UNCHANGED,
+    path: renamedPath,
+    state: "deleted",
+  };
+  const finding = findingAt(deletion, "The rename also removed a required export.");
+
+  // Act
+  const wrongSide = await evaluate(f, prepared, failure(prepared, [finding], [{ ...deletion, state: "present" }]));
+  const accepted = await evaluate(f, prepared, failure(prepared, [finding], [deletion]));
+
+  // Assert
+  assert.equal(wrongSide.status, "BLOCKED");
+  assert.equal(accepted.status, "FAIL", accepted.evidence);
+  assert.deepEqual(accepted.citations, [{
+    ...deletion,
+    reference: `${f.headCommit}:${CHANGED.path}`,
+  }]);
+  assert.deepEqual(accepted.findings, [{ ...finding, state: "deleted" }]);
+  assert.deepEqual(accepted.scope.removedLineRanges, { [renamedPath]: [[2, 2]] });
+  assert.deepEqual(accepted.scope.renames, [{ from: CHANGED.path, to: renamedPath }]);
+});
+
+test("when a previously edited file is removed, commit and final review authenticate the removal against their own comparison revisions", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const precedingHead = { ...LEGACY, quote: "export const legacy = -15;", state: "deleted" };
+  await writeFile(join(f.root, LEGACY.path), `${precedingHead.quote}\n`);
+  f.git("add", LEGACY.path);
+  f.git("commit", "--quiet", "-m", "edit legacy on the PR");
+  const parent = f.git("rev-parse", "HEAD");
+  await rm(join(f.root, LEGACY.path));
+  f.git("add", LEGACY.path);
+  f.git("commit", "--quiet", "-m", "remove legacy");
+
+  const finding = findingAt(LEGACY, "The required export was removed.");
+
+  // Act
+  const current = await f.prepare({ reviewScope: "commit" });
+  const rejected = await evaluate(f, current, failure(current, [finding], [LEGACY]));
+  const commitResult = await evaluate(f, current, failure(current, [finding], [precedingHead]));
+  const final = await f.prepare({ reviewScope: "final" });
+  const finalResult = await evaluate(f, final, failure(final, [finding], [LEGACY]));
+
+  // Assert
+  assert.equal(rejected.status, "BLOCKED");
+  assert.equal(commitResult.status, "FAIL", commitResult.evidence);
+  assert.equal(commitResult.citations[0].reference, `${parent}:${LEGACY.path}`);
+  assert.equal(finalResult.status, "FAIL", finalResult.evidence);
+  assert.equal(finalResult.citations[0].reference, `${f.baseRef}:${LEGACY.path}`);
+});
+
+test("when commit and final reviews cover identical hunks, final review cannot reuse the commit verdict", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const current = await f.prepare({
+    reviewScope: "commit",
+    reuseExisting: true,
+  });
+  const recorded = await evaluate(f, current, failure(current, [findingAt(CHANGED, "Negative value.")]));
+
+  // Act
+  const reused = await f.prepare({
+    reviewScope: "commit",
+    reuseExisting: true,
+  });
+  const final = await f.prepare({
+    reviewScope: "final",
+    reuseExisting: true,
+  });
+  const outdated = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: current.reviewRequest.path,
+    resume: true,
+  });
+
+  // Assert
+  assert.equal(recorded.status, "FAIL", recorded.evidence);
+  assert.equal(reused.evaluation.requestId, recorded.evaluation.requestId);
+  assert.equal(final.status, "PENDING", final.evidence);
+  assert.notEqual(final.reviewRequest.context.fingerprint, current.reviewRequest.context.fingerprint);
+  assert.equal(final.scope.comparisonCommit, current.scope.comparisonCommit);
+  assert.equal(final.scope.reviewScope, "final");
+  assert.equal(outdated.status, "SUPERSEDED");
+  assert.equal(outdated.reviewRequest, undefined);
+});
+
+test("when an automatic hunk review is renewed, context cannot widen it and continuation retains both captured sides", async t => {
+  // Arrange
+  const after = { ...CHANGED, quote: "export const value", state: "present" };
+  const before = { ...after, state: "deleted" };
+  const deletedFinding = { ...findingAt(before, "The previous value was removed."), state: "deleted" };
+  const f = await fixture(t);
+  const current = await f.prepare({ reviewScope: "commit" });
+
+  // Act
+  const widened = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: current.reviewRequest.path,
+    contextPaths: [CHANGED.path],
+  });
+  const batch = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: current.reviewRequest.path,
+    continuation: true,
+  });
+  const checkpoint = await evaluate(f, batch, {
+    ...failure(batch, [deletedFinding], [after, before]),
+    batchIndex: 0,
+    crossBatchNotes: "Both sides of the replacement were captured in this checkpoint.",
+  });
+  const aggregate = await evaluate(f, checkpoint, {
+    ...failure(checkpoint, [deletedFinding], [after, before]),
+    coveredBatches: [0],
+  });
+
+  // Assert
+  assert.equal(widened.status, "BLOCKED");
+  assert.match(widened.evidence, /explicit manual audit/);
+  assert.equal(batch.reviewRequest.scope.automatic.delivery.reviewScope, "commit");
+  assert.equal(batch.reviewRequest.context.changedCode.some(record => record.content?.includes(UNCHANGED.quote)), false);
+  assert.equal(checkpoint.reviewRequest.continuation.phase, "aggregate");
+  assert.equal(aggregate.status, "FAIL", aggregate.evidence);
+  assert.deepEqual(aggregate.findings, [deletedFinding]);
+  assert.equal(aggregate.scope.reviewScope, "commit");
+});
+
+test("when changed source is binary, other citable hunks cannot make the review complete", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const path = "src/binary.js";
+  await writeFile(join(f.root, path), Buffer.from("binary\0content"));
+  f.git("add", path);
+  f.git("commit", "--quiet", "-m", "add binary source");
+  const prepared = await f.prepare({ reviewScope: "final" });
+
+  // Act
+  const result = await evaluate(f, prepared, failure(prepared, [findingAt(CHANGED, "Negative value.")]));
+
+  // Assert
+  assert.equal(result.status, "BLOCKED");
+  assert.match(result.evidence, /src\/binary\.js.*binary or is not UTF-8 text/);
+  assert.equal(prepared.reviewRequest.context.changedCode.find(record => record.path === path).content, undefined);
+});
+
+test("when a changed hunk exceeds its evidence budget, automatic recovery does not substitute whole-file evidence", async t => {
+  // Arrange
+  const f = await fixture(t);
+  await writeFile(join(f.root, CHANGED.path), `// ${"x".repeat(17_000)}\n${UNCHANGED_SOURCE}`);
+  f.git("add", CHANGED.path);
+  f.git("commit", "--quiet", "-m", "add an oversized changed line");
+
+  // Act
+  const prepared = await f.prepare({ reviewScope: "commit" });
+
+  // Assert
+  assert.match(prepared.evidence, /changed hunks exceed the 16000-byte changed-source evidence limit/);
+  assert.deepEqual(prepared.reviewRequest.context.changedCode, [{
+    path: CHANGED.path,
+    state: "unavailable",
+    reason: "changed hunks exceed the 16000-byte changed-source evidence limit",
+  }]);
+});
+
+test("when HEAD advances before resume, commit review renews against the new parent without adding earlier hunks", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const current = await f.prepare({ reviewScope: "commit" });
+  await writeFile(join(f.root, CHANGED.path), `${CHANGED.quote}\n${UNCHANGED_SOURCE.replace("export const late = 1;", "export const late = -7;")}`);
+  f.git("add", CHANGED.path);
+  f.git("commit", "--quiet", "-m", "change just the distant line");
+
+  // Act
+  const renewed = await readSemanticEvaluation({
+    cwd: f.root,
+    requestPath: current.reviewRequest.path,
+    resume: true,
+  });
+
+  // Assert
+  assert.equal(renewed.status, "PENDING", renewed.evidence);
+  assert.notEqual(renewed.reviewRequest.requestId, current.reviewRequest.requestId);
+  assert.equal(renewed.reviewRequest.scope.automatic.delivery.reviewScope, "commit");
+  assert.equal(renewed.reviewRequest.scope.automatic.delivery.comparisonCommit, f.headCommit);
+  assert.deepEqual(renewed.reviewRequest.context.changedCode.map(record => record.startLine), [LATE_LINE, LATE_LINE]);
+});
+
+test("when hunk coordinates exceed committed source bounds, the capture does not substitute available file content", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const delivery = await captureDeliveryScope({
+    repositoryRoot: f.root,
+    baseRef: f.baseRef,
+    reviewScope: "commit",
+  });
+
+  // Act
+  const { context } = await captureSemanticContext({
+    repositoryRoot: f.root,
+    changedPaths: [CHANGED.path],
+    delivery: {
+      ...delivery,
+      lineRanges: { [CHANGED.path]: [[LATE_LINE + 1, LATE_LINE + 1]] },
+    },
+  });
+
+  // Assert
+  assert.deepEqual(context.missingChangedPaths, [CHANGED.path]);
+  assert.deepEqual(context.changedCode, [{
+    path: CHANGED.path,
+    state: "unavailable",
+    reason: "changed hunk coordinates are outside the committed source",
+  }]);
+});
+
+test("when a quote matches the same line on both sides, the citation requires explicit state", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const current = await f.prepare({ reviewScope: "commit" });
+  const shared = { ...CHANGED, quote: "export const value" };
+  const finding = findingAt(shared, "The changed value is negative.");
+
+  // Act
+  const ambiguous = await evaluate(f, current, failure(current, [finding], [shared]));
+  const confirmed = await evaluate(f, current, failure(current, [finding], [{ ...shared, state: "present" }]));
+
+  // Assert
+  assert.equal(ambiguous.status, "BLOCKED");
+  assert.match(ambiguous.evidence, /requires state "present" or "deleted"/);
+  assert.equal(confirmed.status, "FAIL", confirmed.evidence);
+  assert.equal(confirmed.citations[0].reference, `${f.headCommit}:${CHANGED.path}`);
+});
+
+test("when binding guidance supports a hunk finding, it cannot become a finding target", async t => {
+  // Arrange
+  const f = await fixture(t);
+  const guide = {
+    path: "AGENTS.md",
+    line: 1,
+    quote: "Published exports must be nonnegative.",
+  };
+  await writeFile(join(f.root, guide.path), `${guide.quote}\n`);
+  f.git("add", guide.path);
+  f.git("commit", "--quiet", "-m", "add binding guidance");
+  const prepared = await f.prepare({ reviewScope: "final" });
+  const guideFinding = {
+    ...findingAt(guide, "The standard is not met."),
+    introducedBy: CHANGED.path,
+    introducedByLine: CHANGED.line,
+    regression: "The changed value violates the project rule.",
+  };
+  const hunkFinding = findingAt(CHANGED, "The changed value violates the project rule.");
+
+  // Act
+  const wrongTarget = await evaluate(f, prepared, failure(prepared, [guideFinding], [CHANGED, guide]));
+  const supported = await evaluate(f, prepared, failure(prepared, [hunkFinding], [CHANGED, guide]));
+
+  // Assert
+  assert.equal(wrongTarget.status, "BLOCKED");
+  assert.match(wrongTarget.evidence, /findings must cite a changed hunk: AGENTS\.md:1/);
+  assert.equal(supported.status, "FAIL", supported.evidence);
+  assert.deepEqual(supported.findings, [hunkFinding]);
 });

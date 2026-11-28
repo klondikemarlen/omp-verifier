@@ -136,28 +136,6 @@ async function registerDeliveryProviders(fixture, dependencies) {
   }));
 }
 
-async function installProjectLint(fixture, hasLintViolation) {
-  await symlink(REPOSITORY_ROOT, join(fixture.packageDirectory, "omp-verifier"), "dir");
-  const bin = join(fixture.source, "node_modules", ".bin");
-  await mkdir(bin, {
-    recursive: true,
-  });
-  await symlink(join(REPOSITORY_ROOT, "node_modules", ".bin", "eslint"), join(bin, "eslint"));
-  await writeFile(join(fixture.source, "eslint.config.mjs"), `
-export default [{
-  rules: {
-    "no-unused-vars": "error",
-  },
-}];
-`);
-  if (hasLintViolation) {
-    await writeFile(join(fixture.source, "src/caller.js"), `${TIP_CALLER}const unused = true;\n`);
-  }
-
-  git(fixture.source, "add", "eslint.config.mjs", "src/caller.js");
-  git(fixture.source, "commit", "--quiet", "-m", "configure project lint");
-  fixture.tipCommit = git(fixture.source, "rev-parse", "HEAD");
-}
 
 function invokeCli(fixture, cwd, ...args) {
   const env = {
@@ -298,7 +276,7 @@ test("when a bound deterministic check is running, release preserves the checkou
     label: "Delivery runtime",
     description: "Checks the retained checkout's runtime prerequisite.",
     entry: "./check.mjs",
-    executionScope: "changed-files",
+    executionScope: "changed-lines",
     pathTriggers: ["src/*.js"],
   });
   await writeFile(join(provider, "check.mjs"), `
@@ -410,7 +388,6 @@ test("when a semantic assessment is pending, the handoff stays available until a
     "automatic",
     "--base",
     fixture.baseCommit,
-    ...CHANGED_PATHS,
   ));
   assert.equal(ordinaryReview.status, "PENDING");
   const ordinaryPath = ordinaryReview.reviewRequest.path;
@@ -458,73 +435,24 @@ test("when a semantic assessment is pending, the handoff stays available until a
   assert.equal(git(fixture.primary, "for-each-ref", "--format=%(refname)", pin(handoff)), "");
 });
 
-for (const expectedLintStatus of ["PASS", "FAIL"]) {
-  test(`when a pending handoff increases its lint budget, a fresh ${expectedLintStatus} supersedes only the timed-out lint result`, async t => {
-    // Arrange
-    const fixture = await deliveryFixture(t);
-    await installIdentityProvider(fixture);
-    await installProjectLint(fixture, expectedLintStatus === "FAIL");
-    const providers = {
-      publisher: "1.0.0",
-      "omp-verifier": "*",
-    };
-    await registerDeliveryProviders(fixture, providers);
-    const handoff = await prepare(fixture);
-    const check = ["handoff", "check", handoff.handoffPath, "--lint-budget-ms"];
+test("when a final handoff includes a file-only linter, more time cannot widen its execution scope", async t => {
+  // Arrange
+  const fixture = await deliveryFixture(t);
+  await installIdentityProvider(fixture);
+  await symlink(REPOSITORY_ROOT, join(fixture.packageDirectory, "omp-verifier"), "dir");
+  await registerDeliveryProviders(fixture, { publisher: "1.0.0", "omp-verifier": "*" });
+  const handoff = await prepare(fixture);
 
-    // Act / Assert
-    const constrained = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "1"));
-    assert.equal(constrained.length, 2);
-    const timeout = constrained.find(result => result.id === "verifier:project-lint");
-    assert.equal(timeout.status, "BLOCKED");
-    assert.equal(timeout.lintBudgetExhaustedMs, 1);
-    assert.match(timeout.summary, /Shared project lint budget of 1 ms expired/);
-    assert.match(timeout.nextCheck, /handoff check.*--lint-budget-ms/);
-    const pending = constrained.find(result => result.id === "publisher:identity");
-    assert.equal(pending.status, "PENDING");
-    const constrainedRecord = JSON.parse(await readFile(handoff.handoffPath, "utf8")).verification;
-    assert.equal(constrainedRecord.status, "PENDING");
-    assert.deepEqual(constrainedRecord.blockers, [timeout]);
+  // Act
+  const results = JSON.parse(runCli(fixture, fixture.root, 0, "handoff", "check", handoff.handoffPath, "--lint-budget-ms", "10000"));
 
-    await registerDeliveryProviders(fixture, {
-      publisher: "1.0.0",
-    });
-    const unavailable = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "10000"));
-    assert.deepEqual(unavailable.find(result => result.id === "verifier:project-lint"), timeout);
-
-    await registerDeliveryProviders(fixture, providers);
-    const recoveredExit = expectedLintStatus === "FAIL" ? 1 : 0;
-    const recovered = JSON.parse(runCli(fixture, fixture.root, recoveredExit, ...check, "10000"));
-    assert.equal(recovered.length, 2);
-    const lint = recovered.find(result => result.id === "verifier:project-lint");
-    assert.equal(lint.status, expectedLintStatus);
-    assert.equal(lint.lintBudgetExhaustedMs, undefined);
-    assert.match(lint.evidence, new RegExp(`javascript \\(\\.\\): ${expectedLintStatus}`));
-    if (expectedLintStatus === "FAIL") {
-      assert.match(lint.evidence, /no-unused-vars/);
-    }
-
-    const continued = recovered.find(result => result.id === "publisher:identity");
-    assert.equal(continued.status, "PENDING");
-    assert.equal(continued.reviewRequest.requestId, pending.reviewRequest.requestId);
-    const recoveredRecord = JSON.parse(await readFile(handoff.handoffPath, "utf8")).verification;
-    assert.equal(recoveredRecord.status, "PENDING");
-    const expectedBlockers = expectedLintStatus === "FAIL" ? [lint] : [];
-    assert.deepEqual(recoveredRecord.blockers, expectedBlockers);
-    assert.match(assertCliReleaseBlocked(fixture, handoff), /pending assessments/);
-
-    if (expectedLintStatus === "PASS") {
-      const defaultBudget = JSON.parse(runCli(fixture, fixture.root, 0, "handoff", "check", handoff.handoffPath));
-      assert.equal(defaultBudget.find(result => result.id === "verifier:project-lint").status, "PASS");
-    } else {
-      await registerDeliveryProviders(fixture, {
-        publisher: "1.0.0",
-      });
-      const higherWithoutLint = JSON.parse(runCli(fixture, fixture.root, 1, ...check, "20000"));
-      assert.deepEqual(higherWithoutLint.find(result => result.id === "verifier:project-lint"), lint);
-    }
-  });
-}
+  // Assert
+  assert.equal(results.find(result => result.id === "verifier:project-lint").status, "SUPPRESSED");
+  const semantic = results.find(result => result.id === "publisher:identity");
+  assert.equal(semantic.status, "PENDING");
+  assert.equal(semantic.scope.reviewScope, "final");
+  assert.match(assertCliReleaseBlocked(fixture, handoff), /pending assessments/);
+});
 
 test("when a handoff lint budget is invalid, the CLI leaves the handoff unchanged", async t => {
   // Arrange
