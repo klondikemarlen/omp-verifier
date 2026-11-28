@@ -1,4 +1,8 @@
 {
+  "requirements": [{
+    "id": "marlens-rules:module-boundary-alignment",
+    "path": "omp-plugin/semantic-*.js"
+  }],
   "review": {
     "referenceGuides": ["README.md", "WATCHDOG.md"]
   }
