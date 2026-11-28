@@ -7,7 +7,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { captureSemanticContext, semanticContextMissing, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
+import { validateSemanticCitations } from "#root/omp-plugin/semantic-citations.js";
+import { captureSemanticContext } from "#root/omp-plugin/semantic-context.js";
+import { semanticContextMissing } from "#root/omp-plugin/semantic-context-missing.js";
 import { completeSemanticEvaluation, prepareSemanticEvaluation, readSemanticEvaluation, recordSemanticReviewPage } from "#root/omp-plugin/semantic-evaluations.js";
 import { buildSemanticReviewPage } from "#root/omp-plugin/semantic-review-pages.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";

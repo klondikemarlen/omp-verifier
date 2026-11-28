@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { captureSemanticContext, validateSemanticCitations } from "#root/omp-plugin/semantic-context.js";
+import { validateSemanticCitations } from "#root/omp-plugin/semantic-citations.js";
+import { captureSemanticContext } from "#root/omp-plugin/semantic-context.js";
 import { completeSemanticEvaluation, prepareSemanticEvaluation, readSemanticEvaluation } from "#root/omp-plugin/semantic-evaluations.js";
 import { discoverVerificationChecks } from "#root/omp-plugin/verification-catalog.js";
 
